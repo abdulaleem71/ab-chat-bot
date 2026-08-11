@@ -1,0 +1,389 @@
+import { createClient, Client } from '@libsql/client';
+
+let dbClient: Client | null = null;
+
+export function validateDatabaseConfig(): { isRemote: boolean; url: string; authToken?: string } {
+  const dbUrl = process.env.DATABASE_URL || 'file:nomadschat.db';
+  const authToken = process.env.TURSO_AUTH_TOKEN ? process.env.TURSO_AUTH_TOKEN.trim() : undefined;
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  const isRemote = dbUrl.startsWith('libsql://') || dbUrl.startsWith('https://') || dbUrl.startsWith('wss://');
+
+  if (isProduction) {
+    if (!process.env.DATABASE_URL) {
+      throw new Error(
+        'CRITICAL CONFIGURATION ERROR: DATABASE_URL environment variable is missing. ' +
+        'In production, a remote Turso database URL (libsql://...) MUST be provided.'
+      );
+    }
+    if (!isRemote) {
+      throw new Error(
+        `CRITICAL CONFIGURATION ERROR: DATABASE_URL ("${dbUrl}") is invalid for production. ` +
+        'Production MUST use a remote Turso database URL starting with "libsql://" or "https://". ' +
+        'Fallback to local file database is strictly forbidden in production.'
+      );
+    }
+    if (!authToken) {
+      throw new Error(
+        'CRITICAL CONFIGURATION ERROR: TURSO_AUTH_TOKEN environment variable is missing. ' +
+        'Production requires a valid Turso authentication token.'
+      );
+    }
+  }
+
+  if (isRemote && !authToken) {
+    throw new Error(
+      'CRITICAL CONFIGURATION ERROR: A remote Turso DATABASE_URL (libsql://...) was specified, but TURSO_AUTH_TOKEN is missing.'
+    );
+  }
+
+  return { isRemote, url: dbUrl, authToken };
+}
+
+export function getDb(): Client {
+  if (!dbClient) {
+    const config = validateDatabaseConfig();
+    dbClient = createClient({
+      url: config.url,
+      ...(config.authToken ? { authToken: config.authToken } : {}),
+    });
+  }
+  return dbClient;
+}
+
+export async function initDb(): Promise<void> {
+  const db = getDb();
+
+  // Enable Foreign Key Enforcement
+  try {
+    await db.execute('PRAGMA foreign_keys = ON;');
+  } catch (err) {
+    console.warn('Note on PRAGMA foreign_keys = ON execution:', err);
+  }
+
+  // Create Users Table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      name TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'owner',
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  // Create Tenants Table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS tenants (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      owner_email TEXT NOT NULL,
+      plan TEXT NOT NULL DEFAULT 'Pro',
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  // Create Organization Members Table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS organization_members (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Create Chatbots Table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS chatbots (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      system_instruction TEXT,
+      tone TEXT NOT NULL DEFAULT 'Friendly',
+      primary_color TEXT NOT NULL DEFAULT '#4F46E5',
+      text_color TEXT NOT NULL DEFAULT '#FFFFFF',
+      avatar TEXT NOT NULL DEFAULT '🤖',
+      greeting_message TEXT NOT NULL,
+      suggested_questions_json TEXT NOT NULL DEFAULT '[]',
+      model TEXT NOT NULL DEFAULT 'gemini-3.6-flash',
+      fallback_message TEXT NOT NULL,
+      collect_lead_email INTEGER NOT NULL DEFAULT 1,
+      lead_title TEXT,
+      human_operator_online INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Create Knowledge Sources Table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS knowledge_sources (
+      id TEXT PRIMARY KEY,
+      chatbot_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_url TEXT,
+      status TEXT NOT NULL DEFAULT 'indexed',
+      chunk_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Create Knowledge Chunks Table for RAG
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS knowledge_chunks (
+      id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      chatbot_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (source_id) REFERENCES knowledge_sources(id) ON DELETE CASCADE,
+      FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Create Conversations Table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY,
+      chatbot_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      visitor_id TEXT NOT NULL,
+      visitor_name TEXT,
+      visitor_email TEXT,
+      visitor_location TEXT,
+      visitor_browser TEXT,
+      page_url TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      last_message TEXT NOT NULL DEFAULT '',
+      last_message_time TEXT NOT NULL,
+      unread_by_agent INTEGER NOT NULL DEFAULT 1,
+      csat_rating INTEGER,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Create Messages Table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      chatbot_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      sender TEXT NOT NULL,
+      agent_name TEXT,
+      content TEXT NOT NULL,
+      sources_json TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Create Leads Table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS leads (
+      id TEXT PRIMARY KEY,
+      chatbot_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT,
+      company TEXT,
+      first_question TEXT,
+      captured_at TEXT NOT NULL,
+      FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Create Usage Table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS usage (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      query_count INTEGER NOT NULL DEFAULT 0,
+      hour_timestamp INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  // Create Subscriptions Table
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT UNIQUE NOT NULL,
+      plan TEXT NOT NULL DEFAULT 'Pro',
+      status TEXT NOT NULL DEFAULT 'active',
+      renews_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Create Performance Indexes
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_chatbots_tenant ON chatbots(tenant_id);`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_ks_bot ON knowledge_sources(chatbot_id);`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_kc_bot ON knowledge_chunks(chatbot_id);`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_bot ON conversations(chatbot_id);`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_tenant ON conversations(tenant_id);`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_leads_tenant ON leads(tenant_id);`);
+
+  // Seed Default Tenant & Demo User & Bot if Database is empty
+  await seedInitialData(db);
+}
+
+async function seedInitialData(db: Client) {
+  const usersRes = await db.execute(`SELECT COUNT(*) as cnt FROM users;`);
+  const count = Number(usersRes.rows[0]?.cnt || 0);
+
+  if (count === 0) {
+    const now = new Date().toISOString();
+    const tenantId = 'tenant_acme';
+    const userId = 'usr_acme_admin';
+    const botId = 'bot_acme_support';
+
+    // Seed Tenant
+    await db.execute({
+      sql: `INSERT INTO tenants (id, name, owner_email, plan, created_at) VALUES (?, ?, ?, ?, ?);`,
+      args: [tenantId, 'Acme Workspace', 'alex@acmesaas.io', 'Pro', now],
+    });
+
+    // Seed User
+    await db.execute({
+      sql: `INSERT INTO users (id, email, password_hash, name, tenant_id, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?);`,
+      args: [userId, 'alex@acmesaas.io', 'password', 'Alex Rivera', tenantId, 'owner', now],
+    });
+
+    // Seed Org Member
+    await db.execute({
+      sql: `INSERT INTO organization_members (id, tenant_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?);`,
+      args: ['mem_1', tenantId, userId, 'owner', now],
+    });
+
+    // Seed Subscription
+    await db.execute({
+      sql: `INSERT INTO subscriptions (id, tenant_id, plan, status, renews_at, created_at) VALUES (?, ?, ?, ?, ?, ?);`,
+      args: ['sub_1', tenantId, 'Pro', 'active', new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(), now],
+    });
+
+    // Seed Chatbot
+    const suggestedQuestions = JSON.stringify([
+      'How do I set up SSO authentication?',
+      'What are the API rate limits for Pro plan?',
+      'How do I invite team members?',
+      'Can I export workspace metrics to CSV?'
+    ]);
+
+    await db.execute({
+      sql: `INSERT INTO chatbots (
+        id, tenant_id, user_id, name, description, system_instruction, tone, primary_color, text_color, avatar,
+        greeting_message, suggested_questions_json, model, fallback_message, collect_lead_email, lead_title,
+        human_operator_online, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: [
+        botId, tenantId, userId, 'Acme Product Concierge',
+        'Handles technical support, feature questions, and account troubleshooting.',
+        'You are the primary AI customer support assistant for Acme SaaS Corp. Answer questions politely, accurately, and concisely using the provided knowledge base.',
+        'Friendly', '#4F46E5', '#FFFFFF', '🤖',
+        '👋 Hi there! I am Acme AI Concierge. How can I assist you with your workspace today?',
+        suggestedQuestions, 'gemini-3.6-flash',
+        "I'm sorry, I don't have information on that specific topic yet. Would you like me to connect you with a live human support specialist?",
+        1, 'Get personalized help from our team', 1, 'active', now, now
+      ],
+    });
+
+    // Seed Knowledge Sources
+    const ks1Id = 'ks_1';
+    const ks1Content = `Acme supports Single Sign-On (SSO) integration via SAML 2.0 and OpenID Connect (OIDC) for Okta, Azure AD, PingIdentity, and Google Workspace.
+    Setting up SSO:
+    1. Navigate to Settings > Authentication > SSO Configuration.
+    2. Download the Acme Service Provider Metadata XML file.
+    3. Enter your Identity Provider Entity ID and ACS Endpoint URL.
+    4. Enable Enforce SSO for all workspace members.
+    SSO is available on Pro ($49/mo) and Enterprise plans.`;
+
+    await db.execute({
+      sql: `INSERT INTO knowledge_sources (id, chatbot_id, tenant_id, type, title, content, source_url, status, chunk_count, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: [ks1Id, botId, tenantId, 'url', 'Acme Security & SSO Setup Documentation', ks1Content, 'https://docs.acmesaas.io/sso-guide', 'indexed', 2, now],
+    });
+
+    const ks2Id = 'ks_2';
+    const ks2Content = `Q: How do I invite team members to my workspace?
+    A: Click 'Team Settings' on the sidebar, hit 'Invite Member', type their email address, and select their role.
+
+    Q: What are the API rate limits?
+    A: Free tier allows 1,000 requests/day. Pro tier allows 100,000 requests/day. Enterprise offers unlimited capacity.`;
+
+    await db.execute({
+      sql: `INSERT INTO knowledge_sources (id, chatbot_id, tenant_id, type, title, content, source_url, status, chunk_count, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: [ks2Id, botId, tenantId, 'faq', 'Acme Workspace FAQs & Rate Limits', ks2Content, '', 'indexed', 2, now],
+    });
+
+    // Seed Knowledge Chunks for RAG
+    await db.execute({
+      sql: `INSERT INTO knowledge_chunks (id, source_id, chatbot_id, tenant_id, content, chunk_index, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?);`,
+      args: ['kc_1', ks1Id, botId, tenantId, ks1Content, 0, now],
+    });
+
+    await db.execute({
+      sql: `INSERT INTO knowledge_chunks (id, source_id, chatbot_id, tenant_id, content, chunk_index, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?);`,
+      args: ['kc_2', ks2Id, botId, tenantId, ks2Content, 0, now],
+    });
+
+    // Seed Demo Conversations & Messages
+    const conv1Id = 'conv_1';
+    await db.execute({
+      sql: `INSERT INTO conversations (id, chatbot_id, tenant_id, visitor_id, visitor_name, visitor_email, visitor_location, visitor_browser, page_url, status, last_message, last_message_time, unread_by_agent, csat_rating, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: [conv1Id, botId, tenantId, 'vis_101', 'Sarah Jenkins', 'sarah.j@enterprise.com', 'San Francisco, CA', 'Chrome / macOS', 'https://acmesaas.io/pricing', 'active', 'How do I configure SAML SSO for Okta?', now, 1, 5, now],
+    });
+
+    await db.execute({
+      sql: `INSERT INTO messages (id, conversation_id, chatbot_id, tenant_id, sender, agent_name, content, sources_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: ['msg_101', conv1Id, botId, tenantId, 'visitor', null, 'How do I configure SAML SSO for Okta?', null, now],
+    });
+
+    await db.execute({
+      sql: `INSERT INTO messages (id, conversation_id, chatbot_id, tenant_id, sender, agent_name, content, sources_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: [
+        'msg_102', conv1Id, botId, tenantId, 'bot', null,
+        'Acme supports SAML 2.0 SSO integration for Okta! You can configure it under Settings > Authentication > SSO Configuration by downloading our Metadata XML and uploading your Identity Provider Entity ID.',
+        JSON.stringify([{ title: 'Acme Security & SSO Setup Documentation', snippet: 'Acme supports Single Sign-On (SSO)...' }]),
+        now
+      ],
+    });
+
+    // Seed Demo Lead
+    await db.execute({
+      sql: `INSERT INTO leads (id, chatbot_id, tenant_id, conversation_id, name, email, phone, company, first_question, captured_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: ['lead_1', botId, tenantId, conv1Id, 'Sarah Jenkins', 'sarah.j@enterprise.com', '+1 415 555 0199', 'Enterprise Corp', 'How do I configure SAML SSO for Okta?', now],
+    });
+  }
+}

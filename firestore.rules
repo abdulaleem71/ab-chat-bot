@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Lock down Firestore rules. All data is managed through backend REST API.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
