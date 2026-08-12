@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { ChatbotRepo } from '../repositories/chatbotRepo';
 import { ConversationRepo } from '../repositories/conversationRepo';
 import { RagService } from './ragService';
+import { newId } from '../lib/ids';
 import { Conversation, Message, GroundingSource } from '../types';
 
 let aiClient: GoogleGenAI | null = null;
@@ -35,11 +36,17 @@ export class ChatService {
     let conversation: Conversation | null = null;
     if (existingConversationId) {
       conversation = await ConversationRepo.findById(existingConversationId);
+      // A conversation must belong to this chatbot; otherwise treat it as a fresh session.
+      if (conversation && conversation.chatbotId !== bot.id) {
+        conversation = null;
+      }
     }
 
     if (!conversation) {
+      // Always mint a fresh id: a client-supplied conversationId may collide with
+      // an existing row (e.g. it belongs to a different bot or was deleted).
       conversation = await ConversationRepo.create({
-        id: existingConversationId || 'conv_' + Date.now(),
+        id: newId('conv'),
         chatbotId: bot.id,
         tenantId: bot.tenantId,
         visitorId: visitorInfo?.visitorId || 'vis_' + Date.now(),
@@ -57,7 +64,7 @@ export class ChatService {
 
     // 3. Save Visitor Message in DB
     const userMsgRecord: Message = {
-      id: 'msg_u_' + Date.now(),
+      id: newId('msg_u'),
       conversationId: conversation.id,
       chatbotId: bot.id,
       sender: 'visitor',
@@ -144,7 +151,7 @@ RULES:
 
     // 8. Save Assistant Response in DB with Actual Citations
     const botMsgRecord: Message = {
-      id: 'msg_b_' + Date.now(),
+      id: newId('msg_b'),
       conversationId: conversation.id,
       chatbotId: bot.id,
       sender: 'bot',

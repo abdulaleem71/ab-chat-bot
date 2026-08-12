@@ -24,6 +24,13 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
   const [hasCapturedLead, setHasCapturedLead] = useState(!bot.collectLeadEmail);
   const [leadEmail, setLeadEmail] = useState('');
   const [leadName, setLeadName] = useState('');
+  const [conversationId, setConversationId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(`nc_conv_${bot.id}`) || null;
+    } catch {
+      return null;
+    }
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -36,15 +43,25 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
     setHasCapturedLead(true);
 
     try {
-      await fetch(`/api/chatbots/${bot.id}/leads`, {
+      const res = await fetch(`/api/chatbots/${bot.id}/leads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: leadName || 'Website Visitor',
           email: leadEmail,
           firstQuestion: messages.length > 1 ? messages[messages.length - 1].content : undefined,
+          conversationId: conversationId || undefined,
         }),
       });
+      const data = await res.json();
+      if (data.lead?.conversationId && data.lead.conversationId !== conversationId) {
+        setConversationId(data.lead.conversationId);
+        try {
+          localStorage.setItem(`nc_conv_${bot.id}`, data.lead.conversationId);
+        } catch (e) {
+          // ignore storage failures (e.g. private mode)
+        }
+      }
     } catch (err) {
       console.log('Error saving lead to database:', err);
     }
@@ -85,12 +102,21 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: text,
+          conversationId: conversationId || undefined,
           conversationHistory: [...messages, userMsg],
           visitorInfo: { email: leadEmail, name: leadName },
         }),
       });
 
       const data = await res.json();
+      if (data.conversationId && data.conversationId !== conversationId) {
+        setConversationId(data.conversationId);
+        try {
+          localStorage.setItem(`nc_conv_${bot.id}`, data.conversationId);
+        } catch (e) {
+          // ignore storage failures (e.g. private mode)
+        }
+      }
 
       const botMsg: Message = {
         id: 'bot_' + Date.now(),

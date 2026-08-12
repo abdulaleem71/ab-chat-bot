@@ -21,14 +21,16 @@ import { LeadRepo } from './src/repositories/leadRepo';
 import { AnalyticsRepo } from './src/repositories/analyticsRepo';
 import { KnowledgeService } from './src/services/knowledgeService';
 import { ChatService } from './src/services/chatService';
+import { newId } from './src/lib/ids';
 import { Chatbot } from './src/types';
 
 const _filename = typeof __filename !== 'undefined' ? __filename : (import.meta?.url ? fileURLToPath(import.meta.url) : '');
 const _dirname = typeof __dirname !== 'undefined' ? __dirname : (_filename ? path.dirname(_filename) : process.cwd());
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'nomadschat_secure_jwt_secret_key_2026';
+const consumedResetTokens = new Set<string>();
 
 if (process.env.NODE_ENV === 'production') {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'nomadschat_secure_jwt_secret_key_2026' || process.env.JWT_SECRET.trim().length < 16) {
@@ -159,7 +161,17 @@ app.get('/widget.js', (req, res) => {
   const botId = scriptTag ? scriptTag.getAttribute('data-bot-id') : null;
   if (!botId) return;
 
-  const host = window.location.origin;
+  // Resolve the app origin from the widget script's own src attribute so the
+  // iframe loads from the platform, not from the embedding page's domain.
+  let host = '';
+  const scriptSrc = scriptTag ? (scriptTag.getAttribute('src') || '') : '';
+  try {
+    host = new URL(scriptSrc).origin;
+  } catch (e) {
+    host = '';
+  }
+  if (!host) host = window.location.origin;
+
   const container = document.createElement('div');
   container.id = 'nomadschat-widget-root';
   document.body.appendChild(container);
@@ -234,8 +246,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     return res.status(400).json({ success: false, error: 'An account with this email address already exists' });
   }
 
-  const tenantId = 'tenant_' + Date.now();
-  const userId = 'usr_' + Date.now();
+  const tenantId = newId('tenant');
+  const userId = newId('usr');
   const now = new Date().toISOString();
 
   const tenant = await UserRepo.createTenant({
@@ -290,6 +302,11 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   } else {
     // Legacy plaintext match during migration
     isValidPassword = (user.password_hash === password);
+    if (isValidPassword) {
+      // Upgrade to a bcrypt hash so plaintext passwords are removed over time.
+      const upgradedHash = await bcrypt.hash(password, 10);
+      await UserRepo.updateUserPassword(user.id, upgradedHash);
+    }
   }
 
   if (!isValidPassword) {
@@ -334,15 +351,20 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
   }
 
   const resetToken = jwt.sign(
-    { userId: user.id, email: user.email, action: 'password_reset' },
+    { userId: user.id, email: user.email, action: 'password_reset', jti: newId('pwrt') },
     JWT_SECRET,
     { expiresIn: '15m' }
   );
 
+  const isDev = process.env.NODE_ENV !== 'production';
   res.json({
     success: true,
-    message: 'Password reset token generated.',
-    resetToken,
+    message: isDev
+      ? 'Password reset token generated. (Development mode only: token returned for testing.)'
+      : 'If an account exists for this email, password reset instructions have been sent.',
+    // Only expose the token in development. In production it must be delivered
+    // via email and MUST NOT be returned to the client.
+    ...(isDev ? { resetToken } : {}),
   });
 });
 
@@ -353,20 +375,27 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
     return res.status(400).json({ success: false, error: 'Email and a new password (min 6 characters) are required' });
   }
 
+  if (!resetToken || typeof resetToken !== 'string') {
+    return res.status(400).json({ success: false, error: 'A valid password reset token is required' });
+  }
+
   const user = await UserRepo.findUserByEmail(email.trim().toLowerCase());
   if (!user) {
     return res.status(400).json({ success: false, error: 'User account not found' });
   }
 
-  if (resetToken) {
-    try {
-      const decoded = jwt.verify(resetToken, JWT_SECRET) as any;
-      if (decoded.action !== 'password_reset' || decoded.userId !== user.id) {
-        return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
-      }
-    } catch (err) {
+  try {
+    const decoded = jwt.verify(resetToken, JWT_SECRET) as any;
+    if (decoded.action !== 'password_reset' || decoded.userId !== user.id) {
       return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
     }
+    // Enforce single-use reset tokens.
+    if (decoded.jti && consumedResetTokens.has(decoded.jti)) {
+      return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
+    }
+    if (decoded.jti) consumedResetTokens.add(decoded.jti);
+  } catch (err) {
+    return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
   }
 
   const passwordHash = await bcrypt.hash(newPassword, 10);
@@ -423,7 +452,7 @@ app.post('/api/chatbots', requireAuth, async (req: AuthenticatedRequest, res) =>
   const validatedColor = (primaryColor && typeof primaryColor === 'string' && hexColorRegex.test(primaryColor)) ? primaryColor : '#4F46E5';
 
   const newBot = await ChatbotRepo.create({
-    id: 'bot_' + Date.now(),
+    id: newId('bot'),
     tenantId: req.user!.tenantId,
     name: name.trim(),
     description: (description && typeof description === 'string') ? description.slice(0, 500) : 'AI Assistant',
@@ -456,6 +485,7 @@ app.put('/api/chatbots/:id', requireAuth, async (req: AuthenticatedRequest, res)
   if (typeof body.systemInstruction === 'string') allowedUpdates.systemInstruction = body.systemInstruction.slice(0, 3000);
   if (typeof body.tone === 'string') allowedUpdates.tone = body.tone as any;
   if (typeof body.primaryColor === 'string' && /^#([0-9a-fA-F]{3}){1,2}$/.test(body.primaryColor)) allowedUpdates.primaryColor = body.primaryColor;
+  if (typeof body.textColor === 'string' && /^#([0-9a-fA-F]{3}){1,2}$/.test(body.textColor)) allowedUpdates.textColor = body.textColor;
   if (typeof body.avatar === 'string') allowedUpdates.avatar = body.avatar.slice(0, 10);
   if (typeof body.greetingMessage === 'string') allowedUpdates.greetingMessage = body.greetingMessage.slice(0, 500);
   if (Array.isArray(body.suggestedQuestions)) allowedUpdates.suggestedQuestions = body.suggestedQuestions.map(q => String(q).slice(0, 200)).slice(0, 5);
@@ -587,6 +617,47 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req: Authenticate
   res.json({ success: true, messages });
 });
 
+app.post('/api/conversations/:id/messages', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const conversation = await ConversationRepo.findById(req.params.id, req.user!.tenantId);
+  if (!conversation) {
+    return res.status(404).json({ success: false, error: 'Conversation not found' });
+  }
+
+  const { content } = req.body || {};
+  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'Message content is required' });
+  }
+  if (content.length > 2000) {
+    return res.status(400).json({ success: false, error: 'Message exceeds maximum length of 2000 characters' });
+  }
+
+  const message = await ConversationRepo.addAgentMessage(
+    conversation.id,
+    conversation.chatbotId,
+    req.user!.tenantId,
+    content.trim(),
+    req.user!.name
+  );
+
+  res.json({ success: true, message });
+});
+
+const ALLOWED_CONVERSATION_STATUSES = ['active', 'human_takeover', 'resolved', 'closed'] as const;
+
+app.put('/api/conversations/:id/status', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { status } = req.body || {};
+  if (!status || typeof status !== 'string' || !(ALLOWED_CONVERSATION_STATUSES as readonly string[]).includes(status)) {
+    return res.status(400).json({ success: false, error: 'Valid conversation status is required' });
+  }
+
+  const updated = await ConversationRepo.updateStatus(req.params.id, req.user!.tenantId, status as any);
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Conversation not found' });
+  }
+
+  res.json({ success: true, conversation: updated });
+});
+
 // ==========================================
 // LEADS ENDPOINTS
 // ==========================================
@@ -609,10 +680,10 @@ app.post('/api/chatbots/:id/leads', async (req, res) => {
   }
 
   const lead = await LeadRepo.create({
-    id: 'lead_' + Date.now(),
+    id: newId('lead'),
     chatbotId: bot.id,
     tenantId: bot.tenantId,
-    conversationId: conversationId || 'conv_' + Date.now(),
+    conversationId: conversationId || newId('conv'),
     name: name ? String(name).slice(0, 100) : 'Website Visitor',
     email: email.toLowerCase().trim(),
     phone: phone ? String(phone).slice(0, 50) : undefined,

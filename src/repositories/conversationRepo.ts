@@ -1,4 +1,5 @@
 import { getDb } from '../db/index';
+import { newId } from '../lib/ids';
 import { Conversation, Message, GroundingSource } from '../types';
 
 export class ConversationRepo {
@@ -61,11 +62,11 @@ export class ConversationRepo {
     return conv;
   }
 
-  static async updateLastMessage(id: string, lastMessage: string, timestamp: string): Promise<void> {
+  static async updateLastMessage(id: string, lastMessage: string, timestamp: string, unreadByAgent: boolean = true): Promise<void> {
     const db = getDb();
     await db.execute({
-      sql: `UPDATE conversations SET last_message = ?, last_message_time = ?, unread_by_agent = 1 WHERE id = ?;`,
-      args: [lastMessage, timestamp, id],
+      sql: `UPDATE conversations SET last_message = ?, last_message_time = ?, unread_by_agent = ? WHERE id = ?;`,
+      args: [lastMessage, timestamp, unreadByAgent ? 1 : 0, id],
     });
   }
 
@@ -121,6 +122,43 @@ export class ConversationRepo {
 
     await this.updateLastMessage(msg.conversationId, msg.content, msg.timestamp);
     return msg;
+  }
+
+  static async addAgentMessage(
+    conversationId: string,
+    chatbotId: string,
+    tenantId: string,
+    content: string,
+    agentName?: string
+  ): Promise<Message> {
+    const now = new Date().toISOString();
+    const msg: Message = {
+      id: newId('msg_a'),
+      conversationId,
+      chatbotId,
+      sender: 'agent',
+      agentName: agentName || 'Support Agent',
+      content,
+      timestamp: now,
+    };
+
+    await this.addMessage(msg, tenantId);
+    // Agent replies mark the conversation as read by the agent.
+    await this.updateLastMessage(conversationId, content, now, false);
+    return msg;
+  }
+
+  static async updateStatus(id: string, tenantId: string, status: Conversation['status']): Promise<Conversation | null> {
+    const existing = await this.findById(id, tenantId);
+    if (!existing) return null;
+
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE conversations SET status = ? WHERE id = ? AND tenant_id = ?;`,
+      args: [status, id, tenantId],
+    });
+
+    return { ...existing, status };
   }
 
   private static mapRowToConversation(r: any): Conversation {

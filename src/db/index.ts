@@ -1,4 +1,5 @@
 import { createClient, Client } from '@libsql/client';
+import bcrypt from 'bcryptjs';
 
 let dbClient: Client | null = null;
 
@@ -250,6 +251,24 @@ export async function initDb(): Promise<void> {
 
   // Seed Default Tenant & Demo User & Bot if Database is empty
   await seedInitialData(db);
+
+  // Migrate legacy plaintext password hashes to bcrypt (e.g. old demo seeds).
+  await migratePlaintextPasswords();
+}
+
+async function migratePlaintextPasswords() {
+  const db = getDb();
+  const res = await db.execute(`SELECT id, password_hash FROM users WHERE password_hash NOT LIKE '$2a$%' AND password_hash NOT LIKE '$2b$%' AND password_hash NOT LIKE '$2y$%';`);
+  for (const row of res.rows) {
+    const legacyPlain = String(row.password_hash || '');
+    if (!legacyPlain) continue;
+    const hash = await bcrypt.hash(legacyPlain, 10);
+    await db.execute({
+      sql: `UPDATE users SET password_hash = ? WHERE id = ?;`,
+      args: [hash, String(row.id)],
+    });
+    console.log(`ℹ️ Migrated plaintext password hash for user ${row.id} to bcrypt.`);
+  }
 }
 
 async function seedInitialData(db: Client) {
@@ -269,9 +288,10 @@ async function seedInitialData(db: Client) {
     });
 
     // Seed User
+    const demoPasswordHash = await bcrypt.hash('password', 10);
     await db.execute({
       sql: `INSERT INTO users (id, email, password_hash, name, tenant_id, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?);`,
-      args: [userId, 'alex@acmesaas.io', 'password', 'Alex Rivera', tenantId, 'owner', now],
+      args: [userId, 'alex@acmesaas.io', demoPasswordHash, 'Alex Rivera', tenantId, 'owner', now],
     });
 
     // Seed Org Member

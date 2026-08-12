@@ -272,13 +272,15 @@ function DashboardContent() {
   const handleSendPlaygroundQuery = async (
     botId: string,
     message: string,
+    conversationId: string | null,
     history: Message[]
-  ): Promise<{ reply: string; sourcesUsed: GroundingSource[] }> => {
+  ): Promise<{ reply: string; sourcesUsed: GroundingSource[]; conversationId: string }> => {
     const res = await fetch(`/api/chatbots/${botId}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message,
+        conversationId: conversationId || undefined,
         conversationHistory: history,
       }),
     });
@@ -286,11 +288,12 @@ function DashboardContent() {
     return {
       reply: data.reply || selectedBot?.fallbackMessage || 'I am currently unable to assist.',
       sourcesUsed: data.sourcesUsed || [],
+      conversationId: data.conversationId || '',
     };
   };
 
   // Inbox Handlers
-  const handleInboxSendMessage = (conversationId: string, content: string, sender: 'agent' | 'visitor') => {
+  const handleInboxSendMessage = async (conversationId: string, content: string, sender: 'agent' | 'visitor') => {
     const newMsg: Message = {
       id: 'm_' + Date.now(),
       conversationId,
@@ -300,6 +303,7 @@ function DashboardContent() {
       timestamp: new Date().toISOString(),
     };
 
+    // Optimistically update the UI, then persist to the server.
     setMessages(prev => ({
       ...prev,
       [conversationId]: [...(prev[conversationId] || []), newMsg],
@@ -316,9 +320,28 @@ function DashboardContent() {
           : c
       )
     );
+
+    if (sender !== 'agent') return;
+
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ content }),
+      });
+      const data = await res.json();
+      if (data.success && data.message) {
+        setMessages(prev => ({
+          ...prev,
+          [conversationId]: (prev[conversationId] || []).map(m => (m.id === newMsg.id ? data.message : m)),
+        }));
+      }
+    } catch (err) {
+      console.log('Error persisting agent message:', err);
+    }
   };
 
-  const handleToggleTakeover = (conversationId: string, isTakeover: boolean) => {
+  const handleToggleTakeover = async (conversationId: string, isTakeover: boolean) => {
     setConversations(prev =>
       prev.map(c =>
         c.id === conversationId
@@ -326,12 +349,32 @@ function DashboardContent() {
           : c
       )
     );
+
+    try {
+      await fetch(`/api/conversations/${conversationId}/status`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ status: isTakeover ? 'human_takeover' : 'active' }),
+      });
+    } catch (err) {
+      console.log('Error updating conversation status:', err);
+    }
   };
 
-  const handleResolveConversation = (conversationId: string) => {
+  const handleResolveConversation = async (conversationId: string) => {
     setConversations(prev =>
       prev.map(c => (c.id === conversationId ? { ...c, status: 'resolved' } : c))
     );
+
+    try {
+      await fetch(`/api/conversations/${conversationId}/status`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ status: 'resolved' }),
+      });
+    } catch (err) {
+      console.log('Error resolving conversation:', err);
+    }
   };
 
   const unreadCount = conversations.filter(c => c.unreadByAgent).length;

@@ -6,7 +6,7 @@ interface PlaygroundViewProps {
   chatbots: Chatbot[];
   selectedBot: Chatbot;
   onSelectBot: (bot: Chatbot) => void;
-  onSendQuery: (botId: string, message: string, history: Message[]) => Promise<{ reply: string; sourcesUsed: GroundingSource[] }>;
+  onSendQuery: (botId: string, message: string, conversationId: string | null, history: Message[]) => Promise<{ reply: string; sourcesUsed: GroundingSource[]; conversationId: string }>;
 }
 
 export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
@@ -28,6 +28,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeSources, setActiveSources] = useState<GroundingSource[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -46,6 +47,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
       },
     ]);
     setActiveSources([]);
+    setConversationId(null);
   };
 
   const handleSend = async (textToSend?: string) => {
@@ -66,7 +68,11 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
     setIsLoading(true);
 
     try {
-      const res = await onSendQuery(selectedBot.id, queryText, [...messages, userMsg]);
+      const res = await onSendQuery(selectedBot.id, queryText, conversationId, [...messages, userMsg]);
+
+      if (res.conversationId) {
+        setConversationId(res.conversationId);
+      }
 
       const botMsg: Message = {
         id: 'bot_' + Date.now(),

@@ -1,5 +1,6 @@
 import { KnowledgeRepo } from '../repositories/knowledgeRepo';
 import { KnowledgeSource } from '../types';
+import { newId } from '../lib/ids';
 import dns from 'dns/promises';
 import ipaddr from 'ipaddr.js';
 
@@ -98,7 +99,7 @@ export class KnowledgeService {
     const chunks = this.chunkText(cleanText, 500);
 
     const source: KnowledgeSource = {
-      id: 'ks_' + Date.now(),
+      id: newId('ks'),
       chatbotId,
       tenantId,
       type: 'url',
@@ -131,7 +132,7 @@ export class KnowledgeService {
     const chunks = this.chunkText(cleanContent, 500);
 
     const source: KnowledgeSource = {
-      id: 'ks_' + Date.now(),
+      id: newId('ks'),
       chatbotId,
       tenantId,
       type,

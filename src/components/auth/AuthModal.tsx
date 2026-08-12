@@ -80,6 +80,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
           }
         }
 
+        if (!tokenToUse) {
+          setSuccessMsg('If an account exists for this email, password reset instructions have been sent to your inbox.');
+          setMode('signin');
+          return;
+        }
+
         await resetPassword(email, newPassword, tokenToUse);
         setSuccessMsg('Your password has been reset! Please sign in with your new password.');
         setTimeout(() => {
