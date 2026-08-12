@@ -721,7 +721,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     // Production: Absolute path independent of CWD
-    const distPath = path.resolve(_dirname, 'dist');
+    const distPath = _dirname;
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.resolve(distPath, 'index.html'));
