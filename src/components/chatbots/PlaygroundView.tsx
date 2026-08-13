@@ -6,7 +6,7 @@ interface PlaygroundViewProps {
   chatbots: Chatbot[];
   selectedBot: Chatbot;
   onSelectBot: (bot: Chatbot) => void;
-  onSendQuery: (botId: string, message: string, conversationId: string | null, history: Message[]) => Promise<{ reply: string; sourcesUsed: GroundingSource[]; conversationId: string }>;
+  onSendQuery: (botId: string, message: string, history: Message[]) => Promise<{ reply: string; sourcesUsed: GroundingSource[] }>;
 }
 
 export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
@@ -28,12 +28,36 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeSources, setActiveSources] = useState<GroundingSource[]>([]);
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const scrollToBottom = (smooth = true) => {
+    requestAnimationFrame(() => {
+      if (messagesContainerRef.current) {
+        messagesContainerRef.current.scrollTo({
+          top: messagesContainerRef.current.scrollHeight,
+          behavior: smooth ? 'smooth' : 'auto',
+        });
+      } else if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({
+          behavior: smooth ? 'smooth' : 'auto',
+          block: 'end',
+        });
+      }
+    });
+  };
+
+  // Smooth scroll when new messages arrive
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+    scrollToBottom(true);
+  }, [messages.length]);
+
+  // Smooth scroll when loading state starts
+  useEffect(() => {
+    if (isLoading) {
+      scrollToBottom(true);
+    }
+  }, [isLoading]);
 
   const handleResetChat = () => {
     setMessages([
@@ -47,7 +71,6 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
       },
     ]);
     setActiveSources([]);
-    setConversationId(null);
   };
 
   const handleSend = async (textToSend?: string) => {
@@ -68,11 +91,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
     setIsLoading(true);
 
     try {
-      const res = await onSendQuery(selectedBot.id, queryText, conversationId, [...messages, userMsg]);
-
-      if (res.conversationId) {
-        setConversationId(res.conversationId);
-      }
+      const res = await onSendQuery(selectedBot.id, queryText, [...messages, userMsg]);
 
       const botMsg: Message = {
         id: 'bot_' + Date.now(),
@@ -172,7 +191,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
           </div>
 
           {/* Messages Scroll Area */}
-          <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-slate-50/50">
+          <div ref={messagesContainerRef} className="flex-1 p-4 overflow-y-auto space-y-4 bg-slate-50/50">
             {messages.map(msg => (
               <div
                 key={msg.id}
@@ -188,11 +207,10 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
                 )}
 
                 <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-3 text-xs leading-relaxed shadow-xs ${
-                    msg.sender === 'visitor'
+                  className={`max-w-[80%] rounded-2xl px-4 py-3 text-xs leading-relaxed shadow-xs ${msg.sender === 'visitor'
                       ? 'bg-indigo-600 text-white font-medium rounded-tr-xs'
                       : 'bg-white text-slate-800 border border-slate-200 rounded-tl-xs'
-                  }`}
+                    }`}
                 >
                   <p className="whitespace-pre-wrap">{msg.content}</p>
 

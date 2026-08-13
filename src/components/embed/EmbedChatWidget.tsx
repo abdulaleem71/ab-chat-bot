@@ -24,18 +24,36 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
   const [hasCapturedLead, setHasCapturedLead] = useState(!bot.collectLeadEmail);
   const [leadEmail, setLeadEmail] = useState('');
   const [leadName, setLeadName] = useState('');
-  const [conversationId, setConversationId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(`nc_conv_${bot.id}`) || null;
-    } catch {
-      return null;
-    }
-  });
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const scrollToBottom = (smooth = true) => {
+    requestAnimationFrame(() => {
+      if (messagesContainerRef.current) {
+        messagesContainerRef.current.scrollTo({
+          top: messagesContainerRef.current.scrollHeight,
+          behavior: smooth ? 'smooth' : 'auto',
+        });
+      } else if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({
+          behavior: smooth ? 'smooth' : 'auto',
+          block: 'end',
+        });
+      }
+    });
+  };
+
+  // Smooth scroll when new messages arrive
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+    scrollToBottom(true);
+  }, [messages.length]);
+
+  // Smooth scroll when loading state changes
+  useEffect(() => {
+    if (isLoading) {
+      scrollToBottom(true);
+    }
+  }, [isLoading]);
 
   const handleLeadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,25 +61,15 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
     setHasCapturedLead(true);
 
     try {
-      const res = await fetch(`/api/chatbots/${bot.id}/leads`, {
+      await fetch(`/api/chatbots/${bot.id}/leads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: leadName || 'Website Visitor',
           email: leadEmail,
           firstQuestion: messages.length > 1 ? messages[messages.length - 1].content : undefined,
-          conversationId: conversationId || undefined,
         }),
       });
-      const data = await res.json();
-      if (data.lead?.conversationId && data.lead.conversationId !== conversationId) {
-        setConversationId(data.lead.conversationId);
-        try {
-          localStorage.setItem(`nc_conv_${bot.id}`, data.lead.conversationId);
-        } catch (e) {
-          // ignore storage failures (e.g. private mode)
-        }
-      }
     } catch (err) {
       console.log('Error saving lead to database:', err);
     }
@@ -102,21 +110,12 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: text,
-          conversationId: conversationId || undefined,
           conversationHistory: [...messages, userMsg],
           visitorInfo: { email: leadEmail, name: leadName },
         }),
       });
 
       const data = await res.json();
-      if (data.conversationId && data.conversationId !== conversationId) {
-        setConversationId(data.conversationId);
-        try {
-          localStorage.setItem(`nc_conv_${bot.id}`, data.conversationId);
-        } catch (e) {
-          // ignore storage failures (e.g. private mode)
-        }
-      }
 
       const botMsg: Message = {
         id: 'bot_' + Date.now(),
@@ -147,9 +146,8 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
   };
 
   return (
-    <div className={`flex flex-col bg-white overflow-hidden shadow-2xl border border-slate-200 ${
-      isFloating ? 'w-80 sm:w-96 h-[540px] rounded-2xl fixed bottom-20 right-6 z-50 animate-in slide-in-from-bottom-4 duration-200' : 'w-full h-full min-h-[500px] rounded-2xl'
-    }`}>
+    <div className={`flex flex-col bg-white overflow-hidden shadow-2xl border border-slate-200 ${isFloating ? 'w-80 sm:w-96 h-[540px] rounded-2xl fixed bottom-20 right-6 z-50 animate-in slide-in-from-bottom-4 duration-200' : 'w-full h-full min-h-[500px] rounded-2xl'
+      }`}>
       {/* Header */}
       <div
         style={{ backgroundColor: bot.primaryColor || '#4F46E5' }}
@@ -179,7 +177,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
       </div>
 
       {/* Messages / Lead Capture */}
-      <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-slate-50/50">
+      <div ref={messagesContainerRef} className="flex-1 p-4 overflow-y-auto space-y-3 bg-slate-50/50">
         {!hasCapturedLead ? (
           <div className="bg-white border border-indigo-100 rounded-2xl p-4 shadow-sm text-center my-4">
             <div
@@ -238,11 +236,10 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
 
                 <div
                   style={msg.sender === 'visitor' ? { backgroundColor: bot.primaryColor || '#000000' } : undefined}
-                  className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed ${
-                    msg.sender === 'visitor'
+                  className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed ${msg.sender === 'visitor'
                       ? 'text-white font-medium rounded-tr-xs shadow-xs'
                       : 'bg-white border border-slate-200 text-slate-800 rounded-tl-xs shadow-2xs'
-                  }`}
+                    }`}
                 >
                   <p className="whitespace-pre-wrap">{msg.content}</p>
 

@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Chatbot, BotTone, BotModel } from '../../types';
 import { useClickOutside } from '../../hooks/useClickOutside';
-import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send } from 'lucide-react';
+import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle } from 'lucide-react';
 
 interface BotEditorModalProps {
   bot: Partial<Chatbot> | null;
   isOpen: boolean;
   onClose: () => void;
   onSave: (updatedBot: Partial<Chatbot>) => void;
+  onDelete?: (botId: string) => void;
 }
 
 export const BotEditorModal: React.FC<BotEditorModalProps> = ({
@@ -15,6 +16,7 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
   isOpen,
   onClose,
   onSave,
+  onDelete,
 }) => {
   const modalRef = useRef<HTMLDivElement>(null);
   useClickOutside(modalRef, () => {
@@ -22,14 +24,16 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
   });
 
   const [activeTab, setActiveTab] = useState<'general' | 'appearance' | 'leads'>('general');
-
   const [formData, setFormData] = useState<Partial<Chatbot>>({});
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
+      setErrorMessage(null);
       setFormData({
         name: bot?.name || 'New AI Support Assistant',
         description: bot?.description || 'Handles customer inquiries and troubleshooting.',
+        websiteUrl: bot?.websiteUrl || 'https://example.com',
         systemInstruction: bot?.systemInstruction || 'You are a helpful customer support representative. Answer accurately using knowledge base context.',
         tone: bot?.tone || 'Friendly',
         primaryColor: bot?.primaryColor || '#4F46E5',
@@ -63,7 +67,22 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    setErrorMessage(null);
+
+    const url = formData.websiteUrl?.trim();
+    if (!url) {
+      setErrorMessage('Website URL is mandatory so the chatbot can fetch and use site data.');
+      setActiveTab('general');
+      return;
+    }
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      setErrorMessage('Website URL must be a valid URL starting with http:// or https://');
+      setActiveTab('general');
+      return;
+    }
+
+    onSave({ ...formData, websiteUrl: url });
     onClose();
   };
 
@@ -113,27 +132,24 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('general')}
-            className={`py-3 px-4 text-xs font-bold border-b-2 transition-all duration-150 cursor-pointer ${
-              activeTab === 'general' ? 'border-black text-black bg-white shadow-xs' : 'border-transparent text-zinc-500 hover:text-black'
-            }`}
+            className={`py-3 px-4 text-xs font-bold border-b-2 transition-all duration-150 cursor-pointer ${activeTab === 'general' ? 'border-black text-black bg-white shadow-xs' : 'border-transparent text-zinc-500 hover:text-black'
+              }`}
           >
             General & AI Persona
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('appearance')}
-            className={`py-3 px-4 text-xs font-bold border-b-2 transition-all duration-150 cursor-pointer ${
-              activeTab === 'appearance' ? 'border-black text-black bg-white shadow-xs' : 'border-transparent text-zinc-500 hover:text-black'
-            }`}
+            className={`py-3 px-4 text-xs font-bold border-b-2 transition-all duration-150 cursor-pointer ${activeTab === 'appearance' ? 'border-black text-black bg-white shadow-xs' : 'border-transparent text-zinc-500 hover:text-black'
+              }`}
           >
             🎨 Color & Navigation
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('leads')}
-            className={`py-3 px-4 text-xs font-bold border-b-2 transition-all duration-150 cursor-pointer ${
-              activeTab === 'leads' ? 'border-black text-black bg-white shadow-xs' : 'border-transparent text-zinc-500 hover:text-black'
-            }`}
+            className={`py-3 px-4 text-xs font-bold border-b-2 transition-all duration-150 cursor-pointer ${activeTab === 'leads' ? 'border-black text-black bg-white shadow-xs' : 'border-transparent text-zinc-500 hover:text-black'
+              }`}
           >
             Lead Capture Gate
           </button>
@@ -141,6 +157,13 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
 
         {/* Modal Body */}
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-5 flex-1">
+          {errorMessage && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs font-semibold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
           {activeTab === 'general' && (
             <>
               <div>
@@ -153,6 +176,27 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                   placeholder="e.g., Acme Product Assistant"
                   required
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-extrabold text-zinc-900 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-indigo-600" />
+                    Website URL (Required for Data Retrieval)
+                  </span>
+                  <span className="text-[10px] text-red-600 font-bold uppercase tracking-wider">Mandatory</span>
+                </label>
+                <input
+                  type="url"
+                  value={formData.websiteUrl || ''}
+                  onChange={e => setFormData({ ...formData, websiteUrl: e.target.value })}
+                  className="w-full px-3.5 py-2 text-xs border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black focus:border-black focus:outline-hidden font-medium"
+                  placeholder="https://example.com or https://company.com/help"
+                  required
+                />
+                <p className="text-[11px] text-zinc-500 mt-1 font-medium">
+                  The chatbot will fetch and use this website's actual content/data when generating responses.
+                </p>
               </div>
 
               <div>
@@ -233,11 +277,10 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                       key={c.hex}
                       type="button"
                       onClick={() => setFormData({ ...formData, primaryColor: c.hex })}
-                      className={`flex items-center gap-2 p-2 rounded-xl border text-left transition-all duration-150 cursor-pointer ${
-                        formData.primaryColor?.toLowerCase() === c.hex.toLowerCase()
+                      className={`flex items-center gap-2 p-2 rounded-xl border text-left transition-all duration-150 cursor-pointer ${formData.primaryColor?.toLowerCase() === c.hex.toLowerCase()
                           ? 'border-black ring-2 ring-black/20 bg-zinc-100 font-bold'
                           : 'border-zinc-200 hover:border-zinc-300 bg-white'
-                      }`}
+                        }`}
                     >
                       <span
                         style={{ backgroundColor: c.hex }}
@@ -277,9 +320,8 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                       key={a}
                       type="button"
                       onClick={() => setFormData({ ...formData, avatar: a })}
-                      className={`w-10 h-10 text-xl rounded-xl border flex items-center justify-center transition cursor-pointer ${
-                        formData.avatar === a ? 'border-black bg-black text-white scale-105 shadow-md' : 'border-zinc-200 hover:bg-zinc-100'
-                      }`}
+                      className={`w-10 h-10 text-xl rounded-xl border flex items-center justify-center transition cursor-pointer ${formData.avatar === a ? 'border-black bg-black text-white scale-105 shadow-md' : 'border-zinc-200 hover:bg-zinc-100'
+                        }`}
                     >
                       {a}
                     </button>
@@ -380,21 +422,39 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
           )}
 
           {/* Modal Footer */}
-          <div className="pt-4 border-t border-zinc-100 flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-xl transition cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-6 py-2.5 text-xs font-extrabold bg-black hover:bg-zinc-800 text-white rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
-            >
-              <Save className="w-4 h-4 text-white" />
-              <span>Save Chatbot Settings</span>
-            </button>
+          <div className="pt-4 border-t border-zinc-100 flex items-center justify-between gap-3">
+            <div>
+              {bot?.id && onDelete && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDelete(bot.id!);
+                    onClose();
+                  }}
+                  className="px-3.5 py-2 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                  <span>Delete Chatbot</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-6 py-2.5 text-xs font-extrabold bg-black hover:bg-zinc-800 text-white rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+              >
+                <Save className="w-4 h-4 text-white" />
+                <span>Save Chatbot Settings</span>
+              </button>
+            </div>
           </div>
         </form>
       </div>

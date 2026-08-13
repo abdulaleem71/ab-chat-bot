@@ -2,5 +2,7 @@
   "name": "NomadsChat",
   "description": "Enterprise AI customer support platform powered by NomadsArc with grounded AI chatbots, RAG knowledge training, live inbox takeover, and embeddable widgets.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

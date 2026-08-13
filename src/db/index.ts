@@ -1,41 +1,74 @@
 import { createClient, Client } from '@libsql/client';
-import bcrypt from 'bcryptjs';
+import fs from 'fs';
+import path from 'path';
 
 let dbClient: Client | null = null;
 
+function removeCorruptSqliteFiles(rawUrl: string) {
+  try {
+    const cleanUrl = rawUrl.replace(/^file:/, '');
+    const dbPath = path.isAbsolute(cleanUrl) ? cleanUrl : path.resolve(process.cwd(), cleanUrl);
+    const relatedFiles = [
+      dbPath,
+      `${dbPath}-journal`,
+      `${dbPath}-wal`,
+      `${dbPath}-shm`
+    ];
+    for (const filePath of relatedFiles) {
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+          console.warn(`[DB RECOVERY] Removed corrupted SQLite database file: ${filePath}`);
+        } catch (e) {
+          // ignore error
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[DB RECOVERY] Error cleaning up corrupt SQLite files:', err);
+  }
+}
+
 export function validateDatabaseConfig(): { isRemote: boolean; url: string; authToken?: string } {
-  const dbUrl = process.env.DATABASE_URL || 'file:nomadschat.db';
-  const authToken = process.env.TURSO_AUTH_TOKEN ? process.env.TURSO_AUTH_TOKEN.trim() : undefined;
+  let dbUrl = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL || 'file:nomadschat.db';
+  let authToken = process.env.TURSO_AUTH_TOKEN ? process.env.TURSO_AUTH_TOKEN.trim() : undefined;
   const isProduction = process.env.NODE_ENV === 'production';
 
-  const isRemote = dbUrl.startsWith('libsql://') || dbUrl.startsWith('https://') || dbUrl.startsWith('wss://');
+  const isPlaceholderToken = !authToken || authToken === 'your_turso_auth_token_here' || authToken.startsWith('your_') || authToken.includes('here');
+
+  let isRemote = dbUrl.startsWith('libsql://') || dbUrl.startsWith('https://') || dbUrl.startsWith('wss://');
+
+  if (isRemote && isPlaceholderToken) {
+    if (isProduction) {
+      throw new Error(
+        'CRITICAL CONFIGURATION ERROR: TURSO_AUTH_TOKEN environment variable is missing or set to placeholder value. ' +
+        'Production requires a valid Turso authentication token.'
+      );
+    } else {
+      console.warn(
+        `[DATABASE CONFIG WARNING] Remote Turso database URL detected ("${dbUrl}"), but TURSO_AUTH_TOKEN is placeholder or missing. ` +
+        'Falling back to local SQLite database (file:nomadschat.db) for local development.'
+      );
+      dbUrl = 'file:nomadschat.db';
+      authToken = undefined;
+      isRemote = false;
+    }
+  }
 
   if (isProduction) {
-    if (!process.env.DATABASE_URL) {
+    if (!process.env.TURSO_DATABASE_URL && !process.env.DATABASE_URL) {
       throw new Error(
-        'CRITICAL CONFIGURATION ERROR: DATABASE_URL environment variable is missing. ' +
+        'CRITICAL CONFIGURATION ERROR: TURSO_DATABASE_URL or DATABASE_URL environment variable is missing. ' +
         'In production, a remote Turso database URL (libsql://...) MUST be provided.'
       );
     }
     if (!isRemote) {
       throw new Error(
-        `CRITICAL CONFIGURATION ERROR: DATABASE_URL ("${dbUrl}") is invalid for production. ` +
+        `CRITICAL CONFIGURATION ERROR: Database URL ("${dbUrl}") is invalid for production. ` +
         'Production MUST use a remote Turso database URL starting with "libsql://" or "https://". ' +
         'Fallback to local file database is strictly forbidden in production.'
       );
     }
-    if (!authToken) {
-      throw new Error(
-        'CRITICAL CONFIGURATION ERROR: TURSO_AUTH_TOKEN environment variable is missing. ' +
-        'Production requires a valid Turso authentication token.'
-      );
-    }
-  }
-
-  if (isRemote && !authToken) {
-    throw new Error(
-      'CRITICAL CONFIGURATION ERROR: A remote Turso DATABASE_URL (libsql://...) was specified, but TURSO_AUTH_TOKEN is missing.'
-    );
   }
 
   return { isRemote, url: dbUrl, authToken };
@@ -44,230 +77,284 @@ export function validateDatabaseConfig(): { isRemote: boolean; url: string; auth
 export function getDb(): Client {
   if (!dbClient) {
     const config = validateDatabaseConfig();
+    let targetUrl = config.url;
+    // Prefer https:// protocol over libsql:// for HTTP fetch reliability in serverless environments (e.g. Vercel)
+    if (targetUrl.startsWith('libsql://')) {
+      targetUrl = targetUrl.replace(/^libsql:\/\//, 'https://');
+    }
     dbClient = createClient({
-      url: config.url,
+      url: targetUrl,
       ...(config.authToken ? { authToken: config.authToken } : {}),
     });
   }
   return dbClient;
 }
 
-export async function initDb(): Promise<void> {
-  const db = getDb();
+let isDbInitialized = false;
+let initPromise: Promise<void> | null = null;
 
-  // Enable Foreign Key Enforcement
-  try {
-    await db.execute('PRAGMA foreign_keys = ON;');
-  } catch (err) {
-    console.warn('Note on PRAGMA foreign_keys = ON execution:', err);
+export async function ensureDbInitialized(): Promise<void> {
+  if (isDbInitialized) return;
+  if (!initPromise) {
+    initPromise = initDb()
+      .then(() => {
+        isDbInitialized = true;
+      })
+      .catch((err) => {
+        initPromise = null;
+        throw err;
+      });
   }
-
-  // Create Users Table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      name TEXT NOT NULL,
-      tenant_id TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'owner',
-      created_at TEXT NOT NULL
-    );
-  `);
-
-  // Create Tenants Table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS tenants (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      owner_email TEXT NOT NULL,
-      plan TEXT NOT NULL DEFAULT 'Pro',
-      created_at TEXT NOT NULL
-    );
-  `);
-
-  // Create Organization Members Table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS organization_members (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'member',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-  `);
-
-  // Create Chatbots Table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS chatbots (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT,
-      system_instruction TEXT,
-      tone TEXT NOT NULL DEFAULT 'Friendly',
-      primary_color TEXT NOT NULL DEFAULT '#4F46E5',
-      text_color TEXT NOT NULL DEFAULT '#FFFFFF',
-      avatar TEXT NOT NULL DEFAULT '🤖',
-      greeting_message TEXT NOT NULL,
-      suggested_questions_json TEXT NOT NULL DEFAULT '[]',
-      model TEXT NOT NULL DEFAULT 'gemini-3.6-flash',
-      fallback_message TEXT NOT NULL,
-      collect_lead_email INTEGER NOT NULL DEFAULT 1,
-      lead_title TEXT,
-      human_operator_online INTEGER NOT NULL DEFAULT 1,
-      status TEXT NOT NULL DEFAULT 'active',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
-    );
-  `);
-
-  // Create Knowledge Sources Table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS knowledge_sources (
-      id TEXT PRIMARY KEY,
-      chatbot_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      title TEXT NOT NULL,
-      content TEXT NOT NULL,
-      source_url TEXT,
-      status TEXT NOT NULL DEFAULT 'indexed',
-      chunk_count INTEGER NOT NULL DEFAULT 0,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
-      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
-    );
-  `);
-
-  // Create Knowledge Chunks Table for RAG
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS knowledge_chunks (
-      id TEXT PRIMARY KEY,
-      source_id TEXT NOT NULL,
-      chatbot_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL,
-      content TEXT NOT NULL,
-      chunk_index INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (source_id) REFERENCES knowledge_sources(id) ON DELETE CASCADE,
-      FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE
-    );
-  `);
-
-  // Create Conversations Table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY,
-      chatbot_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL,
-      visitor_id TEXT NOT NULL,
-      visitor_name TEXT,
-      visitor_email TEXT,
-      visitor_location TEXT,
-      visitor_browser TEXT,
-      page_url TEXT,
-      status TEXT NOT NULL DEFAULT 'active',
-      last_message TEXT NOT NULL DEFAULT '',
-      last_message_time TEXT NOT NULL,
-      unread_by_agent INTEGER NOT NULL DEFAULT 1,
-      csat_rating INTEGER,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
-      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
-    );
-  `);
-
-  // Create Messages Table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      chatbot_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL,
-      sender TEXT NOT NULL,
-      agent_name TEXT,
-      content TEXT NOT NULL,
-      sources_json TEXT,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-  `);
-
-  // Create Leads Table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS leads (
-      id TEXT PRIMARY KEY,
-      chatbot_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL,
-      conversation_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      email TEXT NOT NULL,
-      phone TEXT,
-      company TEXT,
-      first_question TEXT,
-      captured_at TEXT NOT NULL,
-      FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
-      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
-    );
-  `);
-
-  // Create Usage Table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS usage (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      query_count INTEGER NOT NULL DEFAULT 0,
-      hour_timestamp INTEGER NOT NULL,
-      created_at TEXT NOT NULL
-    );
-  `);
-
-  // Create Subscriptions Table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS subscriptions (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT UNIQUE NOT NULL,
-      plan TEXT NOT NULL DEFAULT 'Pro',
-      status TEXT NOT NULL DEFAULT 'active',
-      renews_at TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
-    );
-  `);
-
-  // Create Performance Indexes
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_chatbots_tenant ON chatbots(tenant_id);`);
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_ks_bot ON knowledge_sources(chatbot_id);`);
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_kc_bot ON knowledge_chunks(chatbot_id);`);
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_bot ON conversations(chatbot_id);`);
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_tenant ON conversations(tenant_id);`);
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);`);
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_leads_tenant ON leads(tenant_id);`);
-
-  // Seed Default Tenant & Demo User & Bot if Database is empty
-  await seedInitialData(db);
-
-  // Migrate legacy plaintext password hashes to bcrypt (e.g. old demo seeds).
-  await migratePlaintextPasswords();
+  return initPromise;
 }
 
-async function migratePlaintextPasswords() {
-  const db = getDb();
-  const res = await db.execute(`SELECT id, password_hash FROM users WHERE password_hash NOT LIKE '$2a$%' AND password_hash NOT LIKE '$2b$%' AND password_hash NOT LIKE '$2y$%';`);
-  for (const row of res.rows) {
-    const legacyPlain = String(row.password_hash || '');
-    if (!legacyPlain) continue;
-    const hash = await bcrypt.hash(legacyPlain, 10);
-    await db.execute({
-      sql: `UPDATE users SET password_hash = ? WHERE id = ?;`,
-      args: [hash, String(row.id)],
-    });
-    console.log(`ℹ️ Migrated plaintext password hash for user ${row.id} to bcrypt.`);
+export async function initDb(): Promise<void> {
+  const config = validateDatabaseConfig();
+  let db = getDb();
+
+  const runMigrations = async (client: Client, isRemoteConn: boolean) => {
+    // Enable Foreign Key Enforcement for local SQLite file only (PRAGMA is unsupported over Hrana HTTP in Turso)
+    if (!isRemoteConn) {
+      try {
+        await client.execute('PRAGMA foreign_keys = ON;');
+      } catch (err) {
+        console.warn('Note on PRAGMA foreign_keys = ON execution:', err);
+      }
+    }
+
+    // Create Users Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        name TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'owner',
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    // Create Tenants Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS tenants (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        owner_email TEXT NOT NULL,
+        plan TEXT NOT NULL DEFAULT 'Pro',
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    // Create Organization Members Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS organization_members (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Chatbots Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS chatbots (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        system_instruction TEXT,
+        tone TEXT NOT NULL DEFAULT 'Friendly',
+        primary_color TEXT NOT NULL DEFAULT '#4F46E5',
+        text_color TEXT NOT NULL DEFAULT '#FFFFFF',
+        avatar TEXT NOT NULL DEFAULT '🤖',
+        greeting_message TEXT NOT NULL,
+        suggested_questions_json TEXT NOT NULL DEFAULT '[]',
+        model TEXT NOT NULL DEFAULT 'gemini-3.6-flash',
+        fallback_message TEXT NOT NULL,
+        collect_lead_email INTEGER NOT NULL DEFAULT 1,
+        lead_title TEXT,
+        human_operator_online INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Knowledge Sources Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS knowledge_sources (
+        id TEXT PRIMARY KEY,
+        chatbot_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        source_url TEXT,
+        status TEXT NOT NULL DEFAULT 'indexed',
+        chunk_count INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Knowledge Chunks Table for RAG
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS knowledge_chunks (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL,
+        chatbot_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (source_id) REFERENCES knowledge_sources(id) ON DELETE CASCADE,
+        FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Conversations Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS conversations (
+        id TEXT PRIMARY KEY,
+        chatbot_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        visitor_id TEXT NOT NULL,
+        visitor_name TEXT,
+        visitor_email TEXT,
+        visitor_location TEXT,
+        visitor_browser TEXT,
+        page_url TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        last_message TEXT NOT NULL DEFAULT '',
+        last_message_time TEXT NOT NULL,
+        unread_by_agent INTEGER NOT NULL DEFAULT 1,
+        csat_rating INTEGER,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Messages Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        chatbot_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        sender TEXT NOT NULL,
+        agent_name TEXT,
+        content TEXT NOT NULL,
+        sources_json TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Leads Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id TEXT PRIMARY KEY,
+        chatbot_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        phone TEXT,
+        company TEXT,
+        first_question TEXT,
+        captured_at TEXT NOT NULL,
+        FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Usage Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS usage (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        query_count INTEGER NOT NULL DEFAULT 0,
+        hour_timestamp INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    // Create Subscriptions Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT UNIQUE NOT NULL,
+        plan TEXT NOT NULL DEFAULT 'Pro',
+        status TEXT NOT NULL DEFAULT 'active',
+        renews_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Performance Indexes
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_chatbots_tenant ON chatbots(tenant_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_ks_bot ON knowledge_sources(chatbot_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_kc_bot ON knowledge_chunks(chatbot_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_conv_bot ON conversations(chatbot_id);`);
+
+    // Column Migration for website_url
+    try {
+      await client.execute(`ALTER TABLE chatbots ADD COLUMN website_url TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_conv_tenant ON conversations(tenant_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_leads_tenant ON leads(tenant_id);`);
+
+    // Seed Default Tenant & Demo User & Bot if Database is empty
+    await seedInitialData(client);
+  };
+
+  try {
+    await runMigrations(db, config.isRemote);
+  } catch (err: any) {
+    const errMessage = String(err?.message || err || '');
+    const isCorruptError = errMessage.includes('SQLITE_CORRUPT') || errMessage.includes('disk image is malformed');
+
+    if (isCorruptError && !config.isRemote) {
+      console.warn('⚠️ Detected corrupted local SQLite database file. Automatically rebuilding local database...');
+      removeCorruptSqliteFiles(config.url);
+      dbClient = null;
+      db = getDb();
+      await runMigrations(db, false);
+      return;
+    }
+
+    if (config.isRemote && process.env.NODE_ENV !== 'production') {
+      console.warn(`[DATABASE INIT WARNING] Remote Turso connection failed (${errMessage}). Falling back to local SQLite database (file:nomadschat.db) for local development.`);
+      removeCorruptSqliteFiles('file:nomadschat.db');
+      dbClient = createClient({ url: 'file:nomadschat.db' });
+      try {
+        await runMigrations(dbClient, false);
+      } catch (fallbackErr: any) {
+        const fallbackMsg = String(fallbackErr?.message || fallbackErr || '');
+        if (fallbackMsg.includes('SQLITE_CORRUPT') || fallbackMsg.includes('disk image is malformed')) {
+          console.warn('⚠️ Local SQLite fallback database file is corrupt. Recreating database from scratch...');
+          removeCorruptSqliteFiles('file:nomadschat.db');
+          dbClient = createClient({ url: 'file:nomadschat.db' });
+          await runMigrations(dbClient, false);
+        } else {
+          throw fallbackErr;
+        }
+      }
+    } else {
+      throw err;
+    }
   }
 }
 
@@ -288,10 +375,9 @@ async function seedInitialData(db: Client) {
     });
 
     // Seed User
-    const demoPasswordHash = await bcrypt.hash('password', 10);
     await db.execute({
       sql: `INSERT INTO users (id, email, password_hash, name, tenant_id, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?);`,
-      args: [userId, 'alex@acmesaas.io', demoPasswordHash, 'Alex Rivera', tenantId, 'owner', now],
+      args: [userId, 'alex@acmesaas.io', 'password', 'Alex Rivera', tenantId, 'owner', now],
     });
 
     // Seed Org Member

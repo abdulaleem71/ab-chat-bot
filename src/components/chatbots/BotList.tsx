@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Chatbot } from '../../types';
-import { Bot, Plus, Settings, MessageSquare, Code, ExternalLink, Sparkles, CheckCircle2, ShieldCheck, UserCheck } from 'lucide-react';
+import { Bot, Plus, Settings, MessageSquare, Code, ExternalLink, Sparkles, CheckCircle2, ShieldCheck, UserCheck, Trash2, Globe, AlertTriangle } from 'lucide-react';
 
 interface BotListProps {
   chatbots: Chatbot[];
@@ -9,6 +9,7 @@ interface BotListProps {
   onTestBot: (bot: Chatbot) => void;
   onOpenEmbedModal: (bot: Chatbot) => void;
   onTrainBot: (bot: Chatbot) => void;
+  onDeleteBot?: (bot: Chatbot) => void;
 }
 
 export const BotList: React.FC<BotListProps> = ({
@@ -18,7 +19,10 @@ export const BotList: React.FC<BotListProps> = ({
   onTestBot,
   onOpenEmbedModal,
   onTrainBot,
+  onDeleteBot,
 }) => {
+  const [deletingBot, setDeletingBot] = useState<Chatbot | null>(null);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
       {/* Header Bar */}
@@ -139,8 +143,11 @@ export const BotList: React.FC<BotListProps> = ({
                     </span>
                   </div>
                   <div>
-                    <span className="text-zinc-400 block text-[10px] uppercase font-bold">Human Takeover</span>
-                    <span className="text-black font-semibold">Online</span>
+                    <span className="text-zinc-400 block text-[10px] uppercase font-bold">Data Source</span>
+                    <span className="text-black font-semibold flex items-center gap-1 truncate" title={bot.websiteUrl}>
+                      <Globe className="w-3 h-3 text-indigo-600 shrink-0" />
+                      <span className="truncate">{bot.websiteUrl ? bot.websiteUrl.replace(/^https?:\/\//, '') : 'Indexed'}</span>
+                    </span>
                   </div>
                 </div>
 
@@ -152,10 +159,10 @@ export const BotList: React.FC<BotListProps> = ({
               </div>
 
               {/* Action Buttons */}
-              <div className="pt-3 border-t border-zinc-100 flex items-center justify-between gap-2">
+              <div className="pt-3 border-t border-zinc-100 flex items-center justify-between gap-1.5">
                 <button
                   onClick={() => onTrainBot(bot)}
-                  className="flex-1 text-xs font-semibold text-black bg-zinc-100 hover:bg-black hover:text-white py-2 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 text-xs font-semibold text-black bg-zinc-100 hover:bg-black hover:text-white py-2 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>Train</span>
@@ -163,10 +170,10 @@ export const BotList: React.FC<BotListProps> = ({
 
                 <button
                   onClick={() => onTestBot(bot)}
-                  className="flex-1 text-xs font-semibold text-white bg-black hover:bg-zinc-800 py-2 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                  className="flex-1 text-xs font-semibold text-white bg-black hover:bg-zinc-800 py-2 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer shadow-xs"
                 >
                   <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Test Live</span>
+                  <span>Test</span>
                 </button>
 
                 <button
@@ -184,9 +191,61 @@ export const BotList: React.FC<BotListProps> = ({
                 >
                   <Settings className="w-4 h-4" />
                 </button>
+
+                {onDeleteBot && (
+                  <button
+                    onClick={() => setDeletingBot(bot)}
+                    className="p-2 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-xl transition cursor-pointer"
+                    title="Delete Chatbot"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletingBot && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full border border-zinc-200 shadow-2xl space-y-4 relative">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-zinc-900">Delete AI Chatbot?</h3>
+                <p className="text-xs text-zinc-500 font-medium">Permanent removal request</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-600 leading-relaxed font-medium bg-zinc-50 p-3.5 rounded-2xl border border-zinc-200">
+              Are you sure you want to permanently delete <strong className="text-black font-extrabold">{deletingBot.name}</strong>? All trained knowledge base pages, grounding embeddings, lead records, and widget configurations associated with this bot will be erased.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setDeletingBot(null)}
+                className="px-4 py-2 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (onDeleteBot && deletingBot) {
+                    onDeleteBot(deletingBot);
+                  }
+                  setDeletingBot(null);
+                }}
+                className="px-4 py-2.5 text-xs font-extrabold bg-red-600 hover:bg-red-700 text-white rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-white" />
+                <span>Yes, Delete Chatbot</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

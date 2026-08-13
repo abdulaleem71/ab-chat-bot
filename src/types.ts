@@ -26,6 +26,7 @@ export interface Chatbot {
   tenantId: string;
   name: string;
   description: string;
+  websiteUrl?: string;
   systemInstruction: string;
   tone: BotTone;
   primaryColor: string;

@@ -34,16 +34,17 @@ export class ChatbotRepo {
 
     await db.execute({
       sql: `INSERT INTO chatbots (
-        id, tenant_id, user_id, name, description, system_instruction, tone, primary_color, text_color, avatar,
+        id, tenant_id, user_id, name, description, website_url, system_instruction, tone, primary_color, text_color, avatar,
         greeting_message, suggested_questions_json, model, fallback_message, collect_lead_email, lead_title,
         human_operator_online, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       args: [
         bot.id,
         bot.tenantId,
         (bot as any).userId || 'usr_acme_admin',
         bot.name,
         bot.description || '',
+        bot.websiteUrl || '',
         bot.systemInstruction || '',
         bot.tone || 'Friendly',
         bot.primaryColor || '#4F46E5',
@@ -83,7 +84,7 @@ export class ChatbotRepo {
 
     await db.execute({
       sql: `UPDATE chatbots SET
-        name = ?, description = ?, system_instruction = ?, tone = ?, primary_color = ?,
+        name = ?, description = ?, website_url = ?, system_instruction = ?, tone = ?, primary_color = ?,
         text_color = ?, avatar = ?, greeting_message = ?, suggested_questions_json = ?,
         model = ?, fallback_message = ?, collect_lead_email = ?, lead_title = ?,
         human_operator_online = ?, status = ?, updated_at = ?
@@ -91,6 +92,7 @@ export class ChatbotRepo {
       args: [
         updated.name,
         updated.description,
+        updated.websiteUrl || '',
         updated.systemInstruction,
         updated.tone,
         updated.primaryColor,
@@ -135,6 +137,7 @@ export class ChatbotRepo {
       tenantId: String(r.tenant_id),
       name: String(r.name),
       description: String(r.description || ''),
+      websiteUrl: r.website_url ? String(r.website_url) : undefined,
       systemInstruction: String(r.system_instruction || ''),
       tone: (r.tone || 'Friendly') as any,
       primaryColor: String(r.primary_color || '#4F46E5'),

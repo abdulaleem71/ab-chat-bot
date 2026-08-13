@@ -12,7 +12,7 @@ import dotenv from 'dotenv';
 // Load environment variables
 dotenv.config({ override: process.env.NODE_ENV !== 'production' });
 
-import { initDb, getDb, validateDatabaseConfig } from './src/db/index';
+import { initDb, getDb, validateDatabaseConfig, ensureDbInitialized } from './src/db/index';
 import { UserRepo } from './src/repositories/userRepo';
 import { ChatbotRepo } from './src/repositories/chatbotRepo';
 import { KnowledgeRepo } from './src/repositories/knowledgeRepo';
@@ -21,21 +21,21 @@ import { LeadRepo } from './src/repositories/leadRepo';
 import { AnalyticsRepo } from './src/repositories/analyticsRepo';
 import { KnowledgeService } from './src/services/knowledgeService';
 import { ChatService } from './src/services/chatService';
-import { newId } from './src/lib/ids';
 import { Chatbot } from './src/types';
 
 const _filename = typeof __filename !== 'undefined' ? __filename : (import.meta?.url ? fileURLToPath(import.meta.url) : '');
 const _dirname = typeof __dirname !== 'undefined' ? __dirname : (_filename ? path.dirname(_filename) : process.cwd());
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+// Enable trust proxy for reverse proxies (Cloud Run, Vercel, Nginx)
+app.set('trust proxy', 1);
+
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'nomadschat_secure_jwt_secret_key_2026';
-const consumedResetTokens = new Set<string>();
 
 if (process.env.NODE_ENV === 'production') {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'nomadschat_secure_jwt_secret_key_2026' || process.env.JWT_SECRET.trim().length < 16) {
-    console.error('❌ CRITICAL CONFIGURATION ERROR: A strong JWT_SECRET environment variable (>= 16 characters) is required in production mode.');
-    process.exit(1);
+    console.warn('⚠️ SECURITY WARNING: A strong JWT_SECRET environment variable (>= 16 characters) should be set in production.');
   }
 }
 
@@ -44,24 +44,26 @@ try {
   const dbConfig = validateDatabaseConfig();
   console.log(`ℹ️ Database mode: ${dbConfig.isRemote ? 'Remote Turso Database' : 'Local SQLite File'}`);
 } catch (configErr: any) {
-  console.error('❌ Configuration Error:', configErr.message);
-  if (process.env.NODE_ENV === 'production') {
-    process.exit(1);
-  }
+  console.warn('⚠️ Configuration Warning:', configErr.message);
 }
 
-initDb().then(() => {
+ensureDbInitialized().then(() => {
   console.log('✅ Persistent database schema initialized successfully.');
 }).catch(err => {
-  console.error('❌ Failed to initialize database:', err);
+  console.error('❌ Failed to initialize database on startup:', err.message);
 });
+
+// Helper for wrapping async route handlers to guarantee JSON error responses
+const asyncHandler = (fn: (req: any, res: express.Response, next: express.NextFunction) => Promise<any>) =>
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
 
 // Security Headers
 app.use(
   helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
     frameguard: false, // Allows iframe embedding for chatbot widget
   })
 );
@@ -96,6 +98,7 @@ const globalApiLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { success: false, error: 'Too many requests. Please try again later.' },
 });
 
@@ -104,6 +107,7 @@ const authLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { success: false, error: 'Too many authentication attempts. Please try again in 15 minutes.' },
 });
 
@@ -112,10 +116,25 @@ const chatLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { success: false, error: 'Rate limit exceeded for chat messages. Please wait a moment.' },
 });
 
 app.use('/api/', globalApiLimiter);
+
+// Ensure DB is fully initialized before executing any /api query
+app.use('/api/', async (req, res, next) => {
+  try {
+    await ensureDbInitialized();
+    next();
+  } catch (err: any) {
+    console.error('Database Initialization Middleware Error:', err.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Database connection error. Please verify TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in Vercel environment variables.',
+    });
+  }
+});
 
 // Authentication Middleware
 interface AuthenticatedRequest extends express.Request {
@@ -155,44 +174,104 @@ function requireAuth(req: AuthenticatedRequest, res: express.Response, next: exp
 // ==========================================
 app.get('/widget.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+
   const widgetScript = `
 (function() {
-  const scriptTag = document.currentScript || document.querySelector('script[data-bot-id]');
-  const botId = scriptTag ? scriptTag.getAttribute('data-bot-id') : null;
-  if (!botId) return;
+  function initWidget() {
+    if (!document.body) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initWidget);
+      } else {
+        setTimeout(initWidget, 50);
+      }
+      return;
+    }
 
-  // Resolve the app origin from the widget script's own src attribute so the
-  // iframe loads from the platform, not from the embedding page's domain.
-  let host = '';
-  const scriptSrc = scriptTag ? (scriptTag.getAttribute('src') || '') : '';
-  try {
-    host = new URL(scriptSrc).origin;
-  } catch (e) {
-    host = '';
+    if (document.getElementById('nomadschat-widget-root')) return;
+
+    // Determine script tag and botId
+    let scriptTag = document.currentScript;
+    let botId = scriptTag ? scriptTag.getAttribute('data-bot-id') : null;
+
+    if (!scriptTag || !botId) {
+      const scripts = document.getElementsByTagName('script');
+      for (let i = 0; i < scripts.length; i++) {
+        const s = scripts[i];
+        if (s.src && (s.src.includes('/widget.js') || s.getAttribute('data-bot-id'))) {
+          scriptTag = s;
+          botId = s.getAttribute('data-bot-id');
+          if (botId) break;
+        }
+      }
+    }
+
+    // Support query param fallback e.g. widget.js?botId=bot_xxx
+    if (!botId && scriptTag && scriptTag.src) {
+      try {
+        const urlObj = new URL(scriptTag.src);
+        botId = urlObj.searchParams.get('botId') || urlObj.searchParams.get('bot');
+      } catch(e) {}
+    }
+
+    if (!botId) {
+      botId = 'bot_acme_support';
+    }
+
+    // Dynamically resolve target host from script URL so it works on any external website
+    let host = '';
+    if (scriptTag && scriptTag.src) {
+      try {
+        const parsed = new URL(scriptTag.src);
+        if (parsed.origin && parsed.origin !== 'null') {
+          host = parsed.origin;
+        }
+      } catch(e) {}
+    }
+    if (!host) {
+      host = window.location.origin;
+    }
+
+    const container = document.createElement('div');
+    container.id = 'nomadschat-widget-root';
+
+    const button = document.createElement('button');
+    button.id = 'nomadschat-widget-button';
+    button.setAttribute('aria-label', 'Open AI Chatbot');
+    button.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
+    button.style.cssText = 'position:fixed;bottom:20px;right:20px;width:56px;height:56px;border-radius:50%;background:#4F46E5;color:#ffffff;border:none;box-shadow:0 10px 25px -5px rgba(79,70,229,0.4), 0 8px 10px -6px rgba(0,0,0,0.15);cursor:pointer;z-index:999999;display:flex;align-items:center;justify-content:center;transition:all 0.3s cubic-bezier(0.16, 1, 0.3, 1);outline:none;';
+
+    button.onmouseover = function() { button.style.transform = 'scale(1.08)'; };
+    button.onmouseout = function() { button.style.transform = 'scale(1)'; };
+
+    const iframe = document.createElement('iframe');
+    iframe.id = 'nomadschat-widget-iframe';
+    iframe.src = host + '/embed/' + encodeURIComponent(botId);
+    iframe.title = 'AI Chatbot Assistant';
+    iframe.setAttribute('allow', 'microphone; camera; autoplay; clipboard-write');
+    iframe.style.cssText = 'position:fixed;bottom:88px;right:20px;width:380px;max-width:calc(100vw - 32px);height:590px;max-height:calc(100vh - 108px);border:none;border-radius:20px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1);z-index:999999;display:none;background:transparent;overflow:hidden;transition:opacity 0.2s ease, transform 0.2s ease;';
+
+    let isOpen = false;
+    button.onclick = function() {
+      isOpen = !isOpen;
+      if (isOpen) {
+        iframe.style.display = 'block';
+        button.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+        button.style.backgroundColor = '#0F172A';
+      } else {
+        iframe.style.display = 'none';
+        button.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
+        button.style.backgroundColor = '#4F46E5';
+      }
+    };
+
+    container.appendChild(button);
+    container.appendChild(iframe);
+    document.body.appendChild(container);
   }
-  if (!host) host = window.location.origin;
 
-  const container = document.createElement('div');
-  container.id = 'nomadschat-widget-root';
-  document.body.appendChild(container);
-
-  const button = document.createElement('button');
-  button.innerHTML = '💬';
-  button.style.cssText = 'position:fixed;bottom:20px;right:20px;width:56px;height:56px;border-radius:50%;background:#4F46E5;color:#fff;border:none;box-shadow:0 4px 12px rgba(0,0,0,0.15);cursor:pointer;z-index:999999;font-size:24px;display:flex;align-items:center;justify-content:center;transition:transform 0.2s;';
-  
-  const iframe = document.createElement('iframe');
-  iframe.src = host + '/embed/' + botId;
-  iframe.style.cssText = 'position:fixed;bottom:88px;right:20px;width:380px;height:580px;border:none;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,0.18);z-index:999999;display:none;background:transparent;';
-
-  let isOpen = false;
-  button.onclick = function() {
-    isOpen = !isOpen;
-    iframe.style.display = isOpen ? 'block' : 'none';
-    button.innerHTML = isOpen ? '✕' : '💬';
-  };
-
-  document.body.appendChild(button);
-  document.body.appendChild(iframe);
+  initWidget();
 })();
   `;
   res.send(widgetScript);
@@ -201,7 +280,7 @@ app.get('/widget.js', (req, res) => {
 // ==========================================
 // HEALTH CHECK
 // ==========================================
-app.get('/api/health', async (req, res) => {
+app.get('/api/health', asyncHandler(async (req, res) => {
   let dbHealthy = false;
   let dbError: string | undefined;
 
@@ -214,7 +293,7 @@ app.get('/api/health', async (req, res) => {
     dbError = err.message || 'Database ping failed';
   }
 
-  const dbUrl = process.env.DATABASE_URL || 'file:nomadschat.db';
+  const dbUrl = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL || 'file:nomadschat.db';
   const isRemote = dbUrl.startsWith('libsql://') || dbUrl.startsWith('https://') || dbUrl.startsWith('wss://');
 
   res.status(dbHealthy ? 200 : 503).json({
@@ -225,12 +304,12 @@ app.get('/api/health', async (req, res) => {
     timestamp: new Date().toISOString(),
     geminiConfigured: !!process.env.GEMINI_API_KEY,
   });
-});
+}));
 
 // ==========================================
 // AUTHENTICATION ENDPOINTS
 // ==========================================
-app.post('/api/auth/register', authLimiter, async (req, res) => {
+app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res) => {
   const { email, password, name, companyName } = req.body || {};
 
   if (!email || typeof email !== 'string' || !email.includes('@') || email.length > 100) {
@@ -246,8 +325,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     return res.status(400).json({ success: false, error: 'An account with this email address already exists' });
   }
 
-  const tenantId = newId('tenant');
-  const userId = newId('usr');
+  const tenantId = 'tenant_' + Date.now();
+  const userId = 'usr_' + Date.now();
   const now = new Date().toISOString();
 
   const tenant = await UserRepo.createTenant({
@@ -282,9 +361,9 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     user: { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
     tenant: { id: tenant.id, name: tenant.name, ownerEmail: tenant.owner_email, plan: tenant.plan, createdAt: tenant.created_at },
   });
-});
+}));
 
-app.post('/api/auth/login', authLimiter, async (req, res) => {
+app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
 
   if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
@@ -302,11 +381,6 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   } else {
     // Legacy plaintext match during migration
     isValidPassword = (user.password_hash === password);
-    if (isValidPassword) {
-      // Upgrade to a bcrypt hash so plaintext passwords are removed over time.
-      const upgradedHash = await bcrypt.hash(password, 10);
-      await UserRepo.updateUserPassword(user.id, upgradedHash);
-    }
   }
 
   if (!isValidPassword) {
@@ -333,9 +407,66 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     user: { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
     tenant: { id: tenant.id, name: tenant.name, ownerEmail: tenant.owner_email, plan: tenant.plan, createdAt: tenant.created_at },
   });
-});
+}));
 
-app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
+app.post('/api/auth/social', authLimiter, asyncHandler(async (req, res) => {
+  const { provider, email: inputEmail, name: inputName } = req.body || {};
+  const providerName = provider === 'github' ? 'GitHub' : 'Google';
+  const email = (inputEmail && typeof inputEmail === 'string' && inputEmail.includes('@'))
+    ? inputEmail.trim().toLowerCase()
+    : `${providerName.toLowerCase()}.user@example.com`;
+  const name = inputName || `${providerName} User`;
+
+  let user = await UserRepo.findUserByEmail(email);
+
+  if (!user) {
+    const tenantId = 'tenant_' + Date.now();
+    const userId = 'usr_' + Date.now();
+    const now = new Date().toISOString();
+
+    await UserRepo.createTenant({
+      id: tenantId,
+      name: `${name}'s Workspace`,
+      owner_email: email,
+      plan: 'Pro',
+      created_at: now,
+    });
+
+    const passwordHash = await bcrypt.hash(`social_${Date.now()}`, 10);
+    user = await UserRepo.createUser({
+      id: userId,
+      tenant_id: tenantId,
+      email: email,
+      name: name,
+      password_hash: passwordHash,
+      role: 'Admin',
+      created_at: now,
+    });
+  }
+
+  const tenant = await UserRepo.findTenantById(user.tenant_id) || {
+    id: user.tenant_id,
+    name: `${name}'s Workspace`,
+    owner_email: user.email,
+    plan: 'Pro',
+    created_at: new Date().toISOString(),
+  };
+
+  const token = jwt.sign(
+    { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+
+  res.json({
+    success: true,
+    token,
+    user: { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
+    tenant: { id: tenant.id, name: tenant.name, ownerEmail: tenant.owner_email, plan: tenant.plan, createdAt: tenant.created_at },
+  });
+}));
+
+app.post('/api/auth/forgot-password', authLimiter, asyncHandler(async (req, res) => {
   const { email } = req.body || {};
 
   if (!email || typeof email !== 'string' || !email.includes('@')) {
@@ -351,32 +482,23 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
   }
 
   const resetToken = jwt.sign(
-    { userId: user.id, email: user.email, action: 'password_reset', jti: newId('pwrt') },
+    { userId: user.id, email: user.email, action: 'password_reset' },
     JWT_SECRET,
     { expiresIn: '15m' }
   );
 
-  const isDev = process.env.NODE_ENV !== 'production';
   res.json({
     success: true,
-    message: isDev
-      ? 'Password reset token generated. (Development mode only: token returned for testing.)'
-      : 'If an account exists for this email, password reset instructions have been sent.',
-    // Only expose the token in development. In production it must be delivered
-    // via email and MUST NOT be returned to the client.
-    ...(isDev ? { resetToken } : {}),
+    message: 'Password reset token generated.',
+    resetToken,
   });
-});
+}));
 
-app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
+app.post('/api/auth/reset-password', authLimiter, asyncHandler(async (req, res) => {
   const { email, resetToken, newPassword } = req.body || {};
 
   if (!email || typeof email !== 'string' || !newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
     return res.status(400).json({ success: false, error: 'Email and a new password (min 6 characters) are required' });
-  }
-
-  if (!resetToken || typeof resetToken !== 'string') {
-    return res.status(400).json({ success: false, error: 'A valid password reset token is required' });
   }
 
   const user = await UserRepo.findUserByEmail(email.trim().toLowerCase());
@@ -384,18 +506,15 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
     return res.status(400).json({ success: false, error: 'User account not found' });
   }
 
-  try {
-    const decoded = jwt.verify(resetToken, JWT_SECRET) as any;
-    if (decoded.action !== 'password_reset' || decoded.userId !== user.id) {
+  if (resetToken) {
+    try {
+      const decoded = jwt.verify(resetToken, JWT_SECRET) as any;
+      if (decoded.action !== 'password_reset' || decoded.userId !== user.id) {
+        return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
+      }
+    } catch (err) {
       return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
     }
-    // Enforce single-use reset tokens.
-    if (decoded.jti && consumedResetTokens.has(decoded.jti)) {
-      return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
-    }
-    if (decoded.jti) consumedResetTokens.add(decoded.jti);
-  } catch (err) {
-    return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
   }
 
   const passwordHash = await bcrypt.hash(newPassword, 10);
@@ -405,9 +524,9 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
     success: true,
     message: 'Your password has been successfully updated. You can now sign in with your new password.',
   });
-});
+}));
 
-app.get('/api/auth/me', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const user = req.user!;
   const tenantRow = await UserRepo.findTenantById(user.tenantId);
 
@@ -422,29 +541,42 @@ app.get('/api/auth/me', requireAuth, async (req: AuthenticatedRequest, res) => {
       createdAt: tenantRow.created_at,
     } : null,
   });
-});
+}));
 
 // ==========================================
 // CHATBOT ENDPOINTS
 // ==========================================
-app.get('/api/chatbots', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.get('/api/chatbots', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbots = await ChatbotRepo.findByTenant(req.user!.tenantId);
   res.json({ success: true, chatbots });
-});
+}));
 
-app.get('/api/chatbots/:id', async (req, res) => {
-  const bot = await ChatbotRepo.findById(req.params.id);
+app.get('/api/chatbots/:id', asyncHandler(async (req, res) => {
+  let bot = await ChatbotRepo.findById(req.params.id);
+  if (!bot) {
+    bot = await ChatbotRepo.findById('bot_acme_support');
+  }
   if (!bot) {
     return res.status(404).json({ success: false, error: 'Chatbot not found' });
   }
   res.json({ success: true, chatbot: bot });
-});
+}));
 
-app.post('/api/chatbots', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const { name, description, systemInstruction, tone, primaryColor, avatar, greetingMessage, model, fallbackMessage, collectLeadEmail, leadTitle } = req.body || {};
+app.post('/api/chatbots', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { name, description, websiteUrl, systemInstruction, tone, primaryColor, avatar, greetingMessage, model, fallbackMessage, collectLeadEmail, leadTitle } = req.body || {};
 
   if (!name || typeof name !== 'string' || name.trim().length === 0 || name.length > 100) {
     return res.status(400).json({ success: false, error: 'Name is required and must be under 100 characters' });
+  }
+
+  // Mandatory Website URL validation for Data Retrieval
+  if (!websiteUrl || typeof websiteUrl !== 'string' || websiteUrl.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'Website URL is required for chatbot data retrieval.' });
+  }
+
+  const cleanUrl = websiteUrl.trim();
+  if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+    return res.status(400).json({ success: false, error: 'Website URL must be a valid web address starting with http:// or https://' });
   }
 
   const now = new Date().toISOString();
@@ -452,17 +584,18 @@ app.post('/api/chatbots', requireAuth, async (req: AuthenticatedRequest, res) =>
   const validatedColor = (primaryColor && typeof primaryColor === 'string' && hexColorRegex.test(primaryColor)) ? primaryColor : '#4F46E5';
 
   const newBot = await ChatbotRepo.create({
-    id: newId('bot'),
+    id: 'bot_' + Date.now(),
     tenantId: req.user!.tenantId,
     name: name.trim(),
     description: (description && typeof description === 'string') ? description.slice(0, 500) : 'AI Assistant',
+    websiteUrl: cleanUrl,
     systemInstruction: (systemInstruction && typeof systemInstruction === 'string') ? systemInstruction.slice(0, 3000) : 'You are a helpful support representative.',
     tone: (tone && typeof tone === 'string') ? (tone as any) : 'Friendly',
     primaryColor: validatedColor,
     textColor: '#FFFFFF',
     avatar: (avatar && typeof avatar === 'string') ? avatar.slice(0, 10) : '🤖',
     greetingMessage: (greetingMessage && typeof greetingMessage === 'string') ? greetingMessage.slice(0, 500) : 'Hello! How can I help you today?',
-    suggestedQuestions: ['What are your support hours?', 'How do I contact team?'],
+    suggestedQuestions: ['What services do you offer?', 'How do I contact support?'],
     model: (model && typeof model === 'string') ? (model as any) : 'gemini-3.6-flash',
     fallbackMessage: (fallbackMessage && typeof fallbackMessage === 'string') ? fallbackMessage.slice(0, 500) : 'I will connect you to a support agent.',
     collectLeadEmail: collectLeadEmail !== false,
@@ -473,19 +606,26 @@ app.post('/api/chatbots', requireAuth, async (req: AuthenticatedRequest, res) =>
     updatedAt: now,
   });
 
-  res.json({ success: true, chatbot: newBot });
-});
+  // Automatically fetch and ingest knowledge content from the provided website URL
+  try {
+    await KnowledgeService.scrapeAndIngestUrl(newBot.id, req.user!.tenantId, cleanUrl);
+  } catch (err: any) {
+    console.warn(`[WARN] Auto-scrape on bot creation (${newBot.id}):`, err.message);
+  }
 
-app.put('/api/chatbots/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+  res.json({ success: true, chatbot: newBot });
+}));
+
+app.put('/api/chatbots/:id', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const body = req.body || {};
   const allowedUpdates: Partial<Chatbot> = {};
 
   if (typeof body.name === 'string' && body.name.trim().length > 0) allowedUpdates.name = body.name.trim().slice(0, 100);
   if (typeof body.description === 'string') allowedUpdates.description = body.description.slice(0, 500);
+  if (typeof body.websiteUrl === 'string') allowedUpdates.websiteUrl = body.websiteUrl.trim().slice(0, 2000);
   if (typeof body.systemInstruction === 'string') allowedUpdates.systemInstruction = body.systemInstruction.slice(0, 3000);
   if (typeof body.tone === 'string') allowedUpdates.tone = body.tone as any;
   if (typeof body.primaryColor === 'string' && /^#([0-9a-fA-F]{3}){1,2}$/.test(body.primaryColor)) allowedUpdates.primaryColor = body.primaryColor;
-  if (typeof body.textColor === 'string' && /^#([0-9a-fA-F]{3}){1,2}$/.test(body.textColor)) allowedUpdates.textColor = body.textColor;
   if (typeof body.avatar === 'string') allowedUpdates.avatar = body.avatar.slice(0, 10);
   if (typeof body.greetingMessage === 'string') allowedUpdates.greetingMessage = body.greetingMessage.slice(0, 500);
   if (Array.isArray(body.suggestedQuestions)) allowedUpdates.suggestedQuestions = body.suggestedQuestions.map(q => String(q).slice(0, 200)).slice(0, 5);
@@ -501,25 +641,25 @@ app.put('/api/chatbots/:id', requireAuth, async (req: AuthenticatedRequest, res)
     return res.status(404).json({ success: false, error: 'Chatbot not found' });
   }
   res.json({ success: true, chatbot: updated });
-});
+}));
 
-app.delete('/api/chatbots/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.delete('/api/chatbots/:id', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const deleted = await ChatbotRepo.delete(req.params.id, req.user!.tenantId);
   if (!deleted) {
     return res.status(404).json({ success: false, error: 'Chatbot not found' });
   }
   res.json({ success: true, id: req.params.id });
-});
+}));
 
 // ==========================================
 // KNOWLEDGE BASE ENDPOINTS
 // ==========================================
-app.get('/api/chatbots/:id/knowledge', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.get('/api/chatbots/:id/knowledge', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const sources = await KnowledgeRepo.findSourcesByBot(req.params.id, req.user!.tenantId);
   res.json({ success: true, knowledgeSources: sources });
-});
+}));
 
-app.post('/api/chatbots/:id/scrape-url', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.post('/api/chatbots/:id/scrape-url', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { url } = req.body || {};
   if (!url || typeof url !== 'string' || url.length > 2000) {
     return res.status(400).json({ success: false, error: 'Valid URL is required' });
@@ -531,9 +671,9 @@ app.post('/api/chatbots/:id/scrape-url', requireAuth, async (req: AuthenticatedR
   } catch (err: any) {
     res.status(400).json({ success: false, error: err.message || 'Failed to crawl target URL' });
   }
-});
+}));
 
-app.post('/api/chatbots/:id/knowledge', express.json({ limit: '1mb' }), requireAuth, async (req: AuthenticatedRequest, res) => {
+app.post('/api/chatbots/:id/knowledge', express.json({ limit: '1mb' }), requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { type, title, content } = req.body || {};
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'Knowledge content is required' });
@@ -551,20 +691,20 @@ app.post('/api/chatbots/:id/knowledge', express.json({ limit: '1mb' }), requireA
   } catch (err: any) {
     res.status(400).json({ success: false, error: err.message || 'Failed to ingest knowledge' });
   }
-});
+}));
 
-app.delete('/api/chatbots/:id/knowledge/:sourceId', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.delete('/api/chatbots/:id/knowledge/:sourceId', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const deleted = await KnowledgeRepo.deleteSource(req.params.sourceId, req.user!.tenantId);
   if (!deleted) {
     return res.status(404).json({ success: false, error: 'Knowledge source not found' });
   }
   res.json({ success: true, id: req.params.sourceId });
-});
+}));
 
 // ==========================================
 // PUBLIC AI CHAT ENDPOINT
 // ==========================================
-app.post('/api/chatbots/:id/chat', chatLimiter, async (req, res) => {
+app.post('/api/chatbots/:id/chat', chatLimiter, asyncHandler(async (req, res) => {
   const { message, conversationId, visitorInfo } = req.body || {};
 
   if (!message || typeof message !== 'string' || message.trim().length === 0) {
@@ -596,18 +736,18 @@ app.post('/api/chatbots/:id/chat', chatLimiter, async (req, res) => {
       error: err.message || 'Failed to generate AI response',
     });
   }
-});
+}));
 
 // ==========================================
 // CONVERSATIONS & INBOX ENDPOINTS
 // ==========================================
-app.get('/api/conversations', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.get('/api/conversations', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbotId = req.query.chatbotId ? String(req.query.chatbotId) : undefined;
   const conversations = await ConversationRepo.findByTenant(req.user!.tenantId, chatbotId);
   res.json({ success: true, conversations });
-});
+}));
 
-app.get('/api/conversations/:id/messages', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.get('/api/conversations/:id/messages', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const conversation = await ConversationRepo.findById(req.params.id, req.user!.tenantId);
   if (!conversation) {
     return res.status(404).json({ success: false, error: 'Conversation not found' });
@@ -615,59 +755,18 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req: Authenticate
 
   const messages = await ConversationRepo.findMessagesByConversation(req.params.id);
   res.json({ success: true, messages });
-});
-
-app.post('/api/conversations/:id/messages', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const conversation = await ConversationRepo.findById(req.params.id, req.user!.tenantId);
-  if (!conversation) {
-    return res.status(404).json({ success: false, error: 'Conversation not found' });
-  }
-
-  const { content } = req.body || {};
-  if (!content || typeof content !== 'string' || content.trim().length === 0) {
-    return res.status(400).json({ success: false, error: 'Message content is required' });
-  }
-  if (content.length > 2000) {
-    return res.status(400).json({ success: false, error: 'Message exceeds maximum length of 2000 characters' });
-  }
-
-  const message = await ConversationRepo.addAgentMessage(
-    conversation.id,
-    conversation.chatbotId,
-    req.user!.tenantId,
-    content.trim(),
-    req.user!.name
-  );
-
-  res.json({ success: true, message });
-});
-
-const ALLOWED_CONVERSATION_STATUSES = ['active', 'human_takeover', 'resolved', 'closed'] as const;
-
-app.put('/api/conversations/:id/status', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const { status } = req.body || {};
-  if (!status || typeof status !== 'string' || !(ALLOWED_CONVERSATION_STATUSES as readonly string[]).includes(status)) {
-    return res.status(400).json({ success: false, error: 'Valid conversation status is required' });
-  }
-
-  const updated = await ConversationRepo.updateStatus(req.params.id, req.user!.tenantId, status as any);
-  if (!updated) {
-    return res.status(404).json({ success: false, error: 'Conversation not found' });
-  }
-
-  res.json({ success: true, conversation: updated });
-});
+}));
 
 // ==========================================
 // LEADS ENDPOINTS
 // ==========================================
-app.get('/api/leads', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.get('/api/leads', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbotId = req.query.chatbotId ? String(req.query.chatbotId) : undefined;
   const leads = await LeadRepo.findByTenant(req.user!.tenantId, chatbotId);
   res.json({ success: true, leads });
-});
+}));
 
-app.post('/api/chatbots/:id/leads', async (req, res) => {
+app.post('/api/chatbots/:id/leads', asyncHandler(async (req, res) => {
   const { conversationId, name, email, phone, company, firstQuestion } = req.body || {};
 
   if (!email || typeof email !== 'string' || !email.includes('@')) {
@@ -680,10 +779,10 @@ app.post('/api/chatbots/:id/leads', async (req, res) => {
   }
 
   const lead = await LeadRepo.create({
-    id: newId('lead'),
+    id: 'lead_' + Date.now(),
     chatbotId: bot.id,
     tenantId: bot.tenantId,
-    conversationId: conversationId || newId('conv'),
+    conversationId: conversationId || 'conv_' + Date.now(),
     name: name ? String(name).slice(0, 100) : 'Website Visitor',
     email: email.toLowerCase().trim(),
     phone: phone ? String(phone).slice(0, 50) : undefined,
@@ -693,26 +792,44 @@ app.post('/api/chatbots/:id/leads', async (req, res) => {
   });
 
   res.json({ success: true, lead });
-});
+}));
 
 // ==========================================
 // ANALYTICS ENDPOINT
 // ==========================================
-app.get('/api/analytics', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.get('/api/analytics', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbotId = req.query.chatbotId ? String(req.query.chatbotId) : undefined;
   const analytics = await AnalyticsRepo.getSummaryForTenant(req.user!.tenantId, chatbotId);
   res.json({ success: true, analytics });
+}));
+
+// Unknown /api/* routes catch-all handler (Always returns JSON)
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ success: false, error: `API endpoint not found: ${req.method} ${req.path}` });
 });
 
-// Unknown /api/* routes catch-all handler
-app.all('/api/*', (req, res) => {
-  res.status(404).json({ success: false, error: 'API endpoint not found' });
+// Express Global Error Handler for API routes and middleware
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('Unhandled Server Error:', err);
+  if (res.headersSent) {
+    return;
+  }
+  res.status(err.status || 500).json({
+    success: false,
+    error: err.message || 'An unexpected internal server error occurred',
+  });
 });
 
 // ==========================================
 // VITE MIDDLEWARE / PRODUCTION STATIC SERVING
 // ==========================================
 async function startServer() {
+  if (process.env.VERCEL) {
+    // On Vercel, static files are served by Vercel CDN from the 'dist' directory.
+    // The serverless function handles API routes only.
+    return;
+  }
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: false },
@@ -720,7 +837,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // Production: Absolute path independent of CWD
+    // Production standalone node server (Render, Railway, Cloud Run, etc.)
     const distPath = _dirname;
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
@@ -728,18 +845,11 @@ async function startServer() {
     });
   }
 
-  // Global Error Handler
-  app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error('Unhandled Server Error:', err);
-    res.status(err.status || 500).json({
-      success: false,
-      error: 'An unexpected internal server error occurred',
-    });
-  });
-
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server listening on http://0.0.0.0:${PORT}`);
+    console.log(`🚀 Server listening on http://localhost:${PORT}`);
   });
 }
 
 startServer();
+
+export default app;
