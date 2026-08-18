@@ -30,7 +30,7 @@ const DEFAULT_DEMO_BOT: Chatbot = {
   avatar: '🤖',
   greetingMessage: 'Hello! How can I assist you with Acme products today?',
   suggestedQuestions: ['What are your business hours?', 'How do I embed the chat widget?', 'How can I reset my password?'],
-  model: 'gemini-3.6-flash',
+  model: 'gemini-3.7-flash',
   fallbackMessage: 'I am not sure about that. Let me connect you with a human agent.',
   collectLeadEmail: true,
   leadTitle: 'Connect with Acme Support',

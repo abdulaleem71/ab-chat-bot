@@ -38,7 +38,7 @@ export const INITIAL_CHATBOTS: Chatbot[] = [
       'How do I invite team members?',
       'Can I export workspace metrics to CSV?'
     ],
-    model: 'gemini-3.6-flash',
+    model: 'gemini-3.7-flash',
     fallbackMessage: "I'm sorry, I don't have information on that specific topic yet. Would you like me to connect you with a live human support specialist?",
     collectLeadEmail: true,
     leadTitle: 'Get personalized help from our team',
@@ -64,7 +64,7 @@ export const INITIAL_CHATBOTS: Chatbot[] = [
       'Is SOC2 Type II compliance included?',
       'Schedule a custom 1-on-1 demo'
     ],
-    model: 'gemini-3.6-flash',
+    model: 'gemini-3.7-flash',
     fallbackMessage: 'Let me grab an enterprise account manager to answer your custom requirements.',
     collectLeadEmail: true,
     leadTitle: 'Get a custom enterprise quote',
@@ -89,7 +89,7 @@ export const INITIAL_CHATBOTS: Chatbot[] = [
       'What is your return policy?',
       'Do you ship to EU and UK?'
     ],
-    model: 'gemini-3.6-flash',
+    model: 'gemini-3.7-flash',
     fallbackMessage: 'I will notify our fulfillment team to review your order details right away.',
     collectLeadEmail: false,
     humanOperatorOnline: false,

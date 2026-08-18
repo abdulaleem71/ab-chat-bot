@@ -83,27 +83,40 @@ export class KnowledgeService {
       throw new Error('Remote response body exceeds maximum permitted size (5MB)');
     }
 
-    // Clean HTML to readable plain text
-    let cleanText = rawHtml
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // Extract Page Title and Meta Description if present
+    const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const extractedTitle = titleMatch ? this.decodeHtmlEntities(titleMatch[1]).trim() : '';
 
-    if (cleanText.length > 15000) {
-      cleanText = cleanText.substring(0, 15000) + '... [content truncated for index]';
+    const metaDescMatch = rawHtml.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i);
+    const metaDescription = metaDescMatch ? this.decodeHtmlEntities(metaDescMatch[1]).trim() : '';
+
+    // Clean and convert HTML to structured Markdown text
+    let cleanText = this.htmlToStructuredText(rawHtml);
+
+    if (metaDescription && !cleanText.includes(metaDescription)) {
+      cleanText = `Page Overview: ${metaDescription}\n\n${cleanText}`;
     }
 
-    const title = `Scraped: ${finalUrl.hostname}${finalUrl.pathname}`;
-    const chunks = this.chunkText(cleanText, 500);
+    if (cleanText.length > 40000) {
+      cleanText = cleanText.substring(0, 40000) + '\n... [content indexed up to 40,000 characters]';
+    }
+
+    const title = extractedTitle || `Scraped: ${finalUrl.hostname}${finalUrl.pathname}`;
+    const chunks = this.chunkTextWithOverlap(cleanText, 350, 40);
+
+    // Check if a source already exists for this URL on this chatbot to replace/update cleanly
+    const existingSources = await KnowledgeRepo.findSourcesByBot(chatbotId, tenantId);
+    const existingUrlSource = existingSources.find(s => s.sourceUrl === initialUrl || s.sourceUrl === finalUrl?.toString());
+    if (existingUrlSource) {
+      await KnowledgeRepo.deleteSource(existingUrlSource.id, tenantId);
+    }
 
     const source: KnowledgeSource = {
       id: newId('ks'),
       chatbotId,
       tenantId,
       type: 'url',
-      title,
+      title: title.slice(0, 250),
       content: cleanText,
       sourceUrl: initialUrl,
       status: 'indexed',
@@ -129,7 +142,7 @@ export class KnowledgeService {
       throw new Error('Document content cannot be empty');
     }
 
-    const chunks = this.chunkText(cleanContent, 500);
+    const chunks = this.chunkTextWithOverlap(cleanContent, 350, 40);
 
     const source: KnowledgeSource = {
       id: newId('ks'),
@@ -147,28 +160,73 @@ export class KnowledgeService {
     return await KnowledgeRepo.createSourceWithChunks(source, chunks);
   }
 
-  private static chunkText(text: string, chunkSize: number): string[] {
-    const words = text.split(/\s+/);
+  private static htmlToStructuredText(html: string): string {
+    return html
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+      .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, '')
+      .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, '')
+      .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+      .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, ' ')
+      .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, ' ')
+      // Convert heading tags to markdown
+      .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n\n# $1\n')
+      .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n\n## $1\n')
+      .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n\n### $1\n')
+      .replace(/<h[4-6][^>]*>([\s\S]*?)<\/h[4-6]>/gi, '\n\n#### $1\n')
+      // List items & paragraphs
+      .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1')
+      .replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n\n$1\n')
+      .replace(/<br\s*[\/]?>/gi, '\n')
+      // Strip remaining HTML tags
+      .replace(/<[^>]+>/g, ' ')
+      // Decode entities
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&#x27;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&copy;/g, '©')
+      .replace(/\r\n/g, '\n')
+      .replace(/\n\s+\n/g, '\n\n')
+      .replace(/[ \t]+/g, ' ')
+      .trim();
+  }
+
+  private static decodeHtmlEntities(str: string): string {
+    return str
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&#x27;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private static chunkTextWithOverlap(text: string, chunkSizeWords = 350, overlapWords = 40): string[] {
+    const words = text.split(/\s+/).filter(w => w.length > 0);
+    if (words.length <= chunkSizeWords) {
+      return [text];
+    }
+
     const chunks: string[] = [];
-    let currentChunk: string[] = [];
-    let currentLen = 0;
+    let start = 0;
 
-    for (const word of words) {
-      currentChunk.push(word);
-      currentLen += word.length + 1;
+    while (start < words.length) {
+      const end = Math.min(start + chunkSizeWords, words.length);
+      const chunkText = words.slice(start, end).join(' ');
+      chunks.push(chunkText);
 
-      if (currentLen >= chunkSize) {
-        chunks.push(currentChunk.join(' '));
-        currentChunk = [];
-        currentLen = 0;
-      }
+      if (end >= words.length) break;
+      start += (chunkSizeWords - overlapWords);
     }
 
-    if (currentChunk.length > 0) {
-      chunks.push(currentChunk.join(' '));
-    }
-
-    return chunks.length > 0 ? chunks : [text];
+    return chunks;
   }
 
   private static async validateUrlForSsrf(targetUrlStr: string): Promise<URL> {

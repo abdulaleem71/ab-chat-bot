@@ -19,7 +19,7 @@ export interface UserProfile {
 }
 
 export type BotTone = 'Friendly' | 'Professional' | 'Concise' | 'Technical' | 'Empathetic';
-export type BotModel = 'gemini-3.6-flash' | 'gemini-3.1-pro-preview';
+export type BotModel = 'gemini-3.7-flash' | 'gemini-3.1-pro-preview';
 
 export interface Chatbot {
   id: string;

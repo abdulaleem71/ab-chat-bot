@@ -40,7 +40,7 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
         avatar: bot?.avatar || '🤖',
         greetingMessage: bot?.greetingMessage || '👋 Hi there! How can I help you today?',
         suggestedQuestions: bot?.suggestedQuestions || ['How do I reset my password?', 'What are your support hours?'],
-        model: bot?.model || 'gemini-3.6-flash',
+        model: bot?.model || 'gemini-3.7-flash',
         fallbackMessage: bot?.fallbackMessage || "I don't have information on that yet. Let me connect you with a live specialist.",
         collectLeadEmail: bot?.collectLeadEmail ?? true,
         leadTitle: bot?.leadTitle || 'Leave your email to stay connected',
@@ -242,7 +242,7 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                     onChange={e => setFormData({ ...formData, model: e.target.value as BotModel })}
                     className="w-full px-3.5 py-2 text-xs border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black focus:border-black focus:outline-hidden font-medium bg-white"
                   >
-                    <option value="gemini-3.6-flash">Gemini 3.6 Flash (Fast Grounded Support)</option>
+                    <option value="gemini-3.7-flash">Gemini 3.7 Flash (Fast Grounded Support)</option>
                     <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Deep Reasoning)</option>
                   </select>
                 </div>

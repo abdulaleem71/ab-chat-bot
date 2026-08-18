@@ -8,7 +8,14 @@ import { Conversation, Message, GroundingSource } from '../types';
 let aiClient: GoogleGenAI | null = null;
 function getGeminiAI(): GoogleGenAI | null {
   if (!aiClient && process.env.GEMINI_API_KEY) {
-    aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    aiClient = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
   }
   return aiClient;
 }
@@ -90,8 +97,13 @@ export class ChatService {
     };
     await ConversationRepo.addMessage(userMsgRecord, bot.tenantId);
 
-    // 4. Perform RAG Search over Knowledge Base Chunks
-    const { groundingContext, sourcesUsed } = await RagService.retrieveRelevantContext(bot.id, userMessage);
+    // 4. Perform RAG Search over Knowledge Base Chunks (and auto-fetch if knowledge was empty)
+    const { groundingContext, sourcesUsed } = await RagService.retrieveRelevantContext(
+      bot.id,
+      userMessage,
+      bot.websiteUrl,
+      bot.tenantId
+    );
 
     // 5. Construct Grounded Gemini Prompt
     const customInstructions = bot.systemInstruction?.trim() || 'Provide helpful, friendly, and accurate customer support.';
@@ -105,7 +117,7 @@ export class ChatService {
     ].filter(Boolean).join('\n');
 
     const systemInstruction = `
-You are ${bot.name}, an intelligent and helpful AI customer assistant for this website.
+You are ${bot.name}, an intelligent and helpful AI customer assistant representing this website and business.
 
 === BOT PROFILE & GUIDELINES ===
 ${botContext}
@@ -116,10 +128,10 @@ ${groundingContext}
 </knowledge_base>
 
 === OPERATING INSTRUCTIONS ===
-1. Primary Source of Truth: When answering factual or product-specific questions, prioritize verified facts from the <knowledge_base>.
-2. Custom Instructions: Follow the creator's Custom Instructions and Tone above for business identity, hours, contact information, and policies.
-3. Natural Conversation: Handle greetings, general inquiries, and requests for assistance politely and conversationally.
-4. Unknown Information: If the user asks for specific technical or account information that is not mentioned in either the Knowledge Base or Bot Profile, do not fabricate false facts; politely explain what you know and suggest the fallback message: "${bot.fallbackMessage}".
+1. Primary Source of Truth: Carefully review the facts in <knowledge_base>. When answering questions about products, services, CLI tools, features, installation, pricing, or troubleshooting, synthesize answers directly from this information.
+2. Direct Answers: Provide clear, concise, and helpful answers. If the knowledge base contains relevant steps or commands, format them clearly with code blocks or bullet points.
+3. Natural Conversation: Handle greetings (e.g. "hi", "hello") politely. Introduce yourself as ${bot.name} and let the user know what topics you can help them with based on the website.
+4. Missing Information: Only when the requested specific technical or account detail is completely absent from both the Knowledge Base and Bot Profile, state what you know and politely offer the fallback message: "${bot.fallbackMessage}".
 5. Formatting: Use concise paragraphs, bullet points, and markdown for readability.
     `.trim();
 
@@ -147,13 +159,13 @@ ${groundingContext}
 
     if (ai) {
       try {
-        let modelToUse = bot.model || 'gemini-3.6-flash';
-        if (modelToUse !== 'gemini-3.6-flash' && modelToUse !== 'gemini-3.1-pro-preview') {
-          modelToUse = 'gemini-3.6-flash';
+        let modelToUse = bot.model || 'gemini-3.7-flash';
+        if (modelToUse !== 'gemini-3.7-flash' && modelToUse !== 'gemini-3.1-pro-preview') {
+          modelToUse = 'gemini-3.7-flash';
         }
 
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Gemini request timed out')), 10000)
+          setTimeout(() => reject(new Error('Gemini request timed out')), 15000)
         );
 
         const genPromise = ai.models.generateContent({
@@ -162,7 +174,7 @@ ${groundingContext}
           config: {
             systemInstruction,
             temperature: 0.2,
-            maxOutputTokens: 1000,
+            maxOutputTokens: 1200,
           },
         });
 
@@ -173,7 +185,7 @@ ${groundingContext}
         replyText = bot.fallbackMessage || 'I am currently unable to process your request. Connecting you to our team.';
       }
     } else {
-      replyText = `Thank you for asking about "${userMessage.slice(0, 50)}". I checked our knowledge base for ${bot.name}. Let me know if you need additional assistance!`;
+      replyText = `Thank you for asking. I checked our website knowledge base for ${bot.name}. Let me know if you need additional assistance!`;
     }
 
     // 8. Save Assistant Response in DB with Actual Citations

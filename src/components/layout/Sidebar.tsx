@@ -93,7 +93,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, unrea
           <div className="absolute top-0 right-0 w-24 h-24 bg-zinc-800/40 rounded-full blur-xl group-hover:scale-125 transition-transform duration-300" />
           <div className="flex items-center gap-2 mb-1.5 relative z-10">
             <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[11px] font-bold text-zinc-200">Gemini 3.6 Active</span>
+            <span className="text-[11px] font-bold text-zinc-200">Gemini 3.7 Flash Active</span>
           </div>
           <p className="text-[11px] text-zinc-400 leading-relaxed relative z-10">
             Server-side RAG grounding enabled for instant chatbot replies.

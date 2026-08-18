@@ -654,10 +654,18 @@ app.put('/api/chatbots/:id', requireAuth, asyncHandler(async (req: Authenticated
   if (typeof body.humanOperatorOnline === 'boolean') allowedUpdates.humanOperatorOnline = body.humanOperatorOnline;
   if (typeof body.status === 'string' && ['active', 'paused', 'archived'].includes(body.status)) allowedUpdates.status = body.status as any;
 
+  const existingBot = await ChatbotRepo.findById(req.params.id, req.user!.tenantId);
   const updated = await ChatbotRepo.update(req.params.id, req.user!.tenantId, allowedUpdates);
   if (!updated) {
     return res.status(404).json({ success: false, error: 'Chatbot not found' });
   }
+
+  // If websiteUrl was provided or changed, auto-scrape and index in background
+  if (allowedUpdates.websiteUrl && (allowedUpdates.websiteUrl !== existingBot?.websiteUrl)) {
+    KnowledgeService.scrapeAndIngestUrl(updated.id, req.user!.tenantId, allowedUpdates.websiteUrl)
+      .catch(err => console.warn(`[WARN] Auto-scrape on bot update (${updated.id}):`, err.message));
+  }
+
   res.json({ success: true, chatbot: updated });
 }));
 

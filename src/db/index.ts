@@ -150,7 +150,7 @@ export async function initDb(): Promise<void> {
         avatar TEXT NOT NULL DEFAULT '🤖',
         greeting_message TEXT NOT NULL,
         suggested_questions_json TEXT NOT NULL DEFAULT '[]',
-        model TEXT NOT NULL DEFAULT 'gemini-3.6-flash',
+        model TEXT NOT NULL DEFAULT 'gemini-3.7-flash',
         fallback_message TEXT NOT NULL,
         collect_lead_email INTEGER NOT NULL DEFAULT 1,
         lead_title TEXT,
@@ -288,6 +288,13 @@ export async function initDb(): Promise<void> {
     } catch {
       // Column already exists
     }
+
+    // Model migration for any legacy gemini-3.6-flash entries
+    try {
+      await client.execute(`UPDATE chatbots SET model = 'gemini-3.7-flash' WHERE model = 'gemini-3.6-flash' OR model IS NULL;`);
+    } catch {
+      // Ignore if table not yet migrated
+    }
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_conv_tenant ON conversations(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_leads_tenant ON leads(tenant_id);`);
@@ -388,7 +395,7 @@ async function seedInitialData(db: Client) {
         'You are the primary AI customer support assistant for Acme SaaS Corp. Answer questions politely, accurately, and concisely using the provided knowledge base.',
         'Friendly', '#4F46E5', '#FFFFFF', '🤖',
         '👋 Hi there! I am Acme AI Concierge. How can I assist you with your workspace today?',
-        suggestedQuestions, 'gemini-3.6-flash',
+        suggestedQuestions, 'gemini-3.7-flash',
         "I'm sorry, I don't have information on that specific topic yet. Would you like me to connect you with a live human support specialist?",
         1, 'Get personalized help from our team', 1, 'active', now, now
       ],
