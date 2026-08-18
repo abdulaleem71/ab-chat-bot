@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Chatbot, Message, GroundingSource } from '../../types';
-import { Send, Bot, User, Sparkles, BookOpen, RotateCcw, ShieldCheck, CheckCircle2, ChevronRight, Loader2 } from 'lucide-react';
+import { MarkdownContent } from '../../lib/markdown';
+import { Send, Bot, User, Sparkles, BookOpen, RotateCcw, ShieldCheck, CheckCircle2, ChevronRight, Loader2, ExternalLink, Layers } from 'lucide-react';
 
 interface PlaygroundViewProps {
   chatbots: Chatbot[];
@@ -21,7 +22,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
       conversationId: 'playground',
       chatbotId: selectedBot.id,
       sender: 'bot',
-      content: selectedBot.greetingMessage,
+      content: selectedBot.greetingMessage || 'Hello! How can I assist you today?',
       timestamp: new Date().toISOString(),
     },
   ]);
@@ -47,17 +48,30 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
     });
   };
 
-  // Smooth scroll when new messages arrive
   useEffect(() => {
     scrollToBottom(true);
   }, [messages.length]);
 
-  // Smooth scroll when loading state starts
   useEffect(() => {
     if (isLoading) {
       scrollToBottom(true);
     }
   }, [isLoading]);
+
+  // Reset when selected bot changes
+  useEffect(() => {
+    setMessages([
+      {
+        id: 'm_init_' + selectedBot.id,
+        conversationId: 'playground',
+        chatbotId: selectedBot.id,
+        sender: 'bot',
+        content: selectedBot.greetingMessage || 'Hello! How can I assist you today?',
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+    setActiveSources([]);
+  }, [selectedBot.id]);
 
   const handleResetChat = () => {
     setMessages([
@@ -66,7 +80,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
         conversationId: 'playground',
         chatbotId: selectedBot.id,
         sender: 'bot',
-        content: selectedBot.greetingMessage,
+        content: selectedBot.greetingMessage || 'Hello! How can I assist you today?',
         timestamp: new Date().toISOString(),
       },
     ]);
@@ -82,7 +96,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
       conversationId: 'playground',
       chatbotId: selectedBot.id,
       sender: 'visitor',
-      content: queryText,
+      content: queryText.trim(),
       timestamp: new Date().toISOString(),
     };
 
@@ -91,7 +105,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
     setIsLoading(true);
 
     try {
-      const res = await onSendQuery(selectedBot.id, queryText, [...messages, userMsg]);
+      const res = await onSendQuery(selectedBot.id, queryText.trim(), [...messages, userMsg]);
 
       const botMsg: Message = {
         id: 'bot_' + Date.now(),
@@ -113,7 +127,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
         conversationId: 'playground',
         chatbotId: selectedBot.id,
         sender: 'bot',
-        content: selectedBot.fallbackMessage,
+        content: selectedBot.fallbackMessage || "I'm having trouble processing that right now. Please try again.",
         timestamp: new Date().toISOString(),
       };
       setMessages(prev => [...prev, errorMsg]);
@@ -122,76 +136,87 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
     }
   };
 
+  const sampleQuestions = [
+    'How do I embed the chat widget on my website?',
+    'What features are included in the Pro Plan?',
+    'Can I connect custom domain knowledge?',
+    'How does live operator takeover work?',
+  ];
+
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
       {/* Bot Selector Bar */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
+      <div className="bg-white border border-zinc-200/80 rounded-3xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
           <div
-            style={{ backgroundColor: selectedBot.primaryColor }}
-            className="w-10 h-10 rounded-xl text-xl flex items-center justify-center text-white"
+            style={{ backgroundColor: selectedBot.primaryColor || '#09090b' }}
+            className="w-12 h-12 rounded-2xl text-2xl flex items-center justify-center text-white shadow-xs shrink-0 font-bold"
           >
-            {selectedBot.avatar}
+            {selectedBot.avatar || '🤖'}
           </div>
           <div>
-            <h2 className="text-sm font-bold text-slate-900">Interactive Chatbot Playground</h2>
-            <p className="text-xs text-slate-500">Test live Gemini API responses with knowledge grounding before embedding widget</p>
+            <h1 className="text-base font-extrabold text-zinc-900">{selectedBot.name} Playground</h1>
+            <p className="text-xs text-zinc-500 font-medium">Test live Gemini API synthesis and inspect retrieved RAG citations.</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <select
-            value={selectedBot.id}
-            onChange={e => {
-              const b = chatbots.find(x => x.id === e.target.value);
-              if (b) {
-                onSelectBot(b);
-                handleResetChat();
-              }
-            }}
-            className="text-xs font-semibold bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 text-slate-800"
-          >
-            {chatbots.map(b => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          {chatbots.length > 1 && (
+            <select
+              value={selectedBot.id}
+              onChange={e => {
+                const b = chatbots.find(x => x.id === e.target.value);
+                if (b) onSelectBot(b);
+              }}
+              className="bg-zinc-50 border border-zinc-200 text-zinc-900 text-xs font-bold rounded-xl px-3 py-2 focus:outline-none focus:border-zinc-900"
+            >
+              {chatbots.map(b => (
+                <option key={b.id} value={b.id}>
+                  {b.name} ({b.model})
+                </option>
+              ))}
+            </select>
+          )}
 
           <button
             onClick={handleResetChat}
-            className="p-2 text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
-            title="Reset Chat Session"
+            className="bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
           >
-            <RotateCcw className="w-4 h-4" />
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Reset Chat</span>
           </button>
         </div>
       </div>
 
-      {/* Grid: Live Chat Preview (Left) + RAG Grounding Drawer (Right) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-[500px] lg:h-[600px]">
-        {/* Chat Interface Container */}
-        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-xs flex flex-col overflow-hidden">
+      {/* Main Split Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[580px]">
+        {/* Left: Chat Simulator (8 Cols) */}
+        <div className="lg:col-span-8 bg-white border border-zinc-200/80 rounded-3xl shadow-xs flex flex-col justify-between overflow-hidden">
           {/* Header */}
           <div
-            style={{ backgroundColor: selectedBot.primaryColor }}
+            style={{ backgroundColor: selectedBot.primaryColor || '#09090b' }}
             className="p-4 text-white flex items-center justify-between shadow-xs"
           >
             <div className="flex items-center gap-3">
-              <span className="text-2xl">{selectedBot.avatar}</span>
+              <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center text-lg">
+                {selectedBot.avatar || '🤖'}
+              </div>
               <div>
-                <h3 className="font-bold text-sm">{selectedBot.name}</h3>
-                <p className="text-[11px] opacity-90 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Gemini 2.5 Flash • {selectedBot.tone} Tone</span>
-                </p>
+                <h3 className="text-xs font-extrabold">{selectedBot.name}</h3>
+                <p className="text-[10px] text-white/80 font-medium">Model: {selectedBot.model} • Grounded RAG</p>
               </div>
             </div>
-            <span className="text-[10px] bg-white/20 text-white px-2 py-0.5 rounded-full font-semibold">
-              Live Preview
+
+            <span className="text-[10px] font-bold bg-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
+              Interactive Test
             </span>
           </div>
 
-          {/* Messages Scroll Area */}
-          <div ref={messagesContainerRef} className="flex-1 p-4 overflow-y-auto space-y-4 bg-slate-50/50">
+          {/* Messages Window */}
+          <div
+            ref={messagesContainerRef}
+            className="flex-1 p-5 overflow-y-auto space-y-4 bg-zinc-50/40 min-h-[380px]"
+          >
             {messages.map(msg => (
               <div
                 key={msg.id}
@@ -199,31 +224,30 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
               >
                 {msg.sender === 'bot' && (
                   <div
-                    style={{ backgroundColor: selectedBot.primaryColor }}
-                    className="w-8 h-8 rounded-full text-white text-sm flex items-center justify-center shrink-0 mt-0.5 shadow-xs"
+                    style={{ backgroundColor: selectedBot.primaryColor || '#09090b' }}
+                    className="w-8 h-8 rounded-xl text-white text-xs flex items-center justify-center shrink-0 font-bold shadow-xs"
                   >
-                    {selectedBot.avatar}
+                    {selectedBot.avatar || '🤖'}
                   </div>
                 )}
 
                 <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-3 text-xs leading-relaxed shadow-xs ${msg.sender === 'visitor'
-                      ? 'bg-indigo-600 text-white font-medium rounded-tr-xs'
-                      : 'bg-white text-slate-800 border border-slate-200 rounded-tl-xs'
-                    }`}
+                  className={`max-w-[85%] rounded-2xl p-4 text-xs shadow-2xs ${
+                    msg.sender === 'visitor'
+                      ? 'bg-zinc-950 text-white rounded-tr-xs font-medium'
+                      : 'bg-white border border-zinc-200/80 text-zinc-900 rounded-tl-xs'
+                  }`}
                 >
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  <MarkdownContent content={msg.content} />
 
-                  {/* Sources Used Badge */}
                   {msg.sourcesUsed && msg.sourcesUsed.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-500">
-                      <span className="font-semibold text-indigo-600 flex items-center gap-1 mb-1">
-                        <BookOpen className="w-3 h-3" /> Grounded in Knowledge Sources:
+                    <div className="mt-3 pt-2.5 border-t border-zinc-100 space-y-1">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">
+                        Citations & Sources:
                       </span>
-                      {msg.sourcesUsed.map((s, i) => (
-                        <div key={i} className="bg-indigo-50/80 p-1.5 rounded border border-indigo-100 mt-1 font-sans">
-                          <p className="font-bold text-indigo-900">{s.title}</p>
-                          <p className="italic text-slate-600 line-clamp-1">{s.snippet}</p>
+                      {msg.sourcesUsed.map((s, idx) => (
+                        <div key={idx} className="text-[11px] text-zinc-600 bg-zinc-50 p-1.5 rounded-lg border border-zinc-200/60 font-medium">
+                          <strong>[{idx + 1}]</strong> {s.title} {s.url && `(${s.url})`}
                         </div>
                       ))}
                     </div>
@@ -231,24 +255,23 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
                 </div>
 
                 {msg.sender === 'visitor' && (
-                  <div className="w-8 h-8 rounded-full bg-slate-800 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                    U
+                  <div className="w-8 h-8 rounded-xl bg-zinc-800 text-white text-xs flex items-center justify-center shrink-0 font-bold">
+                    <User className="w-4 h-4" />
                   </div>
                 )}
               </div>
             ))}
 
             {isLoading && (
-              <div className="flex gap-3 justify-start items-center text-xs text-slate-400">
+              <div className="flex items-center gap-3">
                 <div
-                  style={{ backgroundColor: selectedBot.primaryColor }}
-                  className="w-8 h-8 rounded-full text-white text-sm flex items-center justify-center animate-bounce"
+                  style={{ backgroundColor: selectedBot.primaryColor || '#09090b' }}
+                  className="w-8 h-8 rounded-xl text-white text-xs flex items-center justify-center shrink-0"
                 >
-                  {selectedBot.avatar}
+                  <Loader2 className="w-4 h-4 animate-spin" />
                 </div>
-                <div className="bg-white border border-slate-200 px-4 py-2.5 rounded-2xl flex items-center gap-2">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
-                  <span>Generating AI reply from Gemini & Knowledge Base...</span>
+                <div className="bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-xs text-zinc-500 font-medium flex items-center gap-2 shadow-2xs">
+                  <span>Synthesizing grounded response with Gemini...</span>
                 </div>
               </div>
             )}
@@ -256,79 +279,109 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
           </div>
 
           {/* Quick Prompts */}
-          {selectedBot.suggestedQuestions && selectedBot.suggestedQuestions.length > 0 && (
-            <div className="px-4 py-2 bg-white border-t border-slate-100 flex items-center gap-2 overflow-x-auto">
-              <span className="text-[10px] font-bold text-slate-400 uppercase shrink-0">Prompts:</span>
-              {selectedBot.suggestedQuestions.map((q, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleSend(q)}
-                  className="text-[11px] font-medium bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 px-3 py-1 rounded-full whitespace-nowrap transition border border-slate-200 shrink-0"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="p-3 bg-zinc-50 border-t border-zinc-200/80 flex items-center gap-2 overflow-x-auto">
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider shrink-0 px-1">
+              Sample Queries:
+            </span>
+            {sampleQuestions.map((q, idx) => (
+              <button
+                key={idx}
+                onClick={() => handleSend(q)}
+                disabled={isLoading}
+                className="text-[11px] font-semibold bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 px-2.5 py-1 rounded-xl whitespace-nowrap transition cursor-pointer disabled:opacity-50"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
 
           {/* Input Box */}
-          <div className="p-3 bg-white border-t border-slate-200 flex items-center gap-2">
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              handleSend();
+            }}
+            className="p-3.5 bg-white border-t border-zinc-200 flex items-center gap-2"
+          >
             <input
               type="text"
               value={input}
               onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSend()}
-              placeholder={`Ask ${selectedBot.name} a question...`}
-              className="flex-1 px-4 py-2.5 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+              placeholder="Ask anything to test chatbot grounding..."
+              disabled={isLoading}
+              className="flex-1 px-4 py-2.5 text-xs bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:bg-white transition font-medium"
             />
             <button
-              onClick={() => handleSend()}
+              type="submit"
               disabled={isLoading || !input.trim()}
-              style={{ backgroundColor: selectedBot.primaryColor }}
-              className="p-2.5 text-white rounded-xl shadow-sm transition disabled:opacity-50"
+              className="bg-zinc-950 hover:bg-zinc-800 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
             >
-              <Send className="w-4 h-4" />
+              {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              <span>Send</span>
             </button>
-          </div>
+          </form>
         </div>
 
-        {/* Right Panel: Gemini RAG Grounding Inspector */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between overflow-y-auto">
-          <div>
-            <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-100">
-              <Sparkles className="w-4 h-4 text-indigo-600" />
-              <h3 className="text-xs font-bold text-slate-900">Gemini Grounding Inspector</h3>
+        {/* Right: Inspection Sidebar (4 Cols) */}
+        <div className="lg:col-span-4 space-y-4">
+          {/* Active Persona Specs */}
+          <div className="bg-white border border-zinc-200/80 rounded-3xl p-5 shadow-xs space-y-3">
+            <h3 className="text-xs font-extrabold text-zinc-900 uppercase tracking-wider">
+              Chatbot Persona Specs
+            </h3>
+
+            <div className="space-y-2 text-xs">
+              <div className="bg-zinc-50 p-2.5 rounded-xl border border-zinc-200/60">
+                <span className="text-[10px] text-zinc-400 uppercase font-bold block">AI Engine</span>
+                <span className="text-zinc-900 font-bold">{selectedBot.model}</span>
+              </div>
+              <div className="bg-zinc-50 p-2.5 rounded-xl border border-zinc-200/60">
+                <span className="text-[10px] text-zinc-400 uppercase font-bold block">Tone of Voice</span>
+                <span className="text-zinc-900 font-bold">{selectedBot.tone}</span>
+              </div>
+              <div className="bg-zinc-50 p-2.5 rounded-xl border border-zinc-200/60">
+                <span className="text-[10px] text-zinc-400 uppercase font-bold block">System Instruction</span>
+                <p className="text-[11px] text-zinc-600 font-normal mt-0.5 line-clamp-3">
+                  {selectedBot.systemPrompt}
+                </p>
+              </div>
             </div>
-            <p className="text-[11px] text-slate-500 mb-4">
-              Real-time inspection of source documents referenced by Gemini to generate verified responses.
-            </p>
+          </div>
+
+          {/* Active Grounding Sources */}
+          <div className="bg-white border border-zinc-200/80 rounded-3xl p-5 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-extrabold text-zinc-900 uppercase tracking-wider">
+                Grounding Citations
+              </h3>
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            </div>
 
             {activeSources.length === 0 ? (
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-center">
-                <BookOpen className="w-6 h-6 text-slate-300 mx-auto mb-2" />
-                <p className="text-xs font-medium text-slate-600">No active sources triggered yet</p>
-                <p className="text-[10px] text-slate-400 mt-1">Send a message in the test chat to view RAG citations.</p>
+              <div className="text-center py-6 text-zinc-400 text-xs font-medium space-y-1">
+                <BookOpen className="w-6 h-6 mx-auto text-zinc-300" />
+                <p>No citations queried yet.</p>
+                <p className="text-[10px] text-zinc-400">Ask a question to see the RAG retrieval pipeline in action.</p>
               </div>
             ) : (
-              <div className="space-y-3">
-                {activeSources.map((source, idx) => (
-                  <div key={idx} className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-3">
-                    <div className="flex items-center gap-1.5 mb-1 text-indigo-900 font-bold text-xs">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>{source.title}</span>
+              <div className="space-y-2">
+                {activeSources.map((src, idx) => (
+                  <div key={idx} className="p-3 bg-zinc-50 rounded-2xl border border-zinc-200/80 space-y-1 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-zinc-900 truncate">{src.title}</span>
+                      <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded uppercase">
+                        Matched
+                      </span>
                     </div>
-                    <p className="text-[11px] text-slate-600 italic bg-white p-2 rounded border border-indigo-100">
-                      "{source.snippet}"
-                    </p>
+                    {src.snippet && (
+                      <p className="text-[11px] text-zinc-600 font-normal line-clamp-2 leading-relaxed">
+                        "{src.snippet}"
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
             )}
-          </div>
-
-          <div className="pt-4 border-t border-slate-100 bg-slate-50 p-3 rounded-xl border-slate-200 mt-4">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Bot System Persona</span>
-            <p className="text-[11px] text-slate-600 line-clamp-3 font-mono">{selectedBot.systemInstruction}</p>
           </div>
         </div>
       </div>

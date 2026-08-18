@@ -161,6 +161,15 @@ export class ConversationRepo {
     return { ...existing, status };
   }
 
+  static async delete(id: string, tenantId: string): Promise<boolean> {
+    const db = getDb();
+    const res = await db.execute({
+      sql: `DELETE FROM conversations WHERE id = ? AND tenant_id = ?;`,
+      args: [id, tenantId],
+    });
+    return (res.rowsAffected || 0) > 0;
+  }
+
   private static mapRowToConversation(r: any): Conversation {
     return {
       id: String(r.id),

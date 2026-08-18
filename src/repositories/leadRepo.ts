@@ -48,4 +48,13 @@ export class LeadRepo {
     });
     return lead;
   }
+
+  static async delete(id: string, tenantId: string): Promise<boolean> {
+    const db = getDb();
+    const res = await db.execute({
+      sql: `DELETE FROM leads WHERE id = ? AND tenant_id = ?;`,
+      args: [id, tenantId],
+    });
+    return (res.rowsAffected || 0) > 0;
+  }
 }

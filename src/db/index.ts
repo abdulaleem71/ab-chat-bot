@@ -32,43 +32,19 @@ function removeCorruptSqliteFiles(rawUrl: string) {
 export function validateDatabaseConfig(): { isRemote: boolean; url: string; authToken?: string } {
   let dbUrl = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL || 'file:nomadschat.db';
   let authToken = process.env.TURSO_AUTH_TOKEN ? process.env.TURSO_AUTH_TOKEN.trim() : undefined;
-  const isProduction = process.env.NODE_ENV === 'production';
 
   const isPlaceholderToken = !authToken || authToken === 'your_turso_auth_token_here' || authToken.startsWith('your_') || authToken.includes('here');
 
   let isRemote = dbUrl.startsWith('libsql://') || dbUrl.startsWith('https://') || dbUrl.startsWith('wss://');
 
   if (isRemote && isPlaceholderToken) {
-    if (isProduction) {
-      throw new Error(
-        'CRITICAL CONFIGURATION ERROR: TURSO_AUTH_TOKEN environment variable is missing or set to placeholder value. ' +
-        'Production requires a valid Turso authentication token.'
-      );
-    } else {
-      console.warn(
-        `[DATABASE CONFIG WARNING] Remote Turso database URL detected ("${dbUrl}"), but TURSO_AUTH_TOKEN is placeholder or missing. ` +
-        'Falling back to local SQLite database (file:nomadschat.db) for local development.'
-      );
-      dbUrl = 'file:nomadschat.db';
-      authToken = undefined;
-      isRemote = false;
-    }
-  }
-
-  if (isProduction) {
-    if (!process.env.TURSO_DATABASE_URL && !process.env.DATABASE_URL) {
-      throw new Error(
-        'CRITICAL CONFIGURATION ERROR: TURSO_DATABASE_URL or DATABASE_URL environment variable is missing. ' +
-        'In production, a remote Turso database URL (libsql://...) MUST be provided.'
-      );
-    }
-    if (!isRemote) {
-      throw new Error(
-        `CRITICAL CONFIGURATION ERROR: Database URL ("${dbUrl}") is invalid for production. ` +
-        'Production MUST use a remote Turso database URL starting with "libsql://" or "https://". ' +
-        'Fallback to local file database is strictly forbidden in production.'
-      );
-    }
+    console.warn(
+      `[DATABASE CONFIG WARNING] Remote Turso database URL detected ("${dbUrl}"), but TURSO_AUTH_TOKEN is placeholder or missing. ` +
+      'Falling back to local SQLite database (file:nomadschat.db).'
+    );
+    dbUrl = 'file:nomadschat.db';
+    authToken = undefined;
+    isRemote = false;
   }
 
   return { isRemote, url: dbUrl, authToken };

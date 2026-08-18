@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Chatbot, Message, GroundingSource } from '../../types';
-import { Send, Bot, Loader2, Sparkles, X, Minimize2, BookOpen } from 'lucide-react';
+import { Send, Bot, Loader2, Sparkles, X, Minimize2, RotateCcw, ChevronDown, ChevronUp, ExternalLink, Check, AlertCircle } from 'lucide-react';
+import { MarkdownContent } from '../../lib/markdown';
 
 interface EmbedChatWidgetProps {
   bot: Chatbot;
@@ -9,23 +10,36 @@ interface EmbedChatWidgetProps {
 }
 
 export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloating = false, onClose }) => {
+  const storageKey = `nomadschat_conv_${bot.id}`;
+  const [conversationId, setConversationId] = useState<string>(() => {
+    return sessionStorage.getItem(storageKey) || '';
+  });
+
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: 'init_' + Date.now(),
-      conversationId: 'embed_conv',
+      id: 'init_' + bot.id,
+      conversationId: conversationId || 'init',
       chatbotId: bot.id,
       sender: 'bot',
-      content: bot.greetingMessage,
+      content: bot.greetingMessage || '👋 Hi there! How can I help you today?',
       timestamp: new Date().toISOString(),
     },
   ]);
+
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [hasCapturedLead, setHasCapturedLead] = useState(!bot.collectLeadEmail);
-  const [leadEmail, setLeadEmail] = useState('');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
+
+  // Lead capture state
+  const [hasSubmittedLead, setHasSubmittedLead] = useState(false);
+  const [showLeadPrompt, setShowLeadPrompt] = useState(Boolean(bot.collectLeadEmail));
   const [leadName, setLeadName] = useState('');
+  const [leadEmail, setLeadEmail] = useState('');
+  const [isSubmittingLead, setIsSubmittingLead] = useState(false);
+
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = (smooth = true) => {
     requestAnimationFrame(() => {
@@ -34,66 +48,76 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
           top: messagesContainerRef.current.scrollHeight,
           behavior: smooth ? 'smooth' : 'auto',
         });
-      } else if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({
-          behavior: smooth ? 'smooth' : 'auto',
-          block: 'end',
-        });
       }
     });
   };
 
-  // Smooth scroll when new messages arrive
   useEffect(() => {
     scrollToBottom(true);
-  }, [messages.length]);
+  }, [messages.length, isLoading, showLeadPrompt]);
 
-  // Smooth scroll when loading state changes
-  useEffect(() => {
-    if (isLoading) {
-      scrollToBottom(true);
+  // Handle Close / Minimize
+  const handleClose = () => {
+    if (onClose) {
+      onClose();
     }
-  }, [isLoading]);
+    // Also broadcast to parent window if embedded in iframe
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'nomadschat_close' }, '*');
+    }
+  };
+
+  // Reset conversation
+  const handleResetChat = () => {
+    sessionStorage.removeItem(storageKey);
+    setConversationId('');
+    setMessages([
+      {
+        id: 'init_' + Date.now(),
+        conversationId: '',
+        chatbotId: bot.id,
+        sender: 'bot',
+        content: bot.greetingMessage || '👋 Hi there! How can I help you today?',
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+    setErrorMessage(null);
+    setShowLeadPrompt(Boolean(bot.collectLeadEmail));
+  };
 
   const handleLeadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!leadEmail.trim()) return;
-    setHasCapturedLead(true);
+    if (!leadEmail.trim() || isSubmittingLead) return;
+    setIsSubmittingLead(true);
 
     try {
       await fetch(`/api/chatbots/${bot.id}/leads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: leadName || 'Website Visitor',
-          email: leadEmail,
-          firstQuestion: messages.length > 1 ? messages[messages.length - 1].content : undefined,
+          conversationId: conversationId || undefined,
+          name: leadName.trim() || 'Website Visitor',
+          email: leadEmail.trim(),
+          firstQuestion: messages.length > 1 ? messages[1].content : undefined,
         }),
       });
+      setHasSubmittedLead(true);
+      setShowLeadPrompt(false);
     } catch (err) {
-      console.log('Error saving lead to database:', err);
+      console.log('Error submitting lead:', err);
+    } finally {
+      setIsSubmittingLead(false);
     }
-
-    setMessages(prev => [
-      ...prev,
-      {
-        id: 'lead_ack_' + Date.now(),
-        conversationId: 'embed_conv',
-        chatbotId: bot.id,
-        sender: 'bot',
-        content: `Thank you, ${leadName || 'there'} (${leadEmail})! You're connected. How can I help you?`,
-        timestamp: new Date().toISOString(),
-      },
-    ]);
   };
 
-  const handleSend = async (textToSend?: string) => {
-    const text = textToSend || input;
-    if (!text.trim() || isLoading) return;
+  const handleSendMessage = async (textToSend?: string) => {
+    const text = (textToSend || input).trim();
+    if (!text || isLoading) return;
 
+    setErrorMessage(null);
     const userMsg: Message = {
       id: 'usr_' + Date.now(),
-      conversationId: 'embed_conv',
+      conversationId: conversationId || 'pending',
       chatbotId: bot.id,
       sender: 'visitor',
       content: text,
@@ -110,220 +134,298 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: text,
+          conversationId: conversationId || undefined,
           conversationHistory: [...messages, userMsg],
-          visitorInfo: { email: leadEmail, name: leadName },
+          visitorInfo: leadEmail ? { email: leadEmail, name: leadName } : undefined,
         }),
       });
 
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+
       const data = await res.json();
+
+      if (data.conversationId) {
+        setConversationId(data.conversationId);
+        sessionStorage.setItem(storageKey, data.conversationId);
+      }
 
       const botMsg: Message = {
         id: 'bot_' + Date.now(),
-        conversationId: 'embed_conv',
+        conversationId: data.conversationId || conversationId || 'conv',
         chatbotId: bot.id,
         sender: 'bot',
-        content: data.reply || bot.fallbackMessage,
+        content: data.reply || bot.fallbackMessage || "I'm not sure how to answer that yet.",
         sourcesUsed: data.sourcesUsed || [],
         timestamp: new Date().toISOString(),
       };
 
       setMessages(prev => [...prev, botMsg]);
-    } catch (err) {
-      setMessages(prev => [
-        ...prev,
-        {
-          id: 'err_' + Date.now(),
-          conversationId: 'embed_conv',
-          chatbotId: bot.id,
-          sender: 'bot',
-          content: bot.fallbackMessage,
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+    } catch (err: any) {
+      console.log('Chat error:', err);
+      setErrorMessage('Could not connect to the assistant. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
+  const toggleSource = (msgId: string) => {
+    setExpandedSources(prev => ({ ...prev, [msgId]: !prev[msgId] }));
+  };
+
+  const primaryColor = bot.primaryColor || '#09090b';
+
   return (
-    <div className={`flex flex-col bg-white overflow-hidden shadow-2xl border border-slate-200 ${isFloating ? 'w-80 sm:w-96 h-[540px] rounded-2xl fixed bottom-20 right-6 z-50 animate-in slide-in-from-bottom-4 duration-200' : 'w-full h-full min-h-[500px] rounded-2xl'
-      }`}>
+    <div
+      id="nomadschat-widget-container"
+      className="flex flex-col h-full w-full bg-white text-zinc-900 overflow-hidden font-sans border border-zinc-200/80 shadow-2xl rounded-2xl md:rounded-3xl"
+    >
       {/* Header */}
       <div
-        style={{ backgroundColor: bot.primaryColor || '#4F46E5' }}
-        className="p-4 text-white flex items-center justify-between shrink-0 shadow-sm"
+        style={{ backgroundColor: primaryColor }}
+        className="px-4 py-3.5 text-white flex items-center justify-between shadow-xs shrink-0 select-none"
       >
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur-xs text-xl flex items-center justify-center shrink-0">
-            {bot.avatar || '🤖'}
-          </div>
-          <div>
-            <h3 className="font-bold text-sm leading-tight">{bot.name}</h3>
-            <div className="flex items-center gap-1.5 text-[10px] opacity-90">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>AI Support • {bot.model || 'Gemini 3.6'}</span>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="relative shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur-xs flex items-center justify-center text-lg border border-white/20 shadow-inner">
+              {bot.avatar || '🤖'}
             </div>
+            <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 border-2 border-white rounded-full" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <h3 className="font-bold text-xs sm:text-sm text-white truncate leading-tight">{bot.name}</h3>
+            </div>
+            <p className="text-[10px] text-white/80 font-medium truncate">
+              {bot.humanOperatorOnline ? 'AI Assistant • Live Online' : 'AI Assistant'}
+            </p>
           </div>
         </div>
 
-        {onClose && (
+        <div className="flex items-center gap-1 shrink-0">
           <button
-            onClick={onClose}
-            className="p-1.5 hover:bg-white/20 rounded-lg text-white transition"
+            onClick={handleResetChat}
+            className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
+            title="Reset Conversation"
           >
-            <X className="w-4 h-4" />
+            <RotateCcw className="w-4 h-4" />
           </button>
-        )}
+          <button
+            onClick={handleClose}
+            className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
+            title="Close Assistant"
+          >
+            {isFloating ? <X className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
+          </button>
+        </div>
       </div>
 
-      {/* Messages / Lead Capture */}
-      <div ref={messagesContainerRef} className="flex-1 p-4 overflow-y-auto space-y-3 bg-slate-50/50">
-        {!hasCapturedLead ? (
-          <div className="bg-white border border-indigo-100 rounded-2xl p-4 shadow-sm text-center my-4">
-            <div
-              style={{ color: bot.primaryColor }}
-              className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center mx-auto mb-2 font-bold text-xl"
-            >
-              ✉️
-            </div>
-            <h4 className="text-xs font-bold text-slate-900 mb-1">{bot.leadTitle || 'Connect with support'}</h4>
-            <p className="text-[11px] text-slate-500 mb-3">Please provide your details so we can assist you better.</p>
+      {/* Message Feed */}
+      <div
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-zinc-50/60 scrollbar-thin"
+      >
+        {messages.map((msg, idx) => {
+          const isUser = msg.sender === 'visitor';
+          const isAgent = msg.sender === 'agent';
 
-            <form onSubmit={handleLeadSubmit} className="space-y-2 text-left">
-              <div>
+          return (
+            <div
+              key={msg.id || idx}
+              className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[88%] ${isUser ? 'ml-auto' : 'mr-auto'}`}
+            >
+              {!isUser && (
+                <div className="flex items-center gap-1.5 mb-1 px-1">
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                    {isAgent ? 'Support Specialist' : bot.name}
+                  </span>
+                  {isAgent && (
+                    <span className="bg-amber-100 text-amber-800 text-[9px] font-bold px-1.5 py-0.2 rounded-sm">
+                      Human
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div
+                style={isUser ? { backgroundColor: primaryColor } : {}}
+                className={`px-3.5 py-2.5 rounded-2xl shadow-xs text-xs sm:text-sm ${
+                  isUser
+                    ? 'text-white rounded-br-xs'
+                    : isAgent
+                    ? 'bg-amber-50/90 text-amber-950 border border-amber-200 rounded-bl-xs'
+                    : 'bg-white text-zinc-900 border border-zinc-200/90 rounded-bl-xs'
+                }`}
+              >
+                {isUser ? (
+                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                ) : (
+                  <MarkdownContent content={msg.content} />
+                )}
+
+                {/* Grounding Source Citations */}
+                {!isUser && msg.sourcesUsed && msg.sourcesUsed.length > 0 && (
+                  <div className="mt-2.5 pt-2 border-t border-zinc-100">
+                    <button
+                      onClick={() => toggleSource(msg.id)}
+                      className="flex items-center gap-1 text-[11px] font-semibold text-zinc-500 hover:text-zinc-800 cursor-pointer transition"
+                    >
+                      <Sparkles className="w-3 h-3 text-indigo-500" />
+                      <span>{msg.sourcesUsed.length} Grounded Source{msg.sourcesUsed.length > 1 ? 's' : ''}</span>
+                      {expandedSources[msg.id] ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+
+                    {expandedSources[msg.id] && (
+                      <div className="mt-2 space-y-1.5">
+                        {msg.sourcesUsed.map((src, sIdx) => (
+                          <div key={sIdx} className="bg-zinc-50 p-2 rounded-lg border border-zinc-200 text-[11px] space-y-0.5">
+                            <div className="font-semibold text-zinc-800 flex items-center justify-between gap-1">
+                              <span className="truncate">{src.title || 'Knowledge Base Document'}</span>
+                            </div>
+                            {src.snippet && (
+                              <p className="text-[10px] text-zinc-500 line-clamp-2 leading-relaxed">
+                                {src.snippet}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <span className="text-[9px] text-zinc-400 px-1 mt-0.5">
+                {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+          );
+        })}
+
+        {/* Suggested Questions Pills (shown under initial greeting) */}
+        {messages.length === 1 && bot.suggestedQuestions && bot.suggestedQuestions.length > 0 && (
+          <div className="space-y-1.5 pt-1">
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider px-1">
+              Suggested Queries
+            </span>
+            <div className="flex flex-col gap-1.5">
+              {bot.suggestedQuestions.map((q, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSendMessage(q)}
+                  className="text-left text-xs bg-white hover:bg-zinc-100/90 text-zinc-700 hover:text-black p-2.5 rounded-xl border border-zinc-200/80 shadow-2xs transition active:scale-98 flex items-center justify-between group cursor-pointer"
+                >
+                  <span className="truncate font-medium">{q}</span>
+                  <Send className="w-3 h-3 text-zinc-400 group-hover:text-zinc-700 shrink-0 ml-2" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Non-intrusive Inline Lead Gate */}
+        {showLeadPrompt && !hasSubmittedLead && (
+          <div className="bg-white border border-indigo-100 rounded-2xl p-3 shadow-sm my-2 space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <h4 className="text-xs font-bold text-zinc-900">{bot.leadTitle || 'Stay connected with support'}</h4>
+              </div>
+              <button
+                onClick={() => setShowLeadPrompt(false)}
+                className="text-zinc-400 hover:text-zinc-600 p-0.5 rounded cursor-pointer"
+                title="Dismiss"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <form onSubmit={handleLeadSubmit} className="space-y-1.5">
+              <div className="grid grid-cols-2 gap-1.5">
                 <input
                   type="text"
-                  placeholder="Your name"
+                  placeholder="Your Name (optional)"
                   value={leadName}
                   onChange={e => setLeadName(e.target.value)}
-                  className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs px-2.5 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg focus:outline-none focus:border-indigo-500 focus:bg-white"
                 />
-              </div>
-              <div>
                 <input
                   type="email"
-                  placeholder="Work email address *"
+                  required
+                  placeholder="Your Email"
                   value={leadEmail}
                   onChange={e => setLeadEmail(e.target.value)}
-                  required
-                  className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs px-2.5 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg focus:outline-none focus:border-indigo-500 focus:bg-white"
                 />
               </div>
               <button
                 type="submit"
-                style={{ backgroundColor: bot.primaryColor || '#4F46E5' }}
-                className="w-full text-white text-xs font-semibold py-2 rounded-xl shadow-xs hover:opacity-95 transition"
+                disabled={isSubmittingLead || !leadEmail}
+                style={{ backgroundColor: primaryColor }}
+                className="w-full text-white text-[11px] font-bold py-1.5 rounded-lg shadow-xs transition hover:opacity-90 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1"
               >
-                Start Chat Session
+                {isSubmittingLead ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                <span>Save Contact Details</span>
               </button>
             </form>
           </div>
-        ) : (
-          <>
-            {messages.map(msg => (
-              <div
-                key={msg.id}
-                className={`flex gap-2.5 ${msg.sender === 'visitor' ? 'justify-end' : 'justify-start'}`}
-              >
-                {msg.sender === 'bot' && (
-                  <div
-                    style={{ backgroundColor: bot.primaryColor || '#4F46E5' }}
-                    className="w-7 h-7 rounded-full text-white text-xs flex items-center justify-center shrink-0 mt-0.5 shadow-xs"
-                  >
-                    {bot.avatar || '🤖'}
-                  </div>
-                )}
+        )}
 
-                <div
-                  style={msg.sender === 'visitor' ? { backgroundColor: bot.primaryColor || '#000000' } : undefined}
-                  className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed ${msg.sender === 'visitor'
-                      ? 'text-white font-medium rounded-tr-xs shadow-xs'
-                      : 'bg-white border border-slate-200 text-slate-800 rounded-tl-xs shadow-2xs'
-                    }`}
-                >
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+        {/* Typing Loading Indicator */}
+        {isLoading && (
+          <div className="flex items-center gap-2 max-w-[80%]">
+            <div className="bg-white border border-zinc-200 rounded-2xl rounded-bl-xs px-3.5 py-2.5 shadow-2xs flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            </div>
+          </div>
+        )}
 
-                  {msg.sourcesUsed && msg.sourcesUsed.length > 0 && (
-                    <div className="mt-2 pt-1.5 border-t border-slate-100 text-[10px] text-slate-500">
-                      <span className="font-semibold text-indigo-600 flex items-center gap-1 mb-0.5">
-                        <BookOpen className="w-3 h-3" /> Grounded Source:
-                      </span>
-                      {msg.sourcesUsed.map((s, i) => (
-                        <p key={i} className="italic text-slate-600 truncate">{s.title}</p>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-
-            {isLoading && (
-              <div className="flex gap-2 justify-start items-center text-xs text-slate-400">
-                <div
-                  style={{ backgroundColor: bot.primaryColor || '#4F46E5' }}
-                  className="w-7 h-7 rounded-full text-white text-xs flex items-center justify-center animate-bounce"
-                >
-                  {bot.avatar || '🤖'}
-                </div>
-                <div className="bg-white border border-slate-200 px-3 py-1.5 rounded-2xl flex items-center gap-1.5 text-[11px]">
-                  <Loader2 className="w-3 h-3 animate-spin text-indigo-600" />
-                  <span>Thinking...</span>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </>
+        {/* Error message */}
+        {errorMessage && (
+          <div className="bg-red-50 text-red-700 text-xs p-2.5 rounded-xl border border-red-200 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span className="flex-1">{errorMessage}</span>
+          </div>
         )}
       </div>
 
-      {/* Suggested Prompts */}
-      {hasCapturedLead && bot.suggestedQuestions && bot.suggestedQuestions.length > 0 && (
-        <div className="px-3 py-1.5 bg-white border-t border-slate-100 flex gap-1.5 overflow-x-auto shrink-0">
-          {bot.suggestedQuestions.map((q, idx) => (
-            <button
-              key={idx}
-              onClick={() => handleSend(q)}
-              className="text-[10px] font-medium bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 px-2.5 py-1 rounded-full whitespace-nowrap transition border border-slate-200 shrink-0"
-            >
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Input */}
-      {hasCapturedLead && (
-        <div className="p-2.5 bg-white border-t border-slate-200 flex items-center gap-2 shrink-0">
+      {/* Input Bar */}
+      <div className="p-3 bg-white border-t border-zinc-200 shrink-0">
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            handleSendMessage();
+          }}
+          className="flex items-center gap-2"
+        >
           <input
+            ref={inputRef}
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSend()}
-            placeholder="Type your message..."
-            className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-black focus:outline-hidden"
+            placeholder="Type your question..."
+            disabled={isLoading}
+            className="flex-1 text-xs sm:text-sm px-3.5 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:bg-white transition text-zinc-900 placeholder:text-zinc-400"
           />
           <button
-            onClick={() => handleSend()}
-            disabled={isLoading || !input.trim()}
-            style={{ backgroundColor: bot.primaryColor || '#000000' }}
-            className="p-2 text-white rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
+            type="submit"
+            disabled={!input.trim() || isLoading}
+            style={{ backgroundColor: primaryColor }}
+            className="text-white p-2 sm:p-2.5 rounded-xl transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
+            title="Send Message"
           >
-            <Send className="w-4 h-4" />
+            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </button>
+        </form>
+        <div className="flex items-center justify-between text-[10px] text-zinc-400 mt-2 px-1">
+          <span>Powered by NomadsChat RAG</span>
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+            Active
+          </span>
         </div>
-      )}
-
-      {/* NomadsArc Powered Footer Credit */}
-      <div className="text-[10px] text-center text-zinc-400 py-1 bg-zinc-50 border-t border-zinc-100 font-medium shrink-0">
-        Powered by{' '}
-        <a
-          href="https://nomadsarc.io"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hover:underline font-bold text-black"
-        >
-          NomadsArc
-        </a>
       </div>
     </div>
   );

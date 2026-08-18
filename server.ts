@@ -253,18 +253,28 @@ app.get('/widget.js', (req, res) => {
     iframe.style.cssText = 'position:fixed;bottom:88px;right:20px;width:380px;max-width:calc(100vw - 32px);height:590px;max-height:calc(100vh - 108px);border:none;border-radius:20px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1);z-index:999999;display:none;background:transparent;overflow:hidden;transition:opacity 0.2s ease, transform 0.2s ease;';
 
     let isOpen = false;
-    button.onclick = function() {
-      isOpen = !isOpen;
+    function toggleWidget(openState) {
+      isOpen = typeof openState === 'boolean' ? openState : !isOpen;
       if (isOpen) {
         iframe.style.display = 'block';
         button.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
-        button.style.backgroundColor = '#0F172A';
+        button.style.backgroundColor = '#09090b';
       } else {
         iframe.style.display = 'none';
         button.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
-        button.style.backgroundColor = '#4F46E5';
+        button.style.backgroundColor = '#000000';
       }
+    }
+
+    button.onclick = function() {
+      toggleWidget();
     };
+
+    window.addEventListener('message', function(event) {
+      if (event.data && event.data.type === 'nomadschat_close') {
+        toggleWidget(false);
+      }
+    });
 
     container.appendChild(button);
     container.appendChild(iframe);
@@ -757,6 +767,51 @@ app.get('/api/conversations/:id/messages', requireAuth, asyncHandler(async (req:
   res.json({ success: true, messages });
 }));
 
+app.post('/api/conversations/:id/messages', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { content } = req.body || {};
+  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'Message content is required' });
+  }
+
+  const conversation = await ConversationRepo.findById(req.params.id, req.user!.tenantId);
+  if (!conversation) {
+    return res.status(404).json({ success: false, error: 'Conversation not found' });
+  }
+
+  const message = await ConversationRepo.addAgentMessage(
+    conversation.id,
+    conversation.chatbotId,
+    req.user!.tenantId,
+    content.trim(),
+    req.user!.name || 'Support Specialist'
+  );
+
+  res.json({ success: true, message });
+}));
+
+app.patch('/api/conversations/:id/status', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { status } = req.body || {};
+  const validStatuses = ['active', 'human_takeover', 'resolved', 'closed'];
+  if (!status || !validStatuses.includes(status)) {
+    return res.status(400).json({ success: false, error: 'Valid status is required (active, human_takeover, resolved, closed)' });
+  }
+
+  const updated = await ConversationRepo.updateStatus(req.params.id, req.user!.tenantId, status);
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Conversation not found' });
+  }
+
+  res.json({ success: true, conversation: updated });
+}));
+
+app.delete('/api/conversations/:id', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const deleted = await ConversationRepo.delete(req.params.id, req.user!.tenantId);
+  if (!deleted) {
+    return res.status(404).json({ success: false, error: 'Conversation not found' });
+  }
+  res.json({ success: true, id: req.params.id });
+}));
+
 // ==========================================
 // LEADS ENDPOINTS
 // ==========================================
@@ -764,6 +819,14 @@ app.get('/api/leads', requireAuth, asyncHandler(async (req: AuthenticatedRequest
   const chatbotId = req.query.chatbotId ? String(req.query.chatbotId) : undefined;
   const leads = await LeadRepo.findByTenant(req.user!.tenantId, chatbotId);
   res.json({ success: true, leads });
+}));
+
+app.delete('/api/leads/:id', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const deleted = await LeadRepo.delete(req.params.id, req.user!.tenantId);
+  if (!deleted) {
+    return res.status(404).json({ success: false, error: 'Lead not found' });
+  }
+  res.json({ success: true, id: req.params.id });
 }));
 
 app.post('/api/chatbots/:id/leads', asyncHandler(async (req, res) => {
