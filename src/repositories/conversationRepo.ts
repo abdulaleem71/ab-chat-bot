@@ -161,6 +161,33 @@ export class ConversationRepo {
     return { ...existing, status };
   }
 
+  static async updateVisitorInfo(
+    id: string,
+    info: {
+      visitorName?: string;
+      visitorEmail?: string;
+      visitorLocation?: string;
+      visitorBrowser?: string;
+      pageUrl?: string;
+    }
+  ): Promise<void> {
+    const db = getDb();
+    const fields: string[] = [];
+    const args: any[] = [];
+    if (info.visitorName !== undefined && info.visitorName.trim()) { fields.push('visitor_name = ?'); args.push(info.visitorName.trim()); }
+    if (info.visitorEmail !== undefined && info.visitorEmail.trim()) { fields.push('visitor_email = ?'); args.push(info.visitorEmail.trim()); }
+    if (info.visitorLocation !== undefined && info.visitorLocation.trim()) { fields.push('visitor_location = ?'); args.push(info.visitorLocation.trim()); }
+    if (info.visitorBrowser !== undefined && info.visitorBrowser.trim()) { fields.push('visitor_browser = ?'); args.push(info.visitorBrowser.trim()); }
+    if (info.pageUrl !== undefined && info.pageUrl.trim()) { fields.push('page_url = ?'); args.push(info.pageUrl.trim()); }
+
+    if (fields.length === 0) return;
+    args.push(id);
+    await db.execute({
+      sql: `UPDATE conversations SET ${fields.join(', ')} WHERE id = ?;`,
+      args,
+    });
+  }
+
   static async delete(id: string, tenantId: string): Promise<boolean> {
     const db = getDb();
     const res = await db.execute({

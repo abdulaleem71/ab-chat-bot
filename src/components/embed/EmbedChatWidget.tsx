@@ -85,11 +85,54 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
     setShowLeadPrompt(Boolean(bot.collectLeadEmail));
   };
 
+  // Helper to extract visitor telemetry
+  const getVisitorMetadata = () => {
+    let location = 'Direct Web Session';
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const lang = navigator.language || 'en';
+      location = `${tz} (${lang})`;
+    } catch {
+      // fallback
+    }
+
+    let browser = 'Web Browser';
+    try {
+      const ua = navigator.userAgent;
+      if (ua.includes('Chrome')) browser = 'Chrome';
+      else if (ua.includes('Safari')) browser = 'Safari';
+      else if (ua.includes('Firefox')) browser = 'Firefox';
+      else if (ua.includes('Edge')) browser = 'Edge';
+
+      if (ua.includes('Mac')) browser += ' on macOS';
+      else if (ua.includes('Windows')) browser += ' on Windows';
+      else if (ua.includes('iPhone') || ua.includes('iPad')) browser += ' on iOS';
+      else if (ua.includes('Android')) browser += ' on Android';
+      else if (ua.includes('Linux')) browser += ' on Linux';
+    } catch {
+      // fallback
+    }
+
+    let pageUrl = window.location.href;
+    try {
+      if (document.referrer && document.referrer.trim()) {
+        pageUrl = document.referrer;
+      } else if (window.parent && window.parent !== window) {
+        pageUrl = window.location.href;
+      }
+    } catch {
+      // fallback
+    }
+
+    return { location, browser, pageUrl };
+  };
+
   const handleLeadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!leadEmail.trim() || isSubmittingLead) return;
     setIsSubmittingLead(true);
 
+    const meta = getVisitorMetadata();
     try {
       await fetch(`/api/chatbots/${bot.id}/leads`, {
         method: 'POST',
@@ -99,6 +142,9 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
           name: leadName.trim() || 'Website Visitor',
           email: leadEmail.trim(),
           firstQuestion: messages.length > 1 ? messages[1].content : undefined,
+          pageUrl: meta.pageUrl,
+          browser: meta.browser,
+          location: meta.location,
         }),
       });
       setHasSubmittedLead(true);
@@ -128,6 +174,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
     setInput('');
     setIsLoading(true);
 
+    const meta = getVisitorMetadata();
     try {
       const res = await fetch(`/api/chatbots/${bot.id}/chat`, {
         method: 'POST',
@@ -136,7 +183,13 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
           message: text,
           conversationId: conversationId || undefined,
           conversationHistory: [...messages, userMsg],
-          visitorInfo: leadEmail ? { email: leadEmail, name: leadName } : undefined,
+          visitorInfo: {
+            email: leadEmail ? leadEmail.trim() : undefined,
+            name: leadName ? leadName.trim() : undefined,
+            location: meta.location,
+            browser: meta.browser,
+            pageUrl: meta.pageUrl,
+          },
         }),
       });
 

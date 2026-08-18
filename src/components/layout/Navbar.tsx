@@ -153,11 +153,18 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenWidgetModal, onOpenAuthMod
                 onClick={() => setShowUserDropdown(!showUserDropdown)}
                 className="flex items-center gap-2 hover:bg-zinc-100 p-1.5 rounded-xl transition duration-150 border border-transparent hover:border-zinc-200 active:scale-95"
               >
-                <img
-                  src={user.avatarUrl}
-                  alt={user.displayName}
-                  className="w-8 h-8 rounded-full ring-2 ring-black/10 object-cover"
-                />
+                {user.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt={user.displayName}
+                    onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                    className="w-8 h-8 rounded-full ring-2 ring-black/10 object-cover"
+                  />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-zinc-900 text-white font-extrabold text-xs flex items-center justify-center ring-2 ring-black/10 shrink-0 select-none">
+                    {user.displayName ? user.displayName.slice(0, 2).toUpperCase() : 'U'}
+                  </div>
+                )}
                 <div className="hidden md:block text-left">
                   <p className="text-xs font-bold text-black leading-tight">{user.displayName}</p>
                   <p className="text-[10px] text-zinc-500 font-medium capitalize">{user.role}</p>

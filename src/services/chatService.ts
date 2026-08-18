@@ -18,7 +18,14 @@ export class ChatService {
     botId: string,
     userMessage: string,
     existingConversationId?: string,
-    visitorInfo?: { visitorId?: string; name?: string; email?: string }
+    visitorInfo?: {
+      visitorId?: string;
+      name?: string;
+      email?: string;
+      location?: string;
+      browser?: string;
+      pageUrl?: string;
+    }
   ): Promise<{
     reply: string;
     conversationId: string;
@@ -50,15 +57,25 @@ export class ChatService {
         chatbotId: bot.id,
         tenantId: bot.tenantId,
         visitorId: visitorInfo?.visitorId || 'vis_' + Date.now(),
-        visitorName: visitorInfo?.name || 'Website Visitor',
-        visitorEmail: visitorInfo?.email || '',
-        visitorLocation: 'United States',
-        visitorBrowser: 'Chrome / Web',
+        visitorName: visitorInfo?.name?.trim() || 'Website Visitor',
+        visitorEmail: visitorInfo?.email?.trim() || '',
+        visitorLocation: visitorInfo?.location?.trim() || 'Direct Web Session',
+        visitorBrowser: visitorInfo?.browser?.trim() || 'Web Browser',
+        pageUrl: visitorInfo?.pageUrl?.trim() || '',
         status: 'active',
         lastMessage: userMessage,
         lastMessageTime: now,
         unreadByAgent: true,
         createdAt: now,
+      });
+    } else if (visitorInfo) {
+      // Dynamically update conversation with visitor info if newly provided
+      await ConversationRepo.updateVisitorInfo(conversation.id, {
+        visitorName: visitorInfo.name,
+        visitorEmail: visitorInfo.email,
+        visitorLocation: visitorInfo.location,
+        visitorBrowser: visitorInfo.browser,
+        pageUrl: visitorInfo.pageUrl,
       });
     }
 

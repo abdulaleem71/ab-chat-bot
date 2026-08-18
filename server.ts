@@ -838,7 +838,7 @@ app.delete('/api/leads/:id', requireAuth, asyncHandler(async (req: Authenticated
 }));
 
 app.post('/api/chatbots/:id/leads', asyncHandler(async (req, res) => {
-  const { conversationId, name, email, phone, company, firstQuestion } = req.body || {};
+  const { conversationId, name, email, phone, company, firstQuestion, pageUrl, browser, location } = req.body || {};
 
   if (!email || typeof email !== 'string' || !email.includes('@')) {
     return res.status(400).json({ success: false, error: 'Valid email is required' });
@@ -861,6 +861,16 @@ app.post('/api/chatbots/:id/leads', asyncHandler(async (req, res) => {
     firstQuestion: firstQuestion ? String(firstQuestion).slice(0, 500) : undefined,
     capturedAt: new Date().toISOString(),
   });
+
+  if (conversationId) {
+    await ConversationRepo.updateVisitorInfo(conversationId, {
+      visitorName: name ? String(name).slice(0, 100) : undefined,
+      visitorEmail: email.toLowerCase().trim(),
+      visitorLocation: location ? String(location).slice(0, 100) : undefined,
+      visitorBrowser: browser ? String(browser).slice(0, 100) : undefined,
+      pageUrl: pageUrl ? String(pageUrl).slice(0, 500) : undefined,
+    });
+  }
 
   res.json({ success: true, lead });
 }));

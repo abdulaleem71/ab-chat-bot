@@ -287,8 +287,8 @@ export const InboxView: React.FC<InboxViewProps> = ({
             {/* Conversation Metadata */}
             <div className="pt-3 border-t border-zinc-200 space-y-2.5 text-[11px] text-zinc-600">
               <span className="font-bold text-zinc-900 uppercase text-[10px] block">Referral URL</span>
-              <p className="text-zinc-800 font-mono text-[10px] bg-white p-2 rounded-xl border border-zinc-200 truncate">
-                {activeConv.pageUrl || 'https://acmesaas.io'}
+              <p className="text-zinc-800 font-mono text-[10px] bg-white p-2 rounded-xl border border-zinc-200 truncate select-all">
+                {activeConv.pageUrl || 'Direct / Embedded Session'}
               </p>
 
               {activeConv.csatRating && (
