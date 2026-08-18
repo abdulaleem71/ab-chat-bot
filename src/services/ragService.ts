@@ -38,37 +38,69 @@ export class RagService {
       };
     }
 
-    // Score Chunks using Term Frequency and Title Match Boost
+    // Score Chunks using Term Frequency, Keyword Coverage, and Exact Substring Matching
+    const lowerQuery = query.toLowerCase().trim();
     const scoredChunks = chunks.map(chunk => {
+      const lowerContent = chunk.content.toLowerCase();
+      const lowerTitle = chunk.source_title.toLowerCase();
       const chunkTokens = this.tokenize(chunk.content);
       const titleTokens = this.tokenize(chunk.source_title);
 
       let score = 0;
-      queryTokens.forEach(token => {
-        // Content match frequency
-        const contentMatches = chunkTokens.filter(t => t === token || t.includes(token) || token.includes(t)).length;
-        score += contentMatches * 1.0;
+      let matchedTokensCount = 0;
 
-        // Title match boost
-        const titleMatches = titleTokens.filter(t => t === token || t.includes(token) || token.includes(t)).length;
-        score += titleMatches * 3.0;
+      // Exact phrase match in content gets strong boost
+      if (lowerContent.includes(lowerQuery) && lowerQuery.length > 5) {
+        score += 8.0;
+        matchedTokensCount += queryTokens.length;
+      }
+
+      queryTokens.forEach(token => {
+        let tokenMatched = false;
+        // Exact token match in content
+        const exactMatches = chunkTokens.filter(t => t === token).length;
+        if (exactMatches > 0) {
+          score += exactMatches * 1.5;
+          tokenMatched = true;
+        } else if (lowerContent.includes(token)) {
+          score += 0.8;
+          tokenMatched = true;
+        }
+
+        // Title matches are high intent signals
+        const titleMatches = titleTokens.filter(t => t === token).length;
+        if (titleMatches > 0) {
+          score += titleMatches * 3.0;
+          tokenMatched = true;
+        } else if (lowerTitle.includes(token)) {
+          score += 1.5;
+          tokenMatched = true;
+        }
+
+        if (tokenMatched) {
+          matchedTokensCount++;
+        }
       });
 
-      // Normalize by chunk length
-      const normalizedScore = score / Math.sqrt(chunkTokens.length + 5);
-      return { chunk, score: normalizedScore };
+      // Reward coverage of query terms (percentage of query keywords found)
+      const coverageRatio = queryTokens.length > 0 ? (matchedTokensCount / queryTokens.length) : 0;
+      score = score * (1 + coverageRatio);
+
+      // Normalize by chunk length to avoid bias toward giant documents
+      const normalizedScore = score / Math.sqrt(chunkTokens.length + 10);
+      return { chunk, score: normalizedScore, coverageRatio };
     });
 
-    // Filter and Sort by Score
+    // Filter by relevance: must have meaningful score and term coverage
     const topChunks = scoredChunks
-      .filter(sc => sc.score > 0.1) // Must have actual token overlap
+      .filter(sc => sc.score >= 0.35 || (sc.coverageRatio >= 0.5 && sc.score > 0.2))
       .sort((a, b) => b.score - a.score)
       .slice(0, 4)
       .map(sc => sc.chunk);
 
     if (topChunks.length === 0) {
       return {
-        groundingContext: 'No matching knowledge sources found for this specific query.',
+        groundingContext: 'No specific knowledge base articles matched this query.',
         sourcesUsed: [],
       };
     }
