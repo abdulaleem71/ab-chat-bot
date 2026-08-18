@@ -64,7 +64,9 @@ app.use(
   helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
-    frameguard: false, // Allows iframe embedding for chatbot widget
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // Crucial: Allows external websites to load widget.js & embed iframes
+    crossOriginOpenerPolicy: false,
+    frameguard: false, // Allows iframe embedding for chatbot widget on 3rd party websites
   })
 );
 
@@ -72,6 +74,11 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-XSS-Protection', '1; mode=block');
+  // Explicitly allow cross-origin resource loading for widget and embed endpoints
+  if (req.path === '/widget.js' || req.path.startsWith('/embed') || req.path.startsWith('/api/chatbots/')) {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
   next();
 });
 
@@ -173,8 +180,9 @@ function requireAuth(req: AuthenticatedRequest, res: express.Response, next: exp
 // EMBED WIDGET JS ENDPOINT (/widget.js)
 // ==========================================
 app.get('/widget.js', (req, res) => {
-  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Cache-Control', 'public, max-age=3600');
 
   const widgetScript = `
