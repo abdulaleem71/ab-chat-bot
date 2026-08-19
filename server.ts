@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import helmet from 'helmet';
@@ -84,6 +85,7 @@ app.use((req, res, next) => {
 
 // Public widget endpoints allow cross-origin requests
 app.use('/api/chatbots/:id/chat', cors({ origin: '*', credentials: false }));
+app.use('/api/chatbots/:id/auto-detect-host', cors({ origin: '*', credentials: false }));
 app.use('/widget.js', cors({ origin: '*', credentials: false }));
 
 // All other routes use controlled CORS policy
@@ -97,7 +99,7 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '500kb' }));
 
 // Rate Limiters
 const globalApiLimiter = rateLimit({
@@ -120,11 +122,20 @@ const authLimiter = rateLimit({
 
 const chatLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 30,
+  max: 40,
   standardHeaders: true,
   legacyHeaders: false,
   validate: { xForwardedForHeader: false },
   message: { success: false, error: 'Rate limit exceeded for chat messages. Please wait a moment.' },
+});
+
+const autoDetectLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
+  message: { success: false, error: 'Auto-detect rate limit reached. Please wait a moment.' },
 });
 
 app.use('/api/', globalApiLimiter);
@@ -183,116 +194,19 @@ app.get('/widget.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('Cache-Control', 'public, max-age=300');
 
-  const widgetScript = `
-(function() {
-  function initWidget() {
-    if (!document.body) {
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initWidget);
-      } else {
-        setTimeout(initWidget, 50);
-      }
-      return;
+  try {
+    const widgetPath = path.join(process.cwd(), 'public', 'widget.js');
+    if (fs.existsSync(widgetPath)) {
+      const scriptContent = fs.readFileSync(widgetPath, 'utf-8');
+      return res.send(scriptContent);
     }
-
-    if (document.getElementById('nomadschat-widget-root')) return;
-
-    // Determine script tag and botId
-    let scriptTag = document.currentScript;
-    let botId = scriptTag ? scriptTag.getAttribute('data-bot-id') : null;
-
-    if (!scriptTag || !botId) {
-      const scripts = document.getElementsByTagName('script');
-      for (let i = 0; i < scripts.length; i++) {
-        const s = scripts[i];
-        if (s.src && (s.src.includes('/widget.js') || s.getAttribute('data-bot-id'))) {
-          scriptTag = s;
-          botId = s.getAttribute('data-bot-id');
-          if (botId) break;
-        }
-      }
-    }
-
-    // Support query param fallback e.g. widget.js?botId=bot_xxx
-    if (!botId && scriptTag && scriptTag.src) {
-      try {
-        const urlObj = new URL(scriptTag.src);
-        botId = urlObj.searchParams.get('botId') || urlObj.searchParams.get('bot');
-      } catch(e) {}
-    }
-
-    if (!botId) {
-      botId = 'bot_acme_support';
-    }
-
-    // Dynamically resolve target host from script URL so it works on any external website
-    let host = '';
-    if (scriptTag && scriptTag.src) {
-      try {
-        const parsed = new URL(scriptTag.src);
-        if (parsed.origin && parsed.origin !== 'null') {
-          host = parsed.origin;
-        }
-      } catch(e) {}
-    }
-    if (!host) {
-      host = window.location.origin;
-    }
-
-    const container = document.createElement('div');
-    container.id = 'nomadschat-widget-root';
-
-    const button = document.createElement('button');
-    button.id = 'nomadschat-widget-button';
-    button.setAttribute('aria-label', 'Open AI Chatbot');
-    button.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
-    button.style.cssText = 'position:fixed;bottom:20px;right:20px;width:56px;height:56px;border-radius:50%;background:#4F46E5;color:#ffffff;border:none;box-shadow:0 10px 25px -5px rgba(79,70,229,0.4), 0 8px 10px -6px rgba(0,0,0,0.15);cursor:pointer;z-index:999999;display:flex;align-items:center;justify-content:center;transition:all 0.3s cubic-bezier(0.16, 1, 0.3, 1);outline:none;';
-
-    button.onmouseover = function() { button.style.transform = 'scale(1.08)'; };
-    button.onmouseout = function() { button.style.transform = 'scale(1)'; };
-
-    const iframe = document.createElement('iframe');
-    iframe.id = 'nomadschat-widget-iframe';
-    iframe.src = host + '/embed/' + encodeURIComponent(botId);
-    iframe.title = 'AI Chatbot Assistant';
-    iframe.setAttribute('allow', 'microphone; camera; autoplay; clipboard-write');
-    iframe.style.cssText = 'position:fixed;bottom:88px;right:20px;width:380px;max-width:calc(100vw - 32px);height:590px;max-height:calc(100vh - 108px);border:none;border-radius:20px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.15), 0 8px 10px -6px rgba(0,0,0,0.1);z-index:999999;display:none;background:transparent;overflow:hidden;transition:opacity 0.2s ease, transform 0.2s ease;';
-
-    let isOpen = false;
-    function toggleWidget(openState) {
-      isOpen = typeof openState === 'boolean' ? openState : !isOpen;
-      if (isOpen) {
-        iframe.style.display = 'block';
-        button.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
-        button.style.backgroundColor = '#09090b';
-      } else {
-        iframe.style.display = 'none';
-        button.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
-        button.style.backgroundColor = '#000000';
-      }
-    }
-
-    button.onclick = function() {
-      toggleWidget();
-    };
-
-    window.addEventListener('message', function(event) {
-      if (event.data && event.data.type === 'nomadschat_close') {
-        toggleWidget(false);
-      }
-    });
-
-    container.appendChild(button);
-    container.appendChild(iframe);
-    document.body.appendChild(container);
+  } catch (e) {
+    // Fallback if file read fails
   }
 
-  initWidget();
-})();
-  `;
-  res.send(widgetScript);
+  res.send(`console.warn('[NomadsChat] widget.js loading fallback');`);
 });
 
 // ==========================================
@@ -747,6 +661,49 @@ app.delete('/api/chatbots/:id/knowledge/:sourceId', requireAuth, asyncHandler(as
     return res.status(404).json({ success: false, error: 'Knowledge source not found' });
   }
   res.json({ success: true, id: req.params.sourceId });
+}));
+
+// ==========================================
+// AUTOMATIC HOST WEBSITE DETECTION & INGESTION ENDPOINT
+// ==========================================
+app.post('/api/chatbots/:id/auto-detect-host', autoDetectLimiter, asyncHandler(async (req, res) => {
+  const { hostOrigin, hostUrl, hostTitle, clientDomSnapshot } = req.body || {};
+
+  if (!hostOrigin || typeof hostOrigin !== 'string') {
+    return res.status(400).json({ success: false, error: 'hostOrigin string is required' });
+  }
+
+  const bot = await ChatbotRepo.findById(req.params.id);
+  if (!bot) {
+    return res.status(404).json({ success: false, error: 'Chatbot not found' });
+  }
+
+  try {
+    const result = await KnowledgeService.autoDetectAndIngestHostSite(
+      bot.id,
+      bot.tenantId,
+      {
+        hostOrigin,
+        hostUrl,
+        hostTitle,
+        clientDomSnapshot,
+      }
+    );
+
+    res.json({
+      success: true,
+      domain: result.domain,
+      status: result.status,
+      sourcesIndexed: result.sourcesIndexed,
+      pagesCrawled: result.pagesCrawled,
+    });
+  } catch (err: any) {
+    console.error('[Auto-Detect Endpoint Error]:', err.message);
+    res.status(400).json({
+      success: false,
+      error: err.message || 'Failed to auto-detect and ingest host website',
+    });
+  }
 }));
 
 // ==========================================

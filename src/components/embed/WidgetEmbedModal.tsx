@@ -127,6 +127,22 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
             </div>
           </div>
 
+          {/* Auto-Detection Banner */}
+          <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-4 flex items-start gap-3">
+            <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div className="text-xs space-y-1">
+              <h4 className="font-bold text-emerald-950 flex items-center gap-1.5">
+                <span>Zero-Config Dynamic Website Ingestion</span>
+                <span className="bg-emerald-200/80 text-emerald-800 text-[10px] px-2 py-0.5 rounded-full font-medium">Automatic</span>
+              </h4>
+              <p className="text-emerald-800 leading-relaxed text-[11px]">
+                When embedded on any live domain (e.g. <code>https://example.com</code>), the widget automatically detects the host domain, extracts the active page context, crawls same-origin internal pages, and indexes them into Gemini RAG knowledge with zero manual URL configuration.
+              </p>
+            </div>
+          </div>
+
           {/* Test Widget Live Button */}
           <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex items-center justify-between">
             <div>

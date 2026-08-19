@@ -276,6 +276,321 @@ export class KnowledgeService {
       .trim();
   }
 
+  // In-memory cache to prevent repeated auto-crawls of the same domain within a 12-hour window
+  private static domainCrawlCache = new Map<string, { timestamp: number; sourcesIndexed: number }>();
+  private static domainInFlightCrawls = new Map<string, Promise<any>>();
+
+  /**
+   * Automatically detects and indexes the host website where the chatbot is embedded.
+   * Handles immediate client DOM snapshot ingestion + background multi-page internal crawling.
+   */
+  static async autoDetectAndIngestHostSite(
+    chatbotId: string,
+    tenantId: string,
+    params: {
+      hostOrigin: string;
+      hostUrl?: string;
+      hostTitle?: string;
+      clientDomSnapshot?: string;
+    }
+  ): Promise<{
+    status: 'indexed' | 'cached' | 'processing';
+    domain: string;
+    sourcesIndexed: number;
+    pagesCrawled: string[];
+  }> {
+    const { hostOrigin, hostUrl, hostTitle, clientDomSnapshot } = params;
+
+    if (!hostOrigin || typeof hostOrigin !== 'string') {
+      throw new Error('Valid host origin is required');
+    }
+
+    let parsedOrigin: URL;
+    try {
+      parsedOrigin = new URL(hostOrigin);
+    } catch {
+      throw new Error('Invalid host origin URL format');
+    }
+
+    const domainKey = `${chatbotId}:${parsedOrigin.hostname.toLowerCase()}`;
+    const now = Date.now();
+    const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+    // 1. If client snapshot is provided (e.g. from the active page in React/Next.js/Shopify),
+    // ingest it immediately so the current page is indexed with zero latency.
+    if (clientDomSnapshot && clientDomSnapshot.trim().length > 30) {
+      try {
+        await this.ingestRawHtml(
+          chatbotId,
+          tenantId,
+          clientDomSnapshot,
+          hostUrl || hostOrigin,
+          hostTitle || `Page on ${parsedOrigin.hostname}`
+        );
+      } catch (err: any) {
+        console.log(`[Auto-Detect] Client snapshot ingest skipped:`, err.message);
+      }
+    }
+
+    // 2. Check if this domain was already crawled recently for this bot
+    const cached = this.domainCrawlCache.get(domainKey);
+    if (cached && (now - cached.timestamp < CACHE_TTL_MS)) {
+      return {
+        status: 'cached',
+        domain: parsedOrigin.hostname,
+        sourcesIndexed: cached.sourcesIndexed,
+        pagesCrawled: [hostUrl || hostOrigin],
+      };
+    }
+
+    // 3. Prevent duplicate simultaneous crawls if multiple visitors open the site at once
+    if (this.domainInFlightCrawls.has(domainKey)) {
+      return {
+        status: 'processing',
+        domain: parsedOrigin.hostname,
+        sourcesIndexed: 1,
+        pagesCrawled: [hostOrigin],
+      };
+    }
+
+    // 4. Launch domain crawl
+    const crawlPromise = this.crawlEntireHostDomain(chatbotId, tenantId, parsedOrigin, hostUrl);
+    this.domainInFlightCrawls.set(domainKey, crawlPromise);
+
+    try {
+      const crawlResult = await crawlPromise;
+      this.domainCrawlCache.set(domainKey, {
+        timestamp: now,
+        sourcesIndexed: crawlResult.pagesCrawled.length,
+      });
+      return {
+        status: 'indexed',
+        domain: parsedOrigin.hostname,
+        sourcesIndexed: crawlResult.pagesCrawled.length,
+        pagesCrawled: crawlResult.pagesCrawled,
+      };
+    } finally {
+      this.domainInFlightCrawls.delete(domainKey);
+    }
+  }
+
+  /**
+   * Internal helper: Crawls root and high-value same-domain pages, respecting robots.txt and SSRF rules.
+   */
+  private static async crawlEntireHostDomain(
+    chatbotId: string,
+    tenantId: string,
+    originUrl: URL,
+    initialPageUrl?: string
+  ): Promise<{ pagesCrawled: string[] }> {
+    const isLocalhost = originUrl.hostname === 'localhost' || originUrl.hostname === '127.0.0.1';
+    if (isLocalhost) {
+      // Localhost cannot be fetched by remote server; already handled via client DOM snapshot
+      return { pagesCrawled: [initialPageUrl || originUrl.toString()] };
+    }
+
+    const pagesCrawled: string[] = [];
+    const visitedUrls = new Set<string>();
+    const disallowedPaths = await this.fetchRobotsDisallowedPaths(originUrl);
+
+    // Queue of URLs to crawl on the same domain (up to 6 pages)
+    const urlQueue: string[] = [originUrl.toString()];
+    if (initialPageUrl && initialPageUrl !== originUrl.toString()) {
+      urlQueue.push(initialPageUrl);
+    }
+
+    const MAX_PAGES_TO_CRAWL = 6;
+
+    while (urlQueue.length > 0 && pagesCrawled.length < MAX_PAGES_TO_CRAWL) {
+      const currentUrlStr = urlQueue.shift()!;
+      let parsedCurrent: URL;
+      try {
+        parsedCurrent = new URL(currentUrlStr, originUrl);
+      } catch {
+        continue;
+      }
+
+      // Enforce strict same-origin boundary (no external domains)
+      if (parsedCurrent.hostname.toLowerCase() !== originUrl.hostname.toLowerCase()) {
+        continue;
+      }
+
+      const normalizedUrl = parsedCurrent.origin + parsedCurrent.pathname;
+      if (visitedUrls.has(normalizedUrl)) {
+        continue;
+      }
+      visitedUrls.add(normalizedUrl);
+
+      // Check robots.txt Disallow paths
+      const isDisallowed = disallowedPaths.some(p => parsedCurrent.pathname.startsWith(p));
+      if (isDisallowed) {
+        continue;
+      }
+
+      try {
+        const validatedUrl = await this.validateUrlForSsrf(normalizedUrl);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 7000);
+
+        const res = await fetch(validatedUrl.toString(), {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) NomadsChatAutoCrawler/1.0 (+https://nomadschat.ai/bot)',
+            'Accept': 'text/html,application/xhtml+xml,text/plain',
+          },
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+
+        if (!res.ok) continue;
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('text/html') && !contentType.includes('text/plain')) {
+          continue;
+        }
+
+        const rawHtml = await res.text();
+        if (rawHtml.length > 5 * 1024 * 1024) continue;
+
+        // Extract title & meta description
+        const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        const extractedTitle = titleMatch ? this.decodeHtmlEntities(titleMatch[1]).trim() : '';
+
+        const metaDescMatch = rawHtml.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i);
+        const metaDescription = metaDescMatch ? this.decodeHtmlEntities(metaDescMatch[1]).trim() : '';
+
+        let cleanText = this.htmlToStructuredText(rawHtml);
+        if (metaDescription && !cleanText.includes(metaDescription)) {
+          cleanText = `Overview: ${metaDescription}\n\n${cleanText}`;
+        }
+
+        if (cleanText.length > 35000) {
+          cleanText = cleanText.substring(0, 35000) + '\n... [content indexed up to 35,000 characters]';
+        }
+
+        if (cleanText.trim().length >= 40) {
+          const title = extractedTitle || `Page: ${parsedCurrent.pathname || '/'}`;
+          const chunks = this.chunkTextWithOverlap(cleanText, 350, 40);
+
+          // Replace existing source for this specific URL if it exists
+          const existingSources = await KnowledgeRepo.findSourcesByBot(chatbotId, tenantId);
+          const existingUrlSource = existingSources.find(s => s.sourceUrl === normalizedUrl);
+          if (existingUrlSource) {
+            await KnowledgeRepo.deleteSource(existingUrlSource.id, tenantId);
+          }
+
+          const source: KnowledgeSource = {
+            id: newId('ks'),
+            chatbotId,
+            tenantId,
+            type: 'url',
+            title: `${title} (${originUrl.hostname})`.slice(0, 250),
+            content: cleanText,
+            sourceUrl: normalizedUrl,
+            status: 'indexed',
+            chunkCount: chunks.length,
+            updatedAt: new Date().toISOString(),
+          };
+
+          await KnowledgeRepo.createSourceWithChunks(source, chunks);
+          pagesCrawled.push(normalizedUrl);
+        }
+
+        // Extract new internal links from this page if we need more pages
+        if (pagesCrawled.length < MAX_PAGES_TO_CRAWL) {
+          const discoveredLinks = this.extractInternalLinks(rawHtml, originUrl);
+          for (const link of discoveredLinks) {
+            if (!visitedUrls.has(link) && !urlQueue.includes(link)) {
+              urlQueue.push(link);
+            }
+          }
+        }
+      } catch (pageErr: any) {
+        console.log(`[Auto-Crawler] Failed to crawl ${normalizedUrl}:`, pageErr.message);
+      }
+    }
+
+    return { pagesCrawled };
+  }
+
+  /**
+   * Extracts and prioritizes internal links from HTML.
+   */
+  private static extractInternalLinks(html: string, baseOrigin: URL): string[] {
+    const linkMatches = html.matchAll(/<a\b[^>]*\bhref=["']([^"']+)["']/gi);
+    const links: string[] = [];
+    const priorityKeywords = ['about', 'service', 'pricing', 'product', 'faq', 'feature', 'doc', 'contact', 'help', 'support', 'terms', 'privacy', 'team'];
+
+    for (const match of linkMatches) {
+      const rawHref = match[1]?.trim();
+      if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:') || rawHref.startsWith('mailto:') || rawHref.startsWith('tel:')) {
+        continue;
+      }
+
+      // Ignore common static file extensions
+      if (/\.(png|jpe?g|gif|webp|svg|css|js|woff2?|ttf|pdf|zip|rar|mp4|mp3|xml|json)$/i.test(rawHref)) {
+        continue;
+      }
+
+      try {
+        const resolved = new URL(rawHref, baseOrigin);
+        if (resolved.hostname.toLowerCase() === baseOrigin.hostname.toLowerCase()) {
+          const cleanUrl = resolved.origin + resolved.pathname;
+          if (!links.includes(cleanUrl)) {
+            links.push(cleanUrl);
+          }
+        }
+      } catch {
+        // Skip malformed URLs
+      }
+    }
+
+    // Sort links: place high-priority keywords (about, services, pricing, faq) first
+    links.sort((a, b) => {
+      const aScore = priorityKeywords.some(k => a.toLowerCase().includes(k)) ? 1 : 0;
+      const bScore = priorityKeywords.some(k => b.toLowerCase().includes(k)) ? 1 : 0;
+      return bScore - aScore;
+    });
+
+    return links.slice(0, 15);
+  }
+
+  /**
+   * Fetches and parses robots.txt Disallow rules
+   */
+  private static async fetchRobotsDisallowedPaths(originUrl: URL): Promise<string[]> {
+    const disallowed: string[] = [];
+    try {
+      const robotsUrl = `${originUrl.origin}/robots.txt`;
+      const validated = await this.validateUrlForSsrf(robotsUrl);
+      const res = await fetch(validated.toString(), {
+        headers: { 'User-Agent': 'Mozilla/5.0 NomadsChatAutoCrawler/1.0' },
+        signal: AbortSignal.timeout(3000),
+      });
+
+      if (res.ok) {
+        const text = await res.text();
+        const lines = text.split('\n');
+        let appliesToAll = false;
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (/^User-agent:\s*\*/i.test(trimmed)) {
+            appliesToAll = true;
+          } else if (/^User-agent:/i.test(trimmed)) {
+            appliesToAll = false;
+          } else if (appliesToAll && /^Disallow:\s*(.+)/i.test(trimmed)) {
+            const match = trimmed.match(/^Disallow:\s*(.+)/i);
+            if (match && match[1]) {
+              disallowed.push(match[1].trim());
+            }
+          }
+        }
+      }
+    } catch {
+      // If robots.txt doesn't exist or errors, continue normally
+    }
+    return disallowed;
+  }
+
   private static chunkTextWithOverlap(text: string, chunkSizeWords = 350, overlapWords = 40): string[] {
     const words = text.split(/\s+/).filter(w => w.length > 0);
     if (words.length <= chunkSizeWords) {

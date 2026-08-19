@@ -38,6 +38,47 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
   const [leadEmail, setLeadEmail] = useState('');
   const [isSubmittingLead, setIsSubmittingLead] = useState(false);
 
+  // Host detection state
+  const [detectedHost, setDetectedHost] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const qHost = params.get('host');
+      if (qHost) {
+        try {
+          return new URL(qHost).hostname;
+        } catch {
+          return qHost.replace(/^https?:\/\//, '');
+        }
+      }
+      if (document.referrer) {
+        try {
+          return new URL(document.referrer).hostname;
+        } catch {}
+      }
+    }
+    return '';
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const qHost = params.get('host') || (document.referrer ? new URL(document.referrer).origin : '');
+      if (qHost && (qHost.startsWith('http://') || qHost.startsWith('https://'))) {
+        try {
+          fetch(`/api/chatbots/${bot.id}/auto-detect-host`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              hostOrigin: qHost,
+              hostUrl: document.referrer || qHost,
+              hostTitle: document.title,
+            }),
+          }).catch(() => {});
+        } catch {}
+      }
+    }
+  }, [bot.id]);
+
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -250,8 +291,13 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
             <div className="flex items-center gap-1.5">
               <h3 className="font-bold text-xs sm:text-sm text-white truncate leading-tight">{bot.name}</h3>
             </div>
-            <p className="text-[10px] text-white/80 font-medium truncate">
-              {bot.humanOperatorOnline ? 'AI Assistant • Live Online' : 'AI Assistant'}
+            <p className="text-[10px] text-white/80 font-medium truncate flex items-center gap-1">
+              <span>{bot.humanOperatorOnline ? 'AI Assistant • Live Online' : 'AI Assistant'}</span>
+              {detectedHost && (
+                <span className="bg-white/20 px-1.5 py-0.2 rounded-full text-[9px] font-normal text-white/90">
+                  • {detectedHost}
+                </span>
+              )}
             </p>
           </div>
         </div>
