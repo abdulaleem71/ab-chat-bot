@@ -40,33 +40,114 @@
   var hostUrl = window.location.href;
   var hostTitle = document.title || '';
 
-  // Extract initial text snapshot from the active DOM for SPA/React/Next.js/Shopify immediate grounding
+  // Extract comprehensive text snapshot from active live DOM for SPA/React/Next.js/Shopify/HTML sites
   function extractPageTextSnapshot() {
     try {
-      // Clone main or body content to strip scripts and invisible elements
-      var container = document.querySelector('main') || document.querySelector('article') || document.body;
-      if (!container) return '';
+      var parts = [];
 
-      var clone = container.cloneNode(true);
-      var unwanted = clone.querySelectorAll('script, style, noscript, svg, nav, footer, header, [aria-hidden="true"]');
-      for (var j = 0; j < unwanted.length; j++) {
-        unwanted[j].parentNode && unwanted[j].parentNode.removeChild(unwanted[j]);
+      // Page Title
+      var pageTitle = document.title || '';
+      if (pageTitle) {
+        parts.push('# ' + pageTitle);
       }
 
-      var text = (clone.innerText || clone.textContent || '').replace(/\s+/g, ' ').trim();
+      // Meta description & keywords
       var metaDesc = document.querySelector('meta[name="description"]');
-      var descContent = metaDesc ? metaDesc.getAttribute('content') || '' : '';
+      if (metaDesc && metaDesc.getAttribute('content')) {
+        var desc = metaDesc.getAttribute('content').trim();
+        if (desc) parts.push('Website Overview: ' + desc);
+      }
 
-      var snapshot = (descContent ? 'Meta Description: ' + descContent + '\n\n' : '') + text;
-      return snapshot.slice(0, 30000);
+      var metaKeywords = document.querySelector('meta[name="keywords"]');
+      if (metaKeywords && metaKeywords.getAttribute('content')) {
+        var kw = metaKeywords.getAttribute('content').trim();
+        if (kw) parts.push('Keywords / Focus: ' + kw);
+      }
+
+      // Check root body
+      var root = document.body;
+      if (!root) return parts.join('\n\n');
+
+      function isElementIgnored(el) {
+        if (!el || el.nodeType !== 1) return true;
+        var tag = el.tagName.toLowerCase();
+        if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'svg' || tag === 'iframe' || tag === 'canvas' || tag === 'audio' || tag === 'video') return true;
+        if (el.id === 'nomadschat-root' || el.id === 'nomadschat-bubble' || el.id === 'nomadschat-iframe-container') return true;
+        return false;
+      }
+
+      // Collect all key sections, headings, cards, and articles
+      var candidateContainers = root.querySelectorAll('section, article, main, header, div[id], div[class*="hero"], div[class*="about"], div[class*="service"], div[class*="project"], div[class*="portfolio"], div[class*="card"], div[class*="skill"], div[class*="price"], div[class*="pricing"], div[class*="faq"], div[class*="contact"], div[class*="feature"]');
+      
+      var seenTexts = {};
+
+      for (var c = 0; c < candidateContainers.length; c++) {
+        var container = candidateContainers[c];
+        if (isElementIgnored(container)) continue;
+
+        // Find heading within this section if any
+        var heading = container.querySelector('h1, h2, h3, h4, h5, h6');
+        var headingText = heading ? (heading.innerText || heading.textContent || '').trim() : '';
+
+        // Extract clean text from this section
+        var blockText = (container.innerText || container.textContent || '')
+          .replace(/[\r\t]+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (blockText && blockText.length > 25 && !seenTexts[blockText]) {
+          // If blockText is already a substring of an already recorded block, skip
+          var isDuplicate = false;
+          for (var st in seenTexts) {
+            if (st.indexOf(blockText) !== -1) {
+              isDuplicate = true;
+              break;
+            }
+          }
+          if (!isDuplicate) {
+            seenTexts[blockText] = true;
+            if (headingText && blockText.indexOf(headingText) === -1) {
+              parts.push('## ' + headingText + '\n' + blockText);
+            } else {
+              parts.push(blockText);
+            }
+          }
+        }
+      }
+
+      // If specific sections didn't produce enough content (e.g. simple layout or dynamic SPA), extract full body text
+      if (parts.length <= 2) {
+        var bodyClone = root.cloneNode(true);
+        var unwanted = bodyClone.querySelectorAll('script, style, noscript, svg, iframe, #nomadschat-root');
+        for (var u = 0; u < unwanted.length; u++) {
+          if (unwanted[u].parentNode) unwanted[u].parentNode.removeChild(unwanted[u]);
+        }
+        var rawFullText = (bodyClone.innerText || bodyClone.textContent || '')
+          .replace(/[\r\t]+/g, ' ')
+          .replace(/\n\s*\n+/g, '\n\n')
+          .replace(/ +/g, ' ')
+          .trim();
+        if (rawFullText && rawFullText.length > 30) {
+          parts.push(rawFullText);
+        }
+      }
+
+      var fullSnapshot = parts.join('\n\n---\n\n');
+      return fullSnapshot.slice(0, 50000);
     } catch (err) {
-      return '';
+      return (document.body ? (document.body.innerText || document.body.textContent || '').slice(0, 25000) : '');
     }
   }
 
   // 3. Send Automatic Host Detection & Ingestion Handshake to Backend
+  var lastSyncedSnapshotLength = 0;
   function syncHostWebsiteKnowledge() {
     var snapshot = extractPageTextSnapshot();
+    if (!snapshot || (Math.abs(snapshot.length - lastSyncedSnapshotLength) < 10 && lastSyncedSnapshotLength > 0)) {
+      return;
+    }
+    lastSyncedSnapshotLength = snapshot.length;
+
     var payload = {
       hostOrigin: hostOrigin,
       hostUrl: hostUrl,
@@ -88,7 +169,7 @@
           }
         })
         .catch(function (err) {
-          console.log('[NomadsChat] Auto-sync notice:', err.message);
+          // Non-blocking background sync
         });
     } catch (e) {
       // Non-blocking
@@ -101,6 +182,10 @@
   } else {
     syncHostWebsiteKnowledge();
   }
+  // Also run 1.5s after window load to ensure SPA frameworks (React/Next/Shopify) have rendered async cards
+  window.addEventListener('load', function () {
+    setTimeout(syncHostWebsiteKnowledge, 1500);
+  });
 
   // 4. Inject Floating Chat Widget UI
   var isOpen = false;

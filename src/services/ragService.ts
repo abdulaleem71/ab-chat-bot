@@ -48,8 +48,8 @@ export class RagService {
     const lowerQuery = query.toLowerCase().trim();
     const queryTokens = this.tokenize(query).filter(t => !STOP_WORDS.has(t) && t.length > 1);
 
-    // If the corpus is compact (<= 10 chunks), include all chunks in context for 100% knowledge retention
-    if (chunks.length <= 10) {
+    // If the corpus is compact (<= 15 chunks), include all chunks in context for 100% knowledge retention
+    if (chunks.length <= 15) {
       const groundingContext = chunks
         .map(c => `[SOURCE: ${c.source_title}${c.source_url ? ` (${c.source_url})` : ''}]\n${c.content}`)
         .join('\n\n---\n\n');

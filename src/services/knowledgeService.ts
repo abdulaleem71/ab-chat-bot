@@ -237,14 +237,17 @@ export class KnowledgeService {
       .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
       .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, ' ')
       .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, ' ')
+      // Structural elements
+      .replace(/<\/(section|article|main|header|div|tr|blockquote)>/gi, '\n\n')
+      .replace(/<td[^>]*>/gi, ' | ')
       // Convert heading tags to markdown
-      .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n\n# $1\n')
-      .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n\n## $1\n')
-      .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n\n### $1\n')
-      .replace(/<h[4-6][^>]*>([\s\S]*?)<\/h[4-6]>/gi, '\n\n#### $1\n')
+      .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n\n# $1\n\n')
+      .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n\n## $1\n\n')
+      .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n\n### $1\n\n')
+      .replace(/<h[4-6][^>]*>([\s\S]*?)<\/h[4-6]>/gi, '\n\n#### $1\n\n')
       // List items & paragraphs
-      .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1')
-      .replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n\n$1\n')
+      .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n• $1')
+      .replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n\n$1\n\n')
       .replace(/<br\s*[\/]?>/gi, '\n')
       // Strip remaining HTML tags
       .replace(/<[^>]+>/g, ' ')
@@ -258,9 +261,50 @@ export class KnowledgeService {
       .replace(/&nbsp;/g, ' ')
       .replace(/&copy;/g, '©')
       .replace(/\r\n/g, '\n')
-      .replace(/\n\s+\n/g, '\n\n')
+      .replace(/\n\s*\n\s*\n+/g, '\n\n')
       .replace(/[ \t]+/g, ' ')
       .trim();
+  }
+
+  /**
+   * Ingests structured DOM text snapshot sent directly by the live widget embedded on the host website.
+   */
+  static async ingestClientDomSnapshot(
+    chatbotId: string,
+    tenantId: string,
+    snapshotText: string,
+    sourceUrl: string,
+    sourceTitle: string
+  ): Promise<KnowledgeSource> {
+    const cleanContent = snapshotText.trim();
+    if (!cleanContent || cleanContent.length < 15) {
+      throw new Error('Snapshot content too short to index');
+    }
+
+    const title = (sourceTitle || 'Host Website Content').slice(0, 200);
+    const chunks = this.chunkTextWithOverlap(cleanContent, 350, 40);
+
+    // Replace previous snapshot from this same URL
+    const existingSources = await KnowledgeRepo.findSourcesByBot(chatbotId, tenantId);
+    const existing = existingSources.find(s => s.sourceUrl === sourceUrl);
+    if (existing) {
+      await KnowledgeRepo.deleteSource(existing.id, tenantId);
+    }
+
+    const source: KnowledgeSource = {
+      id: newId('ks'),
+      chatbotId,
+      tenantId,
+      type: 'url',
+      title,
+      content: cleanContent,
+      sourceUrl,
+      status: 'indexed',
+      chunkCount: chunks.length,
+      updatedAt: new Date().toISOString(),
+    };
+
+    return await KnowledgeRepo.createSourceWithChunks(source, chunks);
   }
 
   private static decodeHtmlEntities(str: string): string {
@@ -320,12 +364,12 @@ export class KnowledgeService {
     // ingest it immediately so the current page is indexed with zero latency.
     if (clientDomSnapshot && clientDomSnapshot.trim().length > 30) {
       try {
-        await this.ingestRawHtml(
+        await this.ingestClientDomSnapshot(
           chatbotId,
           tenantId,
           clientDomSnapshot,
           hostUrl || hostOrigin,
-          hostTitle || `Page on ${parsedOrigin.hostname}`
+          hostTitle || `Live Site Content (${parsedOrigin.hostname})`
         );
       } catch (err: any) {
         console.log(`[Auto-Detect] Client snapshot ingest skipped:`, err.message);

@@ -7,17 +7,80 @@ import { Conversation, Message, GroundingSource } from '../types';
 
 let aiClient: GoogleGenAI | null = null;
 function getGeminiAI(): GoogleGenAI | null {
-  if (!aiClient && process.env.GEMINI_API_KEY) {
-    aiClient = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
+  if (!aiClient) {
+    const key = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    try {
+      aiClient = new GoogleGenAI(
+        key
+          ? {
+              apiKey: key,
+              httpOptions: {
+                headers: {
+                  'User-Agent': 'aistudio-build',
+                },
+              },
+            }
+          : {
+              httpOptions: {
+                headers: {
+                  'User-Agent': 'aistudio-build',
+                },
+              },
+            }
+      );
+    } catch (err: any) {
+      console.warn('[WARN] Could not initialize GoogleGenAI client:', err.message);
+    }
   }
   return aiClient;
+}
+
+/**
+ * Ensures Gemini multiturn chat contents strictly start with a 'user' turn
+ * and alternate between 'user' and 'model' as required by the Gemini API specification.
+ */
+function buildGeminiContents(
+  history: Array<{ sender: 'visitor' | 'bot' | 'agent'; content: string }>,
+  currentUserMessage: string
+): Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> {
+  const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+  const validHistory = history
+    .filter(m => m.content && m.content.trim().length > 0)
+    .map(m => ({
+      role: m.sender === 'visitor' ? ('user' as const) : ('model' as const),
+      text: m.content.trim(),
+    }));
+
+  // Gemini requires multi-turn contents to start with role 'user'.
+  const firstUserIdx = validHistory.findIndex(m => m.role === 'user');
+  const turnsToInclude = firstUserIdx >= 0 ? validHistory.slice(firstUserIdx) : [];
+
+  for (const turn of turnsToInclude) {
+    if (contents.length === 0) {
+      if (turn.role === 'user') {
+        contents.push({ role: 'user', parts: [{ text: turn.text }] });
+      }
+    } else {
+      const last = contents[contents.length - 1];
+      if (turn.role !== last.role) {
+        contents.push({ role: turn.role, parts: [{ text: turn.text }] });
+      } else {
+        // Merge consecutive turns with same role
+        last.parts[0].text += `\n\n${turn.text}`;
+      }
+    }
+  }
+
+  // Finally, append the current user message
+  const userText = currentUserMessage.trim();
+  if (contents.length === 0 || contents[contents.length - 1].role === 'model') {
+    contents.push({ role: 'user', parts: [{ text: userText }] });
+  } else {
+    contents[contents.length - 1].parts[0].text += `\n\n${userText}`;
+  }
+
+  return contents;
 }
 
 export class ChatService {
@@ -57,8 +120,6 @@ export class ChatService {
     }
 
     if (!conversation) {
-      // Always mint a fresh id: a client-supplied conversationId may collide with
-      // an existing row (e.g. it belongs to a different bot or was deleted).
       conversation = await ConversationRepo.create({
         id: newId('conv'),
         chatbotId: bot.id,
@@ -76,7 +137,6 @@ export class ChatService {
         createdAt: now,
       });
     } else if (visitorInfo) {
-      // Dynamically update conversation with visitor info if newly provided
       await ConversationRepo.updateVisitorInfo(conversation.id, {
         visitorName: visitorInfo.name,
         visitorEmail: visitorInfo.email,
@@ -97,7 +157,7 @@ export class ChatService {
     };
     await ConversationRepo.addMessage(userMsgRecord, bot.tenantId);
 
-    // 4. Perform RAG Search over Knowledge Base Chunks (and auto-fetch if knowledge was empty)
+    // 4. Perform RAG Search over Knowledge Base Chunks
     const { groundingContext, sourcesUsed } = await RagService.retrieveRelevantContext(
       bot.id,
       userMessage,
@@ -105,18 +165,18 @@ export class ChatService {
       bot.tenantId
     );
 
-    // 5. Construct Grounded Gemini Prompt
+    // 5. Construct Grounded Gemini System Instruction
     const customInstructions = bot.systemInstruction?.trim() || 'Provide helpful, friendly, and accurate customer support.';
     const botContext = [
       `Assistant Name: ${bot.name}`,
-      `Tone of Voice: ${bot.tone || 'Friendly and professional'}`,
+      `Tone of Voice: ${bot.tone || 'Friendly, articulate, professional, and helpful'}`,
       bot.description ? `Business Overview / Description: ${bot.description}` : '',
       bot.websiteUrl ? `Official Website: ${bot.websiteUrl}` : '',
-      `Custom Instructions from Creator: ${customInstructions}`,
+      `Custom Creator Instructions: ${customInstructions}`,
     ].filter(Boolean).join('\n');
 
     const systemInstruction = `
-You are ${bot.name}, the official AI customer assistant representing this website and business.
+You are ${bot.name}, the intelligent, helpful official AI representative for this website and business.
 
 === VERIFIED WEBSITE KNOWLEDGE BASE ===
 <knowledge_base>
@@ -127,29 +187,28 @@ ${groundingContext}
 ${botContext}
 
 === CRITICAL OPERATING INSTRUCTIONS ===
-1. Answer Directly from Knowledge Base: Whenever the user asks questions about services, capabilities, products, technologies, features, installation, pricing, or policies (for example, "Do you offer Shopify development?"), thoroughly review <knowledge_base>. If the requested topic or service is mentioned, answer affirmatively and provide the details from the knowledge base.
-2. Grounded Truth: Prioritize facts in <knowledge_base> over general knowledge. If specific steps, commands, or bullet points are present, format them clearly using Markdown.
-3. Helpful & Conversational: Handle greetings (e.g. "hi", "hello") politely. Introduce yourself as ${bot.name} and summarize the core services or topics you can help with based on the website knowledge.
-4. Fallback Restriction: Do NOT use the fallback message if relevant content exists in <knowledge_base>. Only when the question is completely unrelated or missing from the website content should you offer: "${bot.fallbackMessage}".
+1. UNDERSTAND AND LEARN: You have thoroughly studied the entire knowledge base above. Use this knowledge to answer visitor questions directly, naturally, and accurately.
+2. SPECIFIC INQUIRIES & SERVICES:
+   - When a visitor asks about services, capabilities, or technologies (e.g. "Do you offer Shopify development?", "Are you provide brand identity design?", "What tech stack do you use?"):
+     - Look at all services, projects, skills, and portfolio items in <knowledge_base>.
+     - If the service or technology is mentioned, answer affirmatively with specific details from the website.
+     - If the visitor asks about a service that is related (e.g. web design/development vs brand identity) but not explicitly detailed, politely clarify what services ARE provided based on the site and invite them to reach out for custom requests.
+3. CONVERSATIONAL & PROFESSIONAL:
+   - Speak naturally like a skilled representative.
+   - NEVER output raw metadata strings (such as "Meta Description: ..." or "Page Title: ...").
+   - NEVER repeat identical robotic fallback sentences.
+4. GREETINGS: For greetings ("hi", "hello"), greet the visitor warmly as ${bot.name} and summarize the key services you can help them with based on the website.
+5. FALLBACK RESTRICTION: Only if the user asks something completely outside the scope of the business, offer: "${bot.fallbackMessage || 'Please contact our team for more information.'}".
     `.trim();
 
-    // 6. Fetch Recent Message History from DB
+    // 6. Fetch Recent Message History and format compliant multiturn contents
     const dbMessages = await ConversationRepo.findMessagesByConversation(conversation.id);
+    const historyWithoutLast = dbMessages.slice(0, -1).slice(-8);
 
-    // Exclude the message we just saved above from history payload so it is not sent twice
-    const historyWithoutLast = dbMessages.slice(0, -1);
-    const validHistory = historyWithoutLast.slice(-10);
-
-    const chatContents = validHistory.map(m => ({
-      role: m.sender === 'visitor' ? 'user' : 'model',
-      parts: [{ text: m.content }],
-    }));
-
-    // Append the single current user message
-    chatContents.push({
-      role: 'user',
-      parts: [{ text: userMessage.trim() }],
-    });
+    const chatContents = buildGeminiContents(
+      historyWithoutLast.map(m => ({ sender: m.sender, content: m.content })),
+      userMessage
+    );
 
     // 7. Generate Response via Gemini
     let replyText = '';
@@ -163,7 +222,7 @@ ${botContext}
         }
 
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Gemini request timed out')), 15000)
+          setTimeout(() => reject(new Error('Gemini request timed out')), 20000)
         );
 
         const genPromise = ai.models.generateContent({
@@ -171,8 +230,8 @@ ${botContext}
           contents: chatContents,
           config: {
             systemInstruction,
-            temperature: 0.2,
-            maxOutputTokens: 1200,
+            temperature: 0.3,
+            maxOutputTokens: 1500,
           },
         });
 
@@ -183,14 +242,14 @@ ${botContext}
           replyText = this.synthesizeDirectAnswerFromGrounding(userMessage, groundingContext, bot);
         }
       } catch (err: any) {
-        console.error('Gemini Generation Error:', err.message || err);
+        console.error('Gemini Generation Notice:', err.message || err);
         replyText = this.synthesizeDirectAnswerFromGrounding(userMessage, groundingContext, bot);
       }
     } else {
       replyText = this.synthesizeDirectAnswerFromGrounding(userMessage, groundingContext, bot);
     }
 
-    // 8. Save Assistant Response in DB with Actual Citations
+    // 8. Save Assistant Response in DB with Citations
     const botMsgRecord: Message = {
       id: newId('msg_b'),
       conversationId: conversation.id,
@@ -211,53 +270,65 @@ ${botContext}
 
   /**
    * Deterministic Grounded Knowledge Extractor Fallback
-   * Synthesizes direct, factual answers from indexed knowledge base chunks if Gemini API is temporarily offline or times out.
    */
   private static synthesizeDirectAnswerFromGrounding(
     userQuery: string,
     groundingContext: string,
     bot: any
   ): string {
-    if (!groundingContext || groundingContext.includes('No indexed knowledge sources available') || groundingContext.includes('No relevant knowledge sources matched')) {
+    if (
+      !groundingContext ||
+      groundingContext.includes('No indexed knowledge sources available') ||
+      groundingContext.includes('No relevant knowledge sources matched')
+    ) {
       return bot.fallbackMessage || "I don't have information on that topic yet. Let me connect you with our team.";
     }
 
-    const cleanContext = groundingContext.replace(/\[SOURCE: [^\]]+\]/g, '').trim();
-    const queryTokens = userQuery.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(t => t.length > 2);
+    // Clean metadata noise
+    const cleanContext = groundingContext
+      .replace(/\[SOURCE: [^\]]+\]/g, '')
+      .replace(/^Meta Description:\s*/gim, '')
+      .replace(/^Page Overview:\s*/gim, '')
+      .replace(/^#+ /gm, '')
+      .trim();
 
-    // Split knowledge into individual sentences/paragraphs
-    const sentences = cleanContext.split(/(?<=[.!?\n])\s+/).map(s => s.trim()).filter(s => s.length > 10);
+    const queryTokens = userQuery
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(t => t.length > 2);
 
-    // Score sentences based on matching query keywords
-    const scored = sentences.map(sentence => {
-      const lowerSentence = sentence.toLowerCase();
-      let matchCount = 0;
+    const paragraphs = cleanContext
+      .split(/\n\n+/)
+      .map(p => p.trim())
+      .filter(p => p.length > 15);
+
+    const scored = paragraphs.map(para => {
+      const lower = para.toLowerCase();
+      let matches = 0;
       queryTokens.forEach(t => {
-        if (lowerSentence.includes(t)) matchCount++;
+        if (lower.includes(t)) matches++;
       });
-      return { sentence, matchCount };
+      return { para, matches };
     });
 
-    const relevant = scored.filter(s => s.matchCount > 0).sort((a, b) => b.matchCount - a.matchCount);
+    const matched = scored.filter(s => s.matches > 0).sort((a, b) => b.matches - a.matches);
 
-    if (relevant.length > 0) {
-      const topSentences = relevant.slice(0, 3).map(r => r.sentence).join(' ');
-      return `Based on our website:\n\n${topSentences}`;
+    if (matched.length > 0) {
+      const topInfo = matched.slice(0, 2).map(m => m.para).join('\n\n');
+      return `Based on our website:\n\n${topInfo}\n\nFeel free to ask if you have any specific questions about our services or project requirements!`;
     }
 
-    // If query is general or greeting
     const isGreeting = ['hi', 'hello', 'hey', 'help'].some(g => userQuery.toLowerCase().includes(g));
     if (isGreeting) {
-      const firstChunkSnippet = sentences.slice(0, 2).join(' ');
-      return `Hello! I am ${bot.name}. Based on our website, ${firstChunkSnippet ? firstChunkSnippet : 'how can I assist you with our services today?'}`;
+      const intro = paragraphs[0] || 'how can I help you today?';
+      return `Hello! I am ${bot.name}. We specialize in: ${intro}\n\nHow can I assist you with your project today?`;
     }
 
-    // Return the primary overview if available
-    const overviewSnippet = sentences.slice(0, 3).join(' ');
-    if (overviewSnippet.length > 0) {
-      return `Here is what I found on our website:\n\n${overviewSnippet}`;
+    if (paragraphs.length > 0) {
+      return `Based on our website information:\n\n${paragraphs.slice(0, 2).join('\n\n')}\n\nLet me know if you would like to discuss more details or get in touch with our team!`;
     }
 
-    return bot.fallbackMessage || "I don't have information on that specific detail yet.";
+    return bot.fallbackMessage || "I'd be glad to connect you with our team to discuss your project in detail.";
   }
 }
