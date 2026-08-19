@@ -210,39 +210,46 @@ ${botContext}
       userMessage
     );
 
-    // 7. Generate Response via Gemini
+    // 7. Generate Response via Gemini with Automatic Model Failover
     let replyText = '';
     const ai = getGeminiAI();
 
     if (ai) {
-      try {
-        let modelToUse = bot.model || 'gemini-3.7-flash';
-        if (modelToUse !== 'gemini-3.7-flash' && modelToUse !== 'gemini-3.1-pro-preview') {
-          modelToUse = 'gemini-3.7-flash';
+      // Prioritize gemini-2.5-flash for maximum reliability & speed, with automated failover
+      const candidateModels = [
+        bot.model && bot.model !== 'gemini-3.7-flash' ? bot.model : 'gemini-2.5-flash',
+        'gemini-2.5-flash',
+        'gemini-3.7-flash',
+        'gemini-2.5-pro',
+      ].filter((v, i, a) => a.indexOf(v) === i);
+
+      for (const modelToUse of candidateModels) {
+        try {
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Model timeout')), 12000)
+          );
+
+          const genPromise = ai.models.generateContent({
+            model: modelToUse,
+            contents: chatContents,
+            config: {
+              systemInstruction,
+              temperature: 0.3,
+              maxOutputTokens: 1200,
+            },
+          });
+
+          const res = (await Promise.race([genPromise, timeoutPromise])) as any;
+          if (res && res.text && res.text.trim().length > 0) {
+            replyText = res.text.trim();
+            break; // Successfully got response
+          }
+        } catch (err: any) {
+          console.warn(`[NomadsChat] Model ${modelToUse} notice: ${err.message || err.status}. Trying next...`);
         }
+      }
 
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Gemini request timed out')), 20000)
-        );
-
-        const genPromise = ai.models.generateContent({
-          model: modelToUse,
-          contents: chatContents,
-          config: {
-            systemInstruction,
-            temperature: 0.3,
-            maxOutputTokens: 1500,
-          },
-        });
-
-        const res = (await Promise.race([genPromise, timeoutPromise])) as any;
-        if (res && res.text && res.text.trim().length > 0) {
-          replyText = res.text.trim();
-        } else {
-          replyText = this.synthesizeDirectAnswerFromGrounding(userMessage, groundingContext, bot);
-        }
-      } catch (err: any) {
-        console.error('Gemini Generation Notice:', err.message || err);
+      if (!replyText) {
         replyText = this.synthesizeDirectAnswerFromGrounding(userMessage, groundingContext, bot);
       }
     } else {
@@ -269,7 +276,9 @@ ${botContext}
   }
 
   /**
-   * Deterministic Grounded Knowledge Extractor Fallback
+   * Precise Grounded Knowledge Extractor Fallback
+   * Specifically extracts only the exact relevant answer (contact info, services, or concise facts)
+   * rather than dumping large blocks of raw website text.
    */
   private static synthesizeDirectAnswerFromGrounding(
     userQuery: string,
@@ -284,51 +293,84 @@ ${botContext}
       return bot.fallbackMessage || "I don't have information on that topic yet. Let me connect you with our team.";
     }
 
-    // Clean metadata noise
+    const lowerQuery = userQuery.toLowerCase().trim();
+
+    // 1. SPECIFIC CONTACT / SUPPORT / LOCATION INTENT
+    const isContactQuery = ['contact', 'support', 'email', 'phone', 'call', 'reach', 'location', 'address', 'touch', 'office', 'help'].some(
+      w => lowerQuery.includes(w)
+    );
+    if (isContactQuery) {
+      const emailMatches = groundingContext.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
+      const phoneMatches = groundingContext.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g);
+      const locationMatch = groundingContext.match(/Location[:\s]+([^\n.,]+(?:,\s*[^\n.,]+)?)/i);
+
+      const contactPoints: string[] = [];
+      if (emailMatches && emailMatches.length > 0) {
+        contactPoints.push(`- **Email**: ${emailMatches[0]}`);
+      }
+      if (phoneMatches && phoneMatches.length > 0) {
+        contactPoints.push(`- **Phone**: ${phoneMatches[0]}`);
+      }
+      if (locationMatch && locationMatch[1]) {
+        contactPoints.push(`- **Location**: ${locationMatch[1].trim()}`);
+      }
+
+      if (contactPoints.length > 0) {
+        return `You can reach our team directly through the following channels:\n\n${contactPoints.join('\n')}\n\nFeel free to send a message anytime!`;
+      }
+    }
+
+    // 2. Clean metadata noise
     const cleanContext = groundingContext
       .replace(/\[SOURCE: [^\]]+\]/g, '')
+      .replace(/---/g, '\n')
       .replace(/^Meta Description:\s*/gim, '')
       .replace(/^Page Overview:\s*/gim, '')
-      .replace(/^#+ /gm, '')
+      .replace(/^Website Overview:\s*/gim, '')
+      .replace(/^[#]+\s*/gm, '')
       .trim();
 
-    const queryTokens = userQuery
-      .toLowerCase()
+    // 3. Extract discrete sentences
+    const sentences = cleanContext
+      .split(/(?<=[.!?\n])\s+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 20 && !s.includes('---'));
+
+    const queryTokens = lowerQuery
       .replace(/[^a-z0-9\s]/g, ' ')
       .split(/\s+/)
-      .filter(t => t.length > 2);
+      .filter(t => t.length > 2 && !['what', 'how', 'when', 'where', 'with', 'your', 'about', 'this', 'that'].includes(t));
 
-    const paragraphs = cleanContext
-      .split(/\n\n+/)
-      .map(p => p.trim())
-      .filter(p => p.length > 15);
-
-    const scored = paragraphs.map(para => {
-      const lower = para.toLowerCase();
+    // Score sentences specifically based on query tokens
+    const scored = sentences.map(sentence => {
+      const lowerSentence = sentence.toLowerCase();
       let matches = 0;
       queryTokens.forEach(t => {
-        if (lower.includes(t)) matches++;
+        if (lowerSentence.includes(t)) matches++;
       });
-      return { para, matches };
+      return { sentence, matches };
     });
 
-    const matched = scored.filter(s => s.matches > 0).sort((a, b) => b.matches - a.matches);
+    const relevant = scored
+      .filter(s => s.matches > 0)
+      .sort((a, b) => b.matches - a.matches);
 
-    if (matched.length > 0) {
-      const topInfo = matched.slice(0, 2).map(m => m.para).join('\n\n');
-      return `Based on our website:\n\n${topInfo}\n\nFeel free to ask if you have any specific questions about our services or project requirements!`;
+    if (relevant.length > 0) {
+      const topSentences = relevant.slice(0, 2).map(r => r.sentence).join(' ');
+      return topSentences;
     }
 
-    const isGreeting = ['hi', 'hello', 'hey', 'help'].some(g => userQuery.toLowerCase().includes(g));
+    // GREETINGS
+    const isGreeting = ['hi', 'hello', 'hey'].some(g => lowerQuery === g || lowerQuery.startsWith(g + ' '));
     if (isGreeting) {
-      const intro = paragraphs[0] || 'how can I help you today?';
-      return `Hello! I am ${bot.name}. We specialize in: ${intro}\n\nHow can I assist you with your project today?`;
+      return `Hello! I am ${bot.name}. How can I assist you with our services today?`;
     }
 
-    if (paragraphs.length > 0) {
-      return `Based on our website information:\n\n${paragraphs.slice(0, 2).join('\n\n')}\n\nLet me know if you would like to discuss more details or get in touch with our team!`;
+    // Concise fallback sentence
+    if (sentences.length > 0) {
+      return sentences[0];
     }
 
-    return bot.fallbackMessage || "I'd be glad to connect you with our team to discuss your project in detail.";
+    return bot.fallbackMessage || "Please feel free to reach out to our team for further details.";
   }
 }

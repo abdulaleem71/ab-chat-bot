@@ -635,15 +635,51 @@ export class KnowledgeService {
     return disallowed;
   }
 
-  private static chunkTextWithOverlap(text: string, chunkSizeWords = 350, overlapWords = 40): string[] {
+  private static chunkTextWithOverlap(text: string, chunkSizeWords = 280, overlapWords = 30): string[] {
+    const rawSections = text.split(/\n\s*---\s*\n|\n\s*={3,}\s*\n/).map(s => s.trim()).filter(Boolean);
+    const chunks: string[] = [];
+
+    for (const section of rawSections) {
+      const words = section.split(/\s+/).filter(w => w.length > 0);
+      if (words.length <= chunkSizeWords) {
+        if (section.length > 10) {
+          chunks.push(section);
+        }
+        continue;
+      }
+
+      // If a section is large, split by paragraphs first
+      const paragraphs = section.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+      let currentChunk: string[] = [];
+      let currentWordCount = 0;
+
+      for (const para of paragraphs) {
+        const paraWordCount = para.split(/\s+/).length;
+        if (currentWordCount + paraWordCount > chunkSizeWords && currentChunk.length > 0) {
+          chunks.push(currentChunk.join('\n\n'));
+          currentChunk = [];
+          currentWordCount = 0;
+        }
+        currentChunk.push(para);
+        currentWordCount += paraWordCount;
+      }
+
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk.join('\n\n'));
+      }
+    }
+
+    if (chunks.length > 0) {
+      return chunks;
+    }
+
+    // Standard word sliding window fallback
     const words = text.split(/\s+/).filter(w => w.length > 0);
     if (words.length <= chunkSizeWords) {
       return [text];
     }
 
-    const chunks: string[] = [];
     let start = 0;
-
     while (start < words.length) {
       const end = Math.min(start + chunkSizeWords, words.length);
       const chunkText = words.slice(start, end).join(' ');
