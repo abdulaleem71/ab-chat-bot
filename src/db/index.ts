@@ -289,6 +289,23 @@ export async function initDb(): Promise<void> {
       // Column already exists
     }
 
+    // Column Migration for domain locking & embed security
+    try {
+      await client.execute(`ALTER TABLE chatbots ADD COLUMN allowed_domains_json TEXT DEFAULT '[]';`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE chatbots ADD COLUMN domain_lock_enabled INTEGER DEFAULT 1;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE chatbots ADD COLUMN embed_secret_key TEXT;`);
+    } catch {
+      // Column already exists
+    }
+
     // Model migration for any legacy gemini-3.6-flash entries
     try {
       await client.execute(`UPDATE chatbots SET model = 'gemini-3.7-flash' WHERE model = 'gemini-3.6-flash' OR model IS NULL;`);

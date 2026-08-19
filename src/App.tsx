@@ -594,24 +594,56 @@ function DashboardContent() {
 function StandaloneEmbedView({ botId }: { botId: string }) {
   const [bot, setBot] = useState<Chatbot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ title: string; message: string; isSecurity?: boolean } | null>(null);
 
   useEffect(() => {
-    fetch(`/api/chatbots/${botId}`)
-      .then(res => {
-        if (!res.ok) {
-          throw new Error('Chatbot not found (404)');
+    // Preserve query parameters (host, domain, token) when fetching
+    const search = window.location.search;
+    fetch(`/api/chatbots/${botId}${search ? search + '&embed=true' : '?embed=true'}`)
+      .then(async res => {
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 403 || data.code === 'UNAUTHORIZED_DOMAIN') {
+          throw {
+            isSecurity: true,
+            title: '403 Unauthorized Domain',
+            message: data.error || 'This chatbot widget is securely locked and cannot be loaded on this domain.',
+          };
         }
-        return res.json();
+        if (!res.ok) {
+          throw {
+            isSecurity: false,
+            title: 'Chatbot Not Found (404)',
+            message: data.error || 'The requested AI Chatbot does not exist or has been removed.',
+          };
+        }
+        return data;
       })
       .then(data => {
         if (data.success && data.chatbot) {
           setBot(data.chatbot);
         } else {
-          setError('Chatbot not found');
+          setError({
+            isSecurity: false,
+            title: 'Chatbot Not Found',
+            message: 'Unable to load chatbot configuration.',
+          });
         }
       })
-      .catch(err => setError(err.message || 'Failed to load chatbot'))
+      .catch(err => {
+        if (err && err.isSecurity) {
+          setError({
+            isSecurity: true,
+            title: err.title,
+            message: err.message,
+          });
+        } else {
+          setError({
+            isSecurity: false,
+            title: err.title || 'Error Loading Widget',
+            message: err.message || 'Failed to load chatbot widget.',
+          });
+        }
+      })
       .finally(() => setIsLoading(false));
   }, [botId]);
 
@@ -627,16 +659,26 @@ function StandaloneEmbedView({ botId }: { botId: string }) {
   }
 
   if (error || !bot) {
+    const isSec = error?.isSecurity;
     return (
-      <div className="w-full h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white border border-red-200 rounded-2xl p-6 max-w-sm w-full text-center shadow-lg">
-          <div className="w-12 h-12 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-3">
+      <div className="w-full h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className={`bg-white border rounded-2xl p-6 max-w-md w-full text-center shadow-xl ${isSec ? 'border-amber-300' : 'border-red-200'}`}>
+          <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${isSec ? 'bg-amber-100 text-amber-700' : 'bg-red-50 text-red-600'}`}>
             <AlertCircle className="w-6 h-6" />
           </div>
-          <h3 className="font-bold text-slate-900 text-sm mb-1">Chatbot Not Found (404)</h3>
-          <p className="text-xs text-slate-500 mb-4">
-            The requested AI Chatbot widget does not exist or has been removed.
+          <h3 className="font-bold text-slate-900 text-base mb-2">
+            {error?.title || 'Chatbot Unavailable'}
+          </h3>
+          <p className="text-xs text-slate-600 leading-relaxed mb-4">
+            {error?.message || 'The requested AI Chatbot cannot be loaded.'}
           </p>
+          {isSec && (
+            <div className="bg-amber-50 rounded-xl p-3 text-left border border-amber-200/60">
+              <p className="text-[11px] text-amber-900 font-medium leading-normal">
+                🛡️ <strong>Domain Locking Active:</strong> If you are the website owner, log in to your dashboard to add this website's domain to your authorized whitelist.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     );

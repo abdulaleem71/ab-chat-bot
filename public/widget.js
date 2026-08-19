@@ -17,6 +17,9 @@
   })();
 
   var botId = (currentScript && currentScript.getAttribute('data-bot-id')) || window.NomadsChatBotId;
+  var dataDomain = (currentScript && currentScript.getAttribute('data-domain')) || '';
+  var dataToken = (currentScript && currentScript.getAttribute('data-token')) || '';
+
   if (!botId) {
     console.warn('[NomadsChat] Chatbot script missing data-bot-id attribute.');
     return;
@@ -153,16 +156,27 @@
       hostUrl: hostUrl,
       hostTitle: hostTitle,
       clientDomSnapshot: snapshot,
+      domain: dataDomain || hostOrigin,
+      embedToken: dataToken,
     };
 
     try {
       fetch(apiOrigin + '/api/chatbots/' + encodeURIComponent(botId) + '/auto-detect-host', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(dataToken ? { 'x-embed-token': dataToken } : {}),
+        },
         body: JSON.stringify(payload),
         mode: 'cors',
       })
-        .then(function (res) { return res.json(); })
+        .then(function (res) {
+          if (res.status === 403) {
+            console.error('[NomadsChat Security] ❌ Domain Unauthorized: This chatbot embed is locked and restricted to authorized domains.');
+            return null;
+          }
+          return res.json();
+        })
         .then(function (data) {
           if (data && data.success) {
             console.log('[NomadsChat] Host website dynamic knowledge synchronized: ' + hostOrigin + ' (' + (data.status || 'indexed') + ')');
@@ -218,9 +232,15 @@
   var iframeContainer = document.createElement('div');
   iframeContainer.id = 'nomadschat-iframe-container';
 
+  var iframeUrl = apiOrigin + '/embed/' + encodeURIComponent(botId) + '?host=' + encodeURIComponent(hostOrigin);
+  if (dataDomain) iframeUrl += '&domain=' + encodeURIComponent(dataDomain);
+  if (dataToken) iframeUrl += '&token=' + encodeURIComponent(dataToken);
+
   var iframe = document.createElement('iframe');
   iframe.id = 'nomadschat-iframe';
-  iframe.src = apiOrigin + '/embed/' + encodeURIComponent(botId) + '?host=' + encodeURIComponent(hostOrigin);
+  iframe.src = iframeUrl;
+  iframe.allow = 'clipboard-write';
+  iframe.title = 'AI Assistant';
   iframe.allow = 'clipboard-write';
   iframe.title = 'AI Assistant';
 

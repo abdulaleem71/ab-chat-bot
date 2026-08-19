@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Chatbot, BotTone, BotModel } from '../../types';
 import { useClickOutside } from '../../hooks/useClickOutside';
-import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle } from 'lucide-react';
+import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle, Lock, Plus, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { SecurityService } from '../../services/securityService';
 
 interface BotEditorModalProps {
   bot: Partial<Chatbot> | null;
@@ -23,17 +24,26 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
     if (isOpen) onClose();
   });
 
-  const [activeTab, setActiveTab] = useState<'general' | 'appearance' | 'leads'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'appearance' | 'security' | 'leads'>('general');
   const [formData, setFormData] = useState<Partial<Chatbot>>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [newDomainInput, setNewDomainInput] = useState('');
 
   useEffect(() => {
     if (isOpen) {
       setErrorMessage(null);
+      setNewDomainInput('');
+      const defaultDomain = bot?.websiteUrl ? SecurityService.normalizeDomain(bot.websiteUrl) : '';
+      const initialAllowed = Array.isArray(bot?.allowedDomains) && bot.allowedDomains.length > 0
+        ? bot.allowedDomains
+        : (defaultDomain ? [defaultDomain] : []);
+
       setFormData({
         name: bot?.name || 'New AI Support Assistant',
         description: bot?.description || 'Handles customer inquiries and troubleshooting.',
         websiteUrl: bot?.websiteUrl || 'https://example.com',
+        allowedDomains: initialAllowed,
+        domainLockEnabled: bot?.domainLockEnabled ?? true,
         systemInstruction: bot?.systemInstruction || 'You are a helpful customer support representative. Answer accurately using knowledge base context.',
         tone: bot?.tone || 'Friendly',
         primaryColor: bot?.primaryColor || '#4F46E5',
@@ -65,6 +75,22 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
 
   if (!isOpen) return null;
 
+  const handleAddDomain = () => {
+    if (!newDomainInput.trim()) return;
+    const clean = SecurityService.normalizeDomain(newDomainInput.trim());
+    if (!clean) return;
+    const current = formData.allowedDomains || [];
+    if (!current.includes(clean)) {
+      setFormData({ ...formData, allowedDomains: [...current, clean] });
+    }
+    setNewDomainInput('');
+  };
+
+  const handleRemoveDomain = (domainToRemove: string) => {
+    const current = formData.allowedDomains || [];
+    setFormData({ ...formData, allowedDomains: current.filter(d => d !== domainToRemove) });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
@@ -82,7 +108,14 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
       return;
     }
 
-    onSave({ ...formData, websiteUrl: url });
+    // Ensure website domain is included in allowedDomains
+    const cleanSiteDomain = SecurityService.normalizeDomain(url);
+    const existingDomains = formData.allowedDomains || [];
+    const mergedDomains = cleanSiteDomain && !existingDomains.includes(cleanSiteDomain)
+      ? [cleanSiteDomain, ...existingDomains]
+      : existingDomains;
+
+    onSave({ ...formData, websiteUrl: url, allowedDomains: mergedDomains });
     onClose();
   };
 
@@ -144,6 +177,15 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
               }`}
           >
             🎨 Color & Navigation
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('security')}
+            className={`py-3 px-4 text-xs font-bold border-b-2 transition-all duration-150 cursor-pointer flex items-center gap-1.5 ${activeTab === 'security' ? 'border-black text-black bg-white shadow-xs' : 'border-transparent text-zinc-500 hover:text-black'
+              }`}
+          >
+            <Shield className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Domain Security & Lock</span>
           </button>
           <button
             type="button"
@@ -388,6 +430,110 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                     </div>
                   </div>
                 </div>
+              </div>
+            </>
+          )}
+
+          {activeTab === 'security' && (
+            <>
+              {/* Domain Lock Enforcement Switch */}
+              <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-200">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-extrabold text-black">Enforce Server-Side Domain Lock</h4>
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-300">
+                      Recommended
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 font-medium">
+                    Strictly block chatbot loading on unauthorized domains (returns 403 Forbidden).
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={formData.domainLockEnabled !== false}
+                  onChange={e => setFormData({ ...formData, domainLockEnabled: e.target.checked })}
+                  className="w-5 h-5 text-black rounded focus:ring-black cursor-pointer"
+                />
+              </div>
+
+              {/* Primary Bound Website */}
+              <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-2">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <h4 className="text-xs font-bold text-indigo-950">Primary Website Domain</h4>
+                </div>
+                <p className="text-[11px] text-indigo-900 leading-relaxed font-mono font-medium">
+                  {formData.websiteUrl ? SecurityService.normalizeDomain(formData.websiteUrl) : 'None configured yet'}
+                </p>
+                <p className="text-[10px] text-indigo-700">
+                  Automatically extracted from your website URL. This domain is always authorized.
+                </p>
+              </div>
+
+              {/* Allowed Domains List */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-zinc-800">
+                    Authorized Domains & Subdomains Whitelist
+                  </label>
+                  <span className="text-[10px] text-zinc-400 font-mono">
+                    Supports wildcards (e.g. *.example.com)
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newDomainInput}
+                    onChange={e => setNewDomainInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddDomain())}
+                    placeholder="e.g. app.mywebsite.com, staging.mywebsite.com"
+                    className="flex-1 px-3.5 py-2 text-xs border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black focus:border-black focus:outline-hidden font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddDomain}
+                    disabled={!newDomainInput.trim()}
+                    className="px-4 py-2 bg-black hover:bg-zinc-800 disabled:opacity-40 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Domain</span>
+                  </button>
+                </div>
+
+                {/* Whitelist Badges */}
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {(formData.allowedDomains || []).length === 0 ? (
+                    <p className="text-[11px] text-zinc-400 italic">No additional domains configured. Primary website domain is used.</p>
+                  ) : (
+                    formData.allowedDomains?.map(domain => (
+                      <div
+                        key={domain}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-100 border border-zinc-200 rounded-xl text-xs font-mono text-zinc-800 font-medium"
+                      >
+                        <Lock className="w-3 h-3 text-indigo-600" />
+                        <span>{domain}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveDomain(domain)}
+                          className="p-0.5 text-zinc-400 hover:text-red-600 rounded-md transition cursor-pointer ml-1"
+                          title="Remove domain"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Security Mechanism Notice */}
+              <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-2xl flex items-start gap-2.5 text-zinc-600 text-[11px] leading-relaxed">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <p>
+                  <strong>Zero-Risk Revenue Protection:</strong> Embed scripts generate a cryptographically signed HMAC token for each domain. If someone copies your script and pastes it into another domain, the server rejects requests with HTTP 403 Forbidden.
+                </p>
               </div>
             </>
           )}

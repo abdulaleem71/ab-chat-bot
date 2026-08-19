@@ -22,6 +22,7 @@ import { LeadRepo } from './src/repositories/leadRepo';
 import { AnalyticsRepo } from './src/repositories/analyticsRepo';
 import { KnowledgeService } from './src/services/knowledgeService';
 import { ChatService } from './src/services/chatService';
+import { SecurityService } from './src/services/securityService';
 import { Chatbot } from './src/types';
 
 const _filename = typeof __filename !== 'undefined' ? __filename : (import.meta?.url ? fileURLToPath(import.meta.url) : '');
@@ -491,11 +492,178 @@ app.get('/api/chatbots/:id', asyncHandler(async (req, res) => {
   if (!bot) {
     return res.status(404).json({ success: false, error: 'Chatbot not found' });
   }
+
+  // If request comes from an iframe embed or cross-origin widget, perform domain validation
+  const isEmbedRequest = req.headers.referer?.includes('/embed/') || req.query.embed === 'true';
+  if (isEmbedRequest) {
+    const validation = SecurityService.validateBotDomainAccess(bot, req);
+    if (!validation.isAllowed) {
+      return res.status(403).json({
+        success: false,
+        code: 'UNAUTHORIZED_DOMAIN',
+        error: validation.reason || 'Unauthorized domain. This chatbot widget is restricted to authorized websites only.',
+        requestingDomain: validation.requestingDomain,
+        authorizedDomains: validation.authorizedDomains,
+      });
+    }
+  }
+
   res.json({ success: true, chatbot: bot });
 }));
 
+// Public Chatbot endpoint for external widget initialization with strict domain authorization
+app.get('/api/chatbots/:id/public', asyncHandler(async (req, res) => {
+  const bot = await ChatbotRepo.findById(req.params.id);
+  if (!bot) {
+    return res.status(404).json({ success: false, error: 'Chatbot not found' });
+  }
+
+  const validation = SecurityService.validateBotDomainAccess(bot, req);
+  if (!validation.isAllowed) {
+    return res.status(403).json({
+      success: false,
+      code: 'UNAUTHORIZED_DOMAIN',
+      error: validation.reason || 'Domain unauthorized. This chatbot embed is locked to authorized websites only.',
+      requestingDomain: validation.requestingDomain,
+      authorizedDomains: validation.authorizedDomains,
+    });
+  }
+
+  res.json({
+    success: true,
+    chatbot: {
+      id: bot.id,
+      name: bot.name,
+      avatar: bot.avatar,
+      primaryColor: bot.primaryColor,
+      textColor: bot.textColor,
+      greetingMessage: bot.greetingMessage,
+      suggestedQuestions: bot.suggestedQuestions,
+      fallbackMessage: bot.fallbackMessage,
+      collectLeadEmail: bot.collectLeadEmail,
+      leadTitle: bot.leadTitle,
+      status: bot.status,
+    },
+  });
+}));
+
+// Security configuration endpoint for dashboard management
+app.get('/api/chatbots/:id/security', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const bot = await ChatbotRepo.findById(req.params.id, req.user!.tenantId);
+  if (!bot) {
+    return res.status(404).json({ success: false, error: 'Chatbot not found' });
+  }
+
+  const effectiveDomains = SecurityService.getEffectiveAuthorizedDomains(bot);
+  const appOrigin = `${req.protocol}://${req.get('host')}`;
+  const embedData = SecurityService.generateSecureEmbedSnippet(bot, appOrigin);
+
+  res.json({
+    success: true,
+    security: {
+      domainLockEnabled: bot.domainLockEnabled !== false,
+      allowedDomains: bot.allowedDomains || [],
+      effectiveDomains,
+      embedSecretKey: bot.embedSecretKey || '',
+      embedSnippet: embedData.snippet,
+      embedToken: embedData.token,
+    },
+  });
+}));
+
+app.put('/api/chatbots/:id/security', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { domainLockEnabled, allowedDomains, regenerateSecretKey } = req.body || {};
+  const bot = await ChatbotRepo.findById(req.params.id, req.user!.tenantId);
+  if (!bot) {
+    return res.status(404).json({ success: false, error: 'Chatbot not found' });
+  }
+
+  const updates: Partial<Chatbot> = {};
+  if (typeof domainLockEnabled === 'boolean') {
+    updates.domainLockEnabled = domainLockEnabled;
+  }
+
+  if (Array.isArray(allowedDomains)) {
+    const cleaned = allowedDomains
+      .map(d => SecurityService.normalizeDomain(String(d)))
+      .filter(d => d.length > 0 && d.length < 255);
+    updates.allowedDomains = Array.from(new Set(cleaned));
+  }
+
+  if (regenerateSecretKey === true) {
+    const crypto = await import('crypto');
+    updates.embedSecretKey = crypto.randomBytes(24).toString('hex');
+  }
+
+  const updated = await ChatbotRepo.update(req.params.id, req.user!.tenantId, updates);
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Failed to update security settings' });
+  }
+
+  const effectiveDomains = SecurityService.getEffectiveAuthorizedDomains(updated);
+  const appOrigin = `${req.protocol}://${req.get('host')}`;
+  const embedData = SecurityService.generateSecureEmbedSnippet(updated, appOrigin);
+
+  res.json({
+    success: true,
+    security: {
+      domainLockEnabled: updated.domainLockEnabled !== false,
+      allowedDomains: updated.allowedDomains || [],
+      effectiveDomains,
+      embedSecretKey: updated.embedSecretKey || '',
+      embedSnippet: embedData.snippet,
+      embedToken: embedData.token,
+    },
+  });
+}));
+
+// Test Domain Authorization Diagnostic Tool
+app.post('/api/chatbots/:id/security/test-domain', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { testDomain } = req.body || {};
+  if (!testDomain || typeof testDomain !== 'string') {
+    return res.status(400).json({ success: false, error: 'testDomain string is required' });
+  }
+
+  const bot = await ChatbotRepo.findById(req.params.id, req.user!.tenantId);
+  if (!bot) {
+    return res.status(404).json({ success: false, error: 'Chatbot not found' });
+  }
+
+  const cleanTestDomain = SecurityService.normalizeDomain(testDomain);
+  const effectiveDomains = SecurityService.getEffectiveAuthorizedDomains(bot);
+  const isLocked = bot.domainLockEnabled !== false;
+
+  let isAllowed = true;
+  let reason = 'Domain access granted.';
+  let matchedRule: string | undefined = undefined;
+
+  if (isLocked && effectiveDomains.length > 0) {
+    const matched = effectiveDomains.find(rule => SecurityService.isDomainMatchingRule(cleanTestDomain, rule));
+    if (matched) {
+      isAllowed = true;
+      matchedRule = matched;
+      reason = `Domain "${cleanTestDomain}" matches authorized rule "${matched}".`;
+    } else {
+      isAllowed = false;
+      reason = `Domain "${cleanTestDomain}" is not in authorized domains list [${effectiveDomains.join(', ')}]. Requests from this site will be blocked with 403 Forbidden.`;
+    }
+  } else if (!isLocked) {
+    reason = 'Domain lock is currently disabled. All domains are permitted.';
+  }
+
+  res.json({
+    success: true,
+    testDomain: cleanTestDomain,
+    isAllowed,
+    reason,
+    matchedRule,
+    effectiveDomains,
+    domainLockEnabled: isLocked,
+  });
+}));
+
 app.post('/api/chatbots', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const { name, description, websiteUrl, systemInstruction, tone, primaryColor, avatar, greetingMessage, model, fallbackMessage, collectLeadEmail, leadTitle } = req.body || {};
+  const { name, description, websiteUrl, allowedDomains, domainLockEnabled, systemInstruction, tone, primaryColor, avatar, greetingMessage, model, fallbackMessage, collectLeadEmail, leadTitle } = req.body || {};
 
   if (!name || typeof name !== 'string' || name.trim().length === 0 || name.length > 100) {
     return res.status(400).json({ success: false, error: 'Name is required and must be under 100 characters' });
@@ -515,12 +683,19 @@ app.post('/api/chatbots', requireAuth, asyncHandler(async (req: AuthenticatedReq
   const hexColorRegex = /^#([0-9a-fA-F]{3}){1,2}$/;
   const validatedColor = (primaryColor && typeof primaryColor === 'string' && hexColorRegex.test(primaryColor)) ? primaryColor : '#4F46E5';
 
+  const defaultDomain = SecurityService.normalizeDomain(cleanUrl);
+  const initialAllowedDomains = Array.isArray(allowedDomains) && allowedDomains.length > 0
+    ? allowedDomains.map(d => SecurityService.normalizeDomain(String(d))).filter(Boolean)
+    : (defaultDomain ? [defaultDomain] : []);
+
   const newBot = await ChatbotRepo.create({
     id: 'bot_' + Date.now(),
     tenantId: req.user!.tenantId,
     name: name.trim(),
     description: (description && typeof description === 'string') ? description.slice(0, 500) : 'AI Assistant',
     websiteUrl: cleanUrl,
+    allowedDomains: initialAllowedDomains,
+    domainLockEnabled: domainLockEnabled !== false,
     systemInstruction: (systemInstruction && typeof systemInstruction === 'string') ? systemInstruction.slice(0, 3000) : 'You are a helpful support representative.',
     tone: (tone && typeof tone === 'string') ? (tone as any) : 'Friendly',
     primaryColor: validatedColor,
@@ -557,6 +732,8 @@ app.put('/api/chatbots/:id', requireAuth, asyncHandler(async (req: Authenticated
   if (typeof body.name === 'string' && body.name.trim().length > 0) allowedUpdates.name = body.name.trim().slice(0, 100);
   if (typeof body.description === 'string') allowedUpdates.description = body.description.slice(0, 500);
   if (typeof body.websiteUrl === 'string') allowedUpdates.websiteUrl = body.websiteUrl.trim().slice(0, 2000);
+  if (Array.isArray(body.allowedDomains)) allowedUpdates.allowedDomains = body.allowedDomains.map(d => SecurityService.normalizeDomain(String(d))).filter(Boolean);
+  if (typeof body.domainLockEnabled === 'boolean') allowedUpdates.domainLockEnabled = body.domainLockEnabled;
   if (typeof body.systemInstruction === 'string') allowedUpdates.systemInstruction = body.systemInstruction.slice(0, 3000);
   if (typeof body.tone === 'string') allowedUpdates.tone = body.tone as any;
   if (typeof body.primaryColor === 'string' && /^#([0-9a-fA-F]{3}){1,2}$/.test(body.primaryColor)) allowedUpdates.primaryColor = body.primaryColor;
@@ -678,6 +855,18 @@ app.post('/api/chatbots/:id/auto-detect-host', autoDetectLimiter, asyncHandler(a
     return res.status(404).json({ success: false, error: 'Chatbot not found' });
   }
 
+  // Server-side Domain Authorization Check
+  const validation = SecurityService.validateBotDomainAccess(bot, req);
+  if (!validation.isAllowed) {
+    return res.status(403).json({
+      success: false,
+      code: 'UNAUTHORIZED_DOMAIN',
+      error: validation.reason || 'Domain unauthorized. This chatbot embed is locked to authorized websites only.',
+      requestingDomain: validation.requestingDomain,
+      authorizedDomains: validation.authorizedDomains,
+    });
+  }
+
   try {
     const result = await KnowledgeService.autoDetectAndIngestHostSite(
       bot.id,
@@ -718,6 +907,23 @@ app.post('/api/chatbots/:id/chat', chatLimiter, asyncHandler(async (req, res) =>
 
   if (message.length > 2000) {
     return res.status(400).json({ success: false, error: 'Message exceeds maximum length of 2000 characters' });
+  }
+
+  const bot = await ChatbotRepo.findById(req.params.id);
+  if (!bot || bot.status === 'archived') {
+    return res.status(404).json({ success: false, error: 'Chatbot not found or inactive' });
+  }
+
+  // Server-side Domain Authorization Validation
+  const validation = SecurityService.validateBotDomainAccess(bot, req);
+  if (!validation.isAllowed) {
+    return res.status(403).json({
+      success: false,
+      code: 'UNAUTHORIZED_DOMAIN',
+      error: validation.reason || 'Domain unauthorized. This chatbot embed is locked and restricted to authorized domains.',
+      requestingDomain: validation.requestingDomain,
+      authorizedDomains: validation.authorizedDomains,
+    });
   }
 
   try {
@@ -834,6 +1040,16 @@ app.post('/api/chatbots/:id/leads', asyncHandler(async (req, res) => {
   const bot = await ChatbotRepo.findById(req.params.id);
   if (!bot) {
     return res.status(404).json({ success: false, error: 'Chatbot not found' });
+  }
+
+  // Server-side Domain Authorization Check
+  const validation = SecurityService.validateBotDomainAccess(bot, req);
+  if (!validation.isAllowed) {
+    return res.status(403).json({
+      success: false,
+      code: 'UNAUTHORIZED_DOMAIN',
+      error: validation.reason || 'Domain unauthorized',
+    });
   }
 
   const lead = await LeadRepo.create({

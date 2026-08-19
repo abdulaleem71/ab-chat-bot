@@ -235,7 +235,11 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
       });
 
       if (!res.ok) {
-        throw new Error(`Server returned HTTP ${res.status}`);
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 403 || errData.code === 'UNAUTHORIZED_DOMAIN') {
+          throw new Error(errData.error || 'Domain Unauthorized: This chatbot embed is locked and restricted to authorized domains.');
+        }
+        throw new Error(errData.error || `Server returned HTTP ${res.status}`);
       }
 
       const data = await res.json();

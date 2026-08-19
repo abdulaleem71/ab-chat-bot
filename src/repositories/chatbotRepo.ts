@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { getDb } from '../db/index';
 import { Chatbot } from '../types';
 
@@ -31,13 +32,15 @@ export class ChatbotRepo {
   static async create(bot: Chatbot): Promise<Chatbot> {
     const db = getDb();
     const suggestedQuestionsJson = JSON.stringify(bot.suggestedQuestions || []);
+    const allowedDomainsJson = JSON.stringify(bot.allowedDomains || []);
+    const secretKey = bot.embedSecretKey || crypto.randomBytes(24).toString('hex');
 
     await db.execute({
       sql: `INSERT INTO chatbots (
-        id, tenant_id, user_id, name, description, website_url, system_instruction, tone, primary_color, text_color, avatar,
-        greeting_message, suggested_questions_json, model, fallback_message, collect_lead_email, lead_title,
-        human_operator_online, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        id, tenant_id, user_id, name, description, website_url, allowed_domains_json, domain_lock_enabled, embed_secret_key,
+        system_instruction, tone, primary_color, text_color, avatar, greeting_message, suggested_questions_json,
+        model, fallback_message, collect_lead_email, lead_title, human_operator_online, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       args: [
         bot.id,
         bot.tenantId,
@@ -45,6 +48,9 @@ export class ChatbotRepo {
         bot.name,
         bot.description || '',
         bot.websiteUrl || '',
+        allowedDomainsJson,
+        bot.domainLockEnabled === false ? 0 : 1,
+        secretKey,
         bot.systemInstruction || '',
         bot.tone || 'Friendly',
         bot.primaryColor || '#4F46E5',
@@ -62,6 +68,10 @@ export class ChatbotRepo {
         bot.updatedAt,
       ],
     });
+
+    bot.allowedDomains = bot.allowedDomains || [];
+    bot.domainLockEnabled = bot.domainLockEnabled !== false;
+    bot.embedSecretKey = secretKey;
 
     return bot;
   }
@@ -81,18 +91,23 @@ export class ChatbotRepo {
     };
 
     const suggestedQuestionsJson = JSON.stringify(updated.suggestedQuestions || []);
+    const allowedDomainsJson = JSON.stringify(updated.allowedDomains || []);
+    const secretKey = updated.embedSecretKey || existing.embedSecretKey || crypto.randomBytes(24).toString('hex');
 
     await db.execute({
       sql: `UPDATE chatbots SET
-        name = ?, description = ?, website_url = ?, system_instruction = ?, tone = ?, primary_color = ?,
-        text_color = ?, avatar = ?, greeting_message = ?, suggested_questions_json = ?,
-        model = ?, fallback_message = ?, collect_lead_email = ?, lead_title = ?,
+        name = ?, description = ?, website_url = ?, allowed_domains_json = ?, domain_lock_enabled = ?, embed_secret_key = ?,
+        system_instruction = ?, tone = ?, primary_color = ?, text_color = ?, avatar = ?, greeting_message = ?,
+        suggested_questions_json = ?, model = ?, fallback_message = ?, collect_lead_email = ?, lead_title = ?,
         human_operator_online = ?, status = ?, updated_at = ?
       WHERE id = ? AND tenant_id = ?;`,
       args: [
         updated.name,
         updated.description,
         updated.websiteUrl || '',
+        allowedDomainsJson,
+        updated.domainLockEnabled === false ? 0 : 1,
+        secretKey,
         updated.systemInstruction,
         updated.tone,
         updated.primaryColor,
@@ -112,6 +127,7 @@ export class ChatbotRepo {
       ],
     });
 
+    updated.embedSecretKey = secretKey;
     return updated;
   }
 
@@ -132,12 +148,24 @@ export class ChatbotRepo {
       questions = [];
     }
 
+    let allowedDomains: string[] = [];
+    try {
+      if (r.allowed_domains_json) {
+        allowedDomains = JSON.parse(String(r.allowed_domains_json));
+      }
+    } catch {
+      allowedDomains = [];
+    }
+
     return {
       id: String(r.id),
       tenantId: String(r.tenant_id),
       name: String(r.name),
       description: String(r.description || ''),
       websiteUrl: r.website_url ? String(r.website_url) : undefined,
+      allowedDomains: Array.isArray(allowedDomains) ? allowedDomains : [],
+      domainLockEnabled: r.domain_lock_enabled !== undefined && r.domain_lock_enabled !== null ? Number(r.domain_lock_enabled) === 1 : true,
+      embedSecretKey: r.embed_secret_key ? String(r.embed_secret_key) : undefined,
       systemInstruction: String(r.system_instruction || ''),
       tone: (r.tone || 'Friendly') as any,
       primaryColor: String(r.primary_color || '#4F46E5'),

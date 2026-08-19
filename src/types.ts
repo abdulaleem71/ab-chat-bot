@@ -27,6 +27,9 @@ export interface Chatbot {
   name: string;
   description: string;
   websiteUrl?: string;
+  allowedDomains?: string[];
+  domainLockEnabled?: boolean;
+  embedSecretKey?: string;
   systemInstruction: string;
   tone: BotTone;
   primaryColor: string;
