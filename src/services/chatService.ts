@@ -113,29 +113,27 @@ export class ChatService {
       bot.description ? `Business Overview / Description: ${bot.description}` : '',
       bot.websiteUrl ? `Official Website: ${bot.websiteUrl}` : '',
       `Custom Instructions from Creator: ${customInstructions}`,
-      `Fallback / Escalation Guidance: ${bot.fallbackMessage || "I do not have information on that yet. Let me connect you with our support team."}`,
     ].filter(Boolean).join('\n');
 
     const systemInstruction = `
-You are ${bot.name}, an intelligent and helpful AI customer assistant representing this website and business.
+You are ${bot.name}, the official AI customer assistant representing this website and business.
 
-=== BOT PROFILE & GUIDELINES ===
-${botContext}
-
-=== VERIFIED KNOWLEDGE BASE REFERENCE ===
+=== VERIFIED WEBSITE KNOWLEDGE BASE ===
 <knowledge_base>
 ${groundingContext}
 </knowledge_base>
 
-=== OPERATING INSTRUCTIONS ===
-1. Primary Source of Truth: Carefully review the facts in <knowledge_base>. When answering questions about products, services, CLI tools, features, installation, pricing, or troubleshooting, synthesize answers directly from this information.
-2. Direct Answers: Provide clear, concise, and helpful answers. If the knowledge base contains relevant steps or commands, format them clearly with code blocks or bullet points.
-3. Natural Conversation: Handle greetings (e.g. "hi", "hello") politely. Introduce yourself as ${bot.name} and let the user know what topics you can help them with based on the website.
-4. Missing Information: Only when the requested specific technical or account detail is completely absent from both the Knowledge Base and Bot Profile, state what you know and politely offer the fallback message: "${bot.fallbackMessage}".
-5. Formatting: Use concise paragraphs, bullet points, and markdown for readability.
+=== BOT PROFILE & GUIDELINES ===
+${botContext}
+
+=== CRITICAL OPERATING INSTRUCTIONS ===
+1. Answer Directly from Knowledge Base: Whenever the user asks questions about services, capabilities, products, technologies, features, installation, pricing, or policies (for example, "Do you offer Shopify development?"), thoroughly review <knowledge_base>. If the requested topic or service is mentioned, answer affirmatively and provide the details from the knowledge base.
+2. Grounded Truth: Prioritize facts in <knowledge_base> over general knowledge. If specific steps, commands, or bullet points are present, format them clearly using Markdown.
+3. Helpful & Conversational: Handle greetings (e.g. "hi", "hello") politely. Introduce yourself as ${bot.name} and summarize the core services or topics you can help with based on the website knowledge.
+4. Fallback Restriction: Do NOT use the fallback message if relevant content exists in <knowledge_base>. Only when the question is completely unrelated or missing from the website content should you offer: "${bot.fallbackMessage}".
     `.trim();
 
-    // 6. Fetch Recent Message History from DB (Fix Duplicate Message bug)
+    // 6. Fetch Recent Message History from DB
     const dbMessages = await ConversationRepo.findMessagesByConversation(conversation.id);
 
     // Exclude the message we just saved above from history payload so it is not sent twice
@@ -179,13 +177,17 @@ ${groundingContext}
         });
 
         const res = (await Promise.race([genPromise, timeoutPromise])) as any;
-        replyText = res.text || bot.fallbackMessage;
+        if (res && res.text && res.text.trim().length > 0) {
+          replyText = res.text.trim();
+        } else {
+          replyText = this.synthesizeDirectAnswerFromGrounding(userMessage, groundingContext, bot);
+        }
       } catch (err: any) {
         console.error('Gemini Generation Error:', err.message || err);
-        replyText = bot.fallbackMessage || 'I am currently unable to process your request. Connecting you to our team.';
+        replyText = this.synthesizeDirectAnswerFromGrounding(userMessage, groundingContext, bot);
       }
     } else {
-      replyText = `Thank you for asking. I checked our website knowledge base for ${bot.name}. Let me know if you need additional assistance!`;
+      replyText = this.synthesizeDirectAnswerFromGrounding(userMessage, groundingContext, bot);
     }
 
     // 8. Save Assistant Response in DB with Actual Citations
@@ -205,5 +207,57 @@ ${groundingContext}
       conversationId: conversation.id,
       sourcesUsed,
     };
+  }
+
+  /**
+   * Deterministic Grounded Knowledge Extractor Fallback
+   * Synthesizes direct, factual answers from indexed knowledge base chunks if Gemini API is temporarily offline or times out.
+   */
+  private static synthesizeDirectAnswerFromGrounding(
+    userQuery: string,
+    groundingContext: string,
+    bot: any
+  ): string {
+    if (!groundingContext || groundingContext.includes('No indexed knowledge sources available') || groundingContext.includes('No relevant knowledge sources matched')) {
+      return bot.fallbackMessage || "I don't have information on that topic yet. Let me connect you with our team.";
+    }
+
+    const cleanContext = groundingContext.replace(/\[SOURCE: [^\]]+\]/g, '').trim();
+    const queryTokens = userQuery.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(t => t.length > 2);
+
+    // Split knowledge into individual sentences/paragraphs
+    const sentences = cleanContext.split(/(?<=[.!?\n])\s+/).map(s => s.trim()).filter(s => s.length > 10);
+
+    // Score sentences based on matching query keywords
+    const scored = sentences.map(sentence => {
+      const lowerSentence = sentence.toLowerCase();
+      let matchCount = 0;
+      queryTokens.forEach(t => {
+        if (lowerSentence.includes(t)) matchCount++;
+      });
+      return { sentence, matchCount };
+    });
+
+    const relevant = scored.filter(s => s.matchCount > 0).sort((a, b) => b.matchCount - a.matchCount);
+
+    if (relevant.length > 0) {
+      const topSentences = relevant.slice(0, 3).map(r => r.sentence).join(' ');
+      return `Based on our website:\n\n${topSentences}`;
+    }
+
+    // If query is general or greeting
+    const isGreeting = ['hi', 'hello', 'hey', 'help'].some(g => userQuery.toLowerCase().includes(g));
+    if (isGreeting) {
+      const firstChunkSnippet = sentences.slice(0, 2).join(' ');
+      return `Hello! I am ${bot.name}. Based on our website, ${firstChunkSnippet ? firstChunkSnippet : 'how can I assist you with our services today?'}`;
+    }
+
+    // Return the primary overview if available
+    const overviewSnippet = sentences.slice(0, 3).join(' ');
+    if (overviewSnippet.length > 0) {
+      return `Here is what I found on our website:\n\n${overviewSnippet}`;
+    }
+
+    return bot.fallbackMessage || "I don't have information on that specific detail yet.";
   }
 }

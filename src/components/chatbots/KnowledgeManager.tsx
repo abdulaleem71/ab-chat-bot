@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Chatbot, KnowledgeSource, KnowledgeType } from '../../types';
-import { Globe, FileText, HelpCircle, Upload, Plus, Trash2, CheckCircle2, RefreshCw, Sparkles, Loader2, Link2, Search, ExternalLink, Layers } from 'lucide-react';
+import { Globe, FileText, HelpCircle, Plus, Trash2, CheckCircle2, Sparkles, Loader2, Link2, ExternalLink, Laptop, Code } from 'lucide-react';
 
 interface KnowledgeManagerProps {
   selectedBot: Chatbot;
@@ -9,6 +9,7 @@ interface KnowledgeManagerProps {
   knowledgeSources: KnowledgeSource[];
   onAddSource: (source: Partial<KnowledgeSource>) => Promise<void>;
   onScrapeUrl: (url: string) => Promise<void>;
+  onIngestHtml?: (html: string, url?: string, title?: string) => Promise<void>;
   onDeleteSource: (sourceId: string) => void;
 }
 
@@ -19,10 +20,14 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   knowledgeSources,
   onAddSource,
   onScrapeUrl,
+  onIngestHtml,
   onDeleteSource,
 }) => {
-  const [activeTab, setActiveTab] = useState<'url' | 'faq' | 'text'>('url');
+  const [activeTab, setActiveTab] = useState<'url' | 'local' | 'faq' | 'text'>('url');
   const [inputUrl, setInputUrl] = useState('');
+  const [localUrl, setLocalUrl] = useState('http://localhost:3000');
+  const [rawHtmlContent, setRawHtmlContent] = useState('');
+  const [htmlDocTitle, setHtmlDocTitle] = useState('');
   const [faqQuestion, setFaqQuestion] = useState('');
   const [faqAnswer, setFaqAnswer] = useState('');
   const [docTitle, setDocTitle] = useState('');
@@ -32,16 +37,64 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
 
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputUrl.trim() || isLoading) return;
+    const url = inputUrl.trim();
+    if (!url || isLoading) return;
+    setIsLoading(true);
+    setStatusMessage(null);
+
+    const isLocal = url.includes('localhost') || url.includes('127.0.0.1') || url.includes('0.0.0.0');
+
+    if (isLocal && onIngestHtml) {
+      // Attempt browser-assisted direct fetch from the user's active session
+      try {
+        const localRes = await fetch(url, { mode: 'cors' });
+        if (localRes.ok) {
+          const html = await localRes.text();
+          await onIngestHtml(html, url, `Local Page: ${url}`);
+          setInputUrl('');
+          setStatusMessage({ type: 'success', text: `Successfully fetched local page from ${url} and indexed RAG chunks!` });
+          setIsLoading(false);
+          return;
+        }
+      } catch (clientErr) {
+        console.log('Client-side direct fetch blocked or unavailable:', clientErr);
+      }
+    }
+
+    try {
+      await onScrapeUrl(url);
+      setInputUrl('');
+      setStatusMessage({ type: 'success', text: 'URL successfully crawled, parsed into Markdown, and indexed into RAG knowledge chunks!' });
+    } catch (err: any) {
+      if (isLocal) {
+        setStatusMessage({
+          type: 'error',
+          text: 'Remote cloud servers cannot reach your desktop localhost directly. Use the "Localhost & HTML Source" tab below to paste your local site HTML or text in 1 click!',
+        });
+        setActiveTab('local');
+        setLocalUrl(url);
+      } else {
+        setStatusMessage({ type: 'error', text: err.message || 'Failed to crawl website URL. Ensure it is accessible.' });
+      }
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setStatusMessage(null), 6000);
+    }
+  };
+
+  const handleIngestRawHtml = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rawHtmlContent.trim() || isLoading || !onIngestHtml) return;
     setIsLoading(true);
     setStatusMessage(null);
 
     try {
-      await onScrapeUrl(inputUrl.trim());
-      setInputUrl('');
-      setStatusMessage({ type: 'success', text: 'URL successfully crawled, cleaned, and indexed into RAG knowledge chunks!' });
+      await onIngestHtml(rawHtmlContent.trim(), localUrl.trim() || undefined, htmlDocTitle.trim() || undefined);
+      setRawHtmlContent('');
+      setHtmlDocTitle('');
+      setStatusMessage({ type: 'success', text: 'Website HTML successfully converted to structured Markdown chunks and indexed!' });
     } catch (err: any) {
-      setStatusMessage({ type: 'error', text: err.message || 'Failed to crawl website URL. Ensure it is accessible.' });
+      setStatusMessage({ type: 'error', text: err.message || 'Failed to ingest HTML content.' });
     } finally {
       setIsLoading(false);
       setTimeout(() => setStatusMessage(null), 5000);
@@ -115,14 +168,14 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/80 border border-emerald-800 px-2.5 py-0.5 rounded-full">
-                RAG Knowledge Base
+                RAG Grounding Engine
               </span>
               <span className="text-[11px] font-mono text-zinc-400">
                 {currentBotSources.length} Sources • {totalChunks} Chunks
               </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">{selectedBot.name} Knowledge</h1>
-            <p className="text-xs text-zinc-400 font-medium">Ingest live URLs, FAQs, and support articles to ground your AI assistant in truth.</p>
+            <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">{selectedBot.name} Knowledge Base</h1>
+            <p className="text-xs text-zinc-400 font-medium">Connect live websites, local dev sites, and documentation to ground your chatbot in real data.</p>
           </div>
         </div>
 
@@ -149,22 +202,33 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
 
       {/* Input Ingestion Form */}
       <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs space-y-6">
-        <div className="flex border-b border-zinc-200">
+        <div className="flex border-b border-zinc-200 overflow-x-auto scrollbar-none gap-2">
           <button
             type="button"
             onClick={() => setActiveTab('url')}
-            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer ${
+            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 ${
               activeTab === 'url' ? 'border-zinc-950 text-zinc-950 font-extrabold' : 'border-transparent text-zinc-500 hover:text-zinc-900'
             }`}
           >
             <Globe className="w-4 h-4" />
-            <span>Website URL Scraper</span>
+            <span>Live Website URL</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('local')}
+            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 ${
+              activeTab === 'local' ? 'border-zinc-950 text-zinc-950 font-extrabold' : 'border-transparent text-zinc-500 hover:text-zinc-900'
+            }`}
+          >
+            <Laptop className="w-4 h-4 text-indigo-600" />
+            <span>Localhost & HTML Source</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('faq')}
-            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer ${
+            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 ${
               activeTab === 'faq' ? 'border-zinc-950 text-zinc-950 font-extrabold' : 'border-transparent text-zinc-500 hover:text-zinc-900'
             }`}
           >
@@ -175,7 +239,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('text')}
-            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer ${
+            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 ${
               activeTab === 'text' ? 'border-zinc-950 text-zinc-950 font-extrabold' : 'border-transparent text-zinc-500 hover:text-zinc-900'
             }`}
           >
@@ -201,11 +265,11 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
           </div>
         )}
 
-        {/* Tab 1: URL Scraper */}
+        {/* Tab 1: Live URL Scraper */}
         {activeTab === 'url' && (
           <form onSubmit={handleScrape} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-zinc-800 mb-1.5">Target Documentation or Web Page URL</label>
+              <label className="block text-xs font-bold text-zinc-800 mb-1.5">Live Website URL</label>
               <div className="flex flex-col sm:flex-row gap-2">
                 <div className="relative flex-1">
                   <Link2 className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -213,7 +277,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                     type="url"
                     value={inputUrl}
                     onChange={e => setInputUrl(e.target.value)}
-                    placeholder="https://example.com/docs/api-guide or https://example.com/faq"
+                    placeholder="https://example.com or https://company.com/services"
                     className="w-full pl-9 pr-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium"
                     required
                   />
@@ -228,13 +292,72 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 </button>
               </div>
               <p className="text-[11px] text-zinc-500 mt-2 font-medium">
-                Our server securely scrapes HTML content, strips boilerplate, and breaks it into RAG chunks for Gemini grounding.
+                Fetches live HTML, converts content into structured Markdown with headings and lists, and generates overlapping RAG chunks for accurate answering.
               </p>
             </div>
           </form>
         )}
 
-        {/* Tab 2: FAQ Builder */}
+        {/* Tab 2: Localhost & HTML Source */}
+        {activeTab === 'local' && (
+          <form onSubmit={handleIngestRawHtml} className="space-y-4">
+            <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 text-indigo-950 text-xs space-y-1.5">
+              <div className="font-bold flex items-center gap-2 text-indigo-900">
+                <Laptop className="w-4 h-4 text-indigo-600" />
+                <span>Local Website (localhost:3000 / localhost:5173) & HTML Ingestion</span>
+              </div>
+              <p className="text-indigo-800/90 text-[11px] leading-relaxed">
+                Because cloud sandboxes cannot directly connect to your personal computer's loopback network, you can paste the HTML source code from your local development browser (<strong>Right Click &rarr; View Page Source / Inspect</strong>) or enter page content below to index your local project instantly.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-zinc-800 mb-1.5">Local Source URL / Identifier</label>
+                <input
+                  type="text"
+                  value={localUrl}
+                  onChange={e => setLocalUrl(e.target.value)}
+                  placeholder="http://localhost:3000 or http://localhost:5173"
+                  className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-mono text-zinc-800"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-800 mb-1.5">Custom Title (Optional)</label>
+                <input
+                  type="text"
+                  value={htmlDocTitle}
+                  onChange={e => setHtmlDocTitle(e.target.value)}
+                  placeholder="e.g., Localhost Product Catalog & Services"
+                  className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-zinc-800 mb-1.5">Page HTML / Body Source Markup</label>
+              <textarea
+                value={rawHtmlContent}
+                onChange={e => setRawHtmlContent(e.target.value)}
+                rows={6}
+                placeholder="<html><body><h1>Services</h1><p>We provide custom Shopify development, Shopify Plus development, Liquid development, and conversion optimization.</p></body></html>"
+                className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-mono text-zinc-800"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoading || !rawHtmlContent.trim()}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-6 py-2.5 rounded-xl shadow-md transition flex items-center gap-2 disabled:opacity-50 cursor-pointer active:scale-95"
+            >
+              {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Code className="w-4 h-4" />}
+              <span>Index Local Website HTML</span>
+            </button>
+          </form>
+        )}
+
+        {/* Tab 3: FAQ Builder */}
         {activeTab === 'faq' && (
           <form onSubmit={handleAddFaq} className="space-y-4">
             <div>
@@ -243,7 +366,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 type="text"
                 value={faqQuestion}
                 onChange={e => setFaqQuestion(e.target.value)}
-                placeholder="e.g., How do I configure Single Sign-On (SSO) with Okta?"
+                placeholder="e.g., Do you offer Shopify development?"
                 className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium"
                 required
               />
@@ -254,7 +377,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 value={faqAnswer}
                 onChange={e => setFaqAnswer(e.target.value)}
                 rows={3}
-                placeholder="Provide the exact step-by-step resolution that the AI should synthesize..."
+                placeholder="We provide custom Shopify development, Shopify Plus development, Liquid development, and conversion optimization."
                 className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium"
                 required
               />
@@ -270,7 +393,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
           </form>
         )}
 
-        {/* Tab 3: Text / Docs */}
+        {/* Tab 4: Text / Docs */}
         {activeTab === 'text' && (
           <form onSubmit={handleAddDoc} className="space-y-4">
             <div>
@@ -279,7 +402,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 type="text"
                 value={docTitle}
                 onChange={e => setDocTitle(e.target.value)}
-                placeholder="e.g., API Rate Limits & Webhook Specifications"
+                placeholder="e.g., Services & Capabilities Overview"
                 className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium"
                 required
               />
@@ -290,7 +413,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 value={docContent}
                 onChange={e => setDocContent(e.target.value)}
                 rows={5}
-                placeholder="Paste product documentation, troubleshooting manuals, or return policies..."
+                placeholder="We provide custom Shopify development, Shopify Plus development, Liquid development, and conversion optimization."
                 className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-mono text-zinc-800"
                 required
               />
@@ -320,7 +443,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
           <div className="text-center py-10 border-2 border-dashed border-zinc-200 rounded-2xl space-y-2">
             <Globe className="w-8 h-8 text-zinc-300 mx-auto" />
             <p className="text-xs font-bold text-zinc-700">No knowledge sources trained yet</p>
-            <p className="text-[11px] text-zinc-400">Scrape a website URL or add FAQ pairs above to teach this AI bot your product details.</p>
+            <p className="text-[11px] text-zinc-400">Scrape a website URL, paste HTML source, or add FAQ pairs above to teach this AI bot your product details.</p>
           </div>
         ) : (
           <div className="divide-y divide-zinc-100">

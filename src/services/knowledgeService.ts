@@ -128,6 +128,74 @@ export class KnowledgeService {
   }
 
   /**
+   * Ingest Raw HTML from local websites, browser-assisted fetch, or view-source pastes
+   */
+  static async ingestRawHtml(
+    chatbotId: string,
+    tenantId: string,
+    rawHtml: string,
+    sourceUrl?: string,
+    customTitle?: string
+  ): Promise<KnowledgeSource> {
+    if (!rawHtml || rawHtml.trim().length === 0) {
+      throw new Error('HTML content cannot be empty');
+    }
+
+    if (rawHtml.length > 5 * 1024 * 1024) {
+      throw new Error('Raw HTML exceeds maximum permitted size of 5MB');
+    }
+
+    // Extract Page Title and Meta Description
+    const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const extractedTitle = titleMatch ? this.decodeHtmlEntities(titleMatch[1]).trim() : '';
+
+    const metaDescMatch = rawHtml.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i);
+    const metaDescription = metaDescMatch ? this.decodeHtmlEntities(metaDescMatch[1]).trim() : '';
+
+    // Convert HTML to structured Markdown text
+    let cleanText = this.htmlToStructuredText(rawHtml);
+
+    if (metaDescription && !cleanText.includes(metaDescription)) {
+      cleanText = `Page Overview: ${metaDescription}\n\n${cleanText}`;
+    }
+
+    if (cleanText.length > 50000) {
+      cleanText = cleanText.substring(0, 50000) + '\n... [content indexed up to 50,000 characters]';
+    }
+
+    if (cleanText.trim().length < 5) {
+      throw new Error('Could not extract readable text content from the provided HTML. Ensure the page contains readable text or body content.');
+    }
+
+    const title = customTitle || extractedTitle || (sourceUrl ? `Page: ${sourceUrl}` : 'Imported Website Page');
+    const chunks = this.chunkTextWithOverlap(cleanText, 350, 40);
+
+    // Replace previous source for same URL if exists
+    if (sourceUrl) {
+      const existingSources = await KnowledgeRepo.findSourcesByBot(chatbotId, tenantId);
+      const existingUrlSource = existingSources.find(s => s.sourceUrl === sourceUrl);
+      if (existingUrlSource) {
+        await KnowledgeRepo.deleteSource(existingUrlSource.id, tenantId);
+      }
+    }
+
+    const source: KnowledgeSource = {
+      id: newId('ks'),
+      chatbotId,
+      tenantId,
+      type: 'url',
+      title: title.slice(0, 250),
+      content: cleanText,
+      sourceUrl: sourceUrl || 'http://localhost (Imported)',
+      status: 'indexed',
+      chunkCount: chunks.length,
+      updatedAt: new Date().toISOString(),
+    };
+
+    return await KnowledgeRepo.createSourceWithChunks(source, chunks);
+  }
+
+  /**
    * Ingest Raw Text or FAQ Document
    */
   static async ingestTextDocument(

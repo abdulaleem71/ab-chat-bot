@@ -273,7 +273,21 @@ function DashboardContent() {
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Failed to scrape URL');
     if (data.knowledgeSource) {
-      setKnowledgeSources(prev => [data.knowledgeSource, ...prev]);
+      setKnowledgeSources(prev => [data.knowledgeSource, ...prev.filter(k => k.id !== data.knowledgeSource.id)]);
+    }
+  };
+
+  const handleIngestHtml = async (html: string, url?: string, title?: string) => {
+    if (!selectedBot) return;
+    const res = await fetch(`/api/chatbots/${selectedBot.id}/ingest-raw-html`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ html, url, title }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to ingest HTML');
+    if (data.knowledgeSource) {
+      setKnowledgeSources(prev => [data.knowledgeSource, ...prev.filter(k => k.id !== data.knowledgeSource.id)]);
     }
   };
 
@@ -459,6 +473,7 @@ function DashboardContent() {
               knowledgeSources={knowledgeSources}
               onAddSource={handleAddKnowledgeSource}
               onScrapeUrl={handleScrapeUrl}
+              onIngestHtml={handleIngestHtml}
               onDeleteSource={handleDeleteKnowledgeSource}
             />
           )}

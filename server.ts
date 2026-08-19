@@ -614,7 +614,7 @@ app.post('/api/chatbots', requireAuth, asyncHandler(async (req: AuthenticatedReq
     avatar: (avatar && typeof avatar === 'string') ? avatar.slice(0, 10) : '🤖',
     greetingMessage: (greetingMessage && typeof greetingMessage === 'string') ? greetingMessage.slice(0, 500) : 'Hello! How can I help you today?',
     suggestedQuestions: ['What services do you offer?', 'How do I contact support?'],
-    model: (model && typeof model === 'string') ? (model as any) : 'gemini-3.6-flash',
+    model: (model && typeof model === 'string') ? (model as any) : 'gemini-3.7-flash',
     fallbackMessage: (fallbackMessage && typeof fallbackMessage === 'string') ? fallbackMessage.slice(0, 500) : 'I will connect you to a support agent.',
     collectLeadEmail: collectLeadEmail !== false,
     leadTitle: (leadTitle && typeof leadTitle === 'string') ? leadTitle.slice(0, 200) : 'Leave your email to stay connected',
@@ -625,10 +625,12 @@ app.post('/api/chatbots', requireAuth, asyncHandler(async (req: AuthenticatedReq
   });
 
   // Automatically fetch and ingest knowledge content from the provided website URL
-  try {
-    await KnowledgeService.scrapeAndIngestUrl(newBot.id, req.user!.tenantId, cleanUrl);
-  } catch (err: any) {
-    console.warn(`[WARN] Auto-scrape on bot creation (${newBot.id}):`, err.message);
+  if (cleanUrl) {
+    try {
+      await KnowledgeService.scrapeAndIngestUrl(newBot.id, req.user!.tenantId, cleanUrl);
+    } catch (err: any) {
+      console.warn(`[WARN] Auto-scrape on bot creation (${newBot.id}):`, err.message);
+    }
   }
 
   res.json({ success: true, chatbot: newBot });
@@ -696,6 +698,26 @@ app.post('/api/chatbots/:id/scrape-url', requireAuth, asyncHandler(async (req: A
     res.json({ success: true, knowledgeSource: source });
   } catch (err: any) {
     res.status(400).json({ success: false, error: err.message || 'Failed to crawl target URL' });
+  }
+}));
+
+app.post('/api/chatbots/:id/ingest-raw-html', express.json({ limit: '10mb' }), requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { html, url, title } = req.body || {};
+  if (!html || typeof html !== 'string' || html.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'HTML markup content is required' });
+  }
+
+  try {
+    const source = await KnowledgeService.ingestRawHtml(
+      req.params.id,
+      req.user!.tenantId,
+      html,
+      typeof url === 'string' ? url : undefined,
+      typeof title === 'string' ? title : undefined
+    );
+    res.json({ success: true, knowledgeSource: source });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message || 'Failed to ingest HTML content' });
   }
 }));
 
