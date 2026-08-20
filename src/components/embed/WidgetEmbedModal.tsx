@@ -4,7 +4,7 @@ import { Code, Copy, Check, ExternalLink, Globe, Sparkles, Layers, Play, Shield,
 import { SecurityService } from '../../services/securityService';
 
 interface WidgetEmbedModalProps {
-  bot: Chatbot;
+  bot?: Partial<Chatbot> | null;
   isOpen: boolean;
   onClose: () => void;
   onTriggerFloatingWidget: () => void;
@@ -25,6 +25,11 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
   const [testDomainInput, setTestDomainInput] = useState<string>('');
   const [testResult, setTestResult] = useState<{ isAllowed?: boolean; reason?: string; testDomain?: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
+
+  const safeBotName = bot?.name || 'AI Support Assistant';
+  const safeBotColor = bot?.primaryColor || '#4F46E5';
+  const safeBotAvatar = bot?.avatar || '🤖';
+  const safeBotId = bot?.id || 'demo_bot';
 
   const effectiveDomains = SecurityService.getEffectiveAuthorizedDomains(bot);
   const primaryDomain = effectiveDomains[0] || (bot?.websiteUrl ? SecurityService.normalizeDomain(bot.websiteUrl) : 'example.com');
@@ -68,11 +73,12 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
     setTestResult(null);
 
     try {
-      const res = await fetch(`/api/chatbots/${bot.id}/security/test-domain`, {
+      const token = localStorage.getItem('auth_token') || localStorage.getItem('token') || '';
+      const res = await fetch(`/api/chatbots/${safeBotId}/security/test-domain`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ testDomain: domainToTest.trim() }),
       });
@@ -108,14 +114,14 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
         <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0">
           <div className="flex items-center gap-3">
             <div
-              style={{ backgroundColor: bot.primaryColor }}
+              style={{ backgroundColor: safeBotColor }}
               className="w-10 h-10 rounded-xl text-xl flex items-center justify-center text-white font-bold"
             >
-              {bot.avatar}
+              {safeBotAvatar}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-slate-900">Embed & Deploy {bot.name}</h2>
+                <h2 className="text-lg font-bold text-slate-900">Embed & Deploy {safeBotName}</h2>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                   <ShieldCheck className="w-3 h-3 text-emerald-600" />
                   Domain Locked

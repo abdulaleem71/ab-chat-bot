@@ -65,19 +65,23 @@ export class SecurityService {
   /**
    * Retrieves all effective authorized domains for a chatbot
    */
-  static getEffectiveAuthorizedDomains(bot: Chatbot): string[] {
+  static getEffectiveAuthorizedDomains(bot?: Partial<Chatbot> | null): string[] {
     const domainsSet = new Set<string>();
 
-    if (bot.websiteUrl) {
+    if (bot && bot.websiteUrl) {
       const primary = this.normalizeDomain(bot.websiteUrl);
       if (primary) domainsSet.add(primary);
     }
 
-    if (Array.isArray(bot.allowedDomains)) {
+    if (bot && Array.isArray(bot.allowedDomains)) {
       bot.allowedDomains.forEach(d => {
         const norm = this.normalizeDomain(d);
         if (norm) domainsSet.add(norm);
       });
+    }
+
+    if (domainsSet.size === 0) {
+      domainsSet.add('example.com');
     }
 
     return Array.from(domainsSet);
@@ -238,19 +242,20 @@ export class SecurityService {
   /**
    * Generates production-ready embed code snippet with security signature and domain locking
    */
-  static generateSecureEmbedSnippet(bot: Chatbot, appOrigin: string, selectedDomain?: string): {
+  static generateSecureEmbedSnippet(bot?: Partial<Chatbot> | null, appOrigin: string = '', selectedDomain?: string): {
     snippet: string;
     token?: string;
     domain: string;
     isLocked: boolean;
   } {
     const effectiveDomains = this.getEffectiveAuthorizedDomains(bot);
-    const domain = selectedDomain || effectiveDomains[0] || (bot.websiteUrl ? this.normalizeDomain(bot.websiteUrl) : 'example.com');
-    const secretKey = bot.embedSecretKey || 'secret_key';
-    const token = this.generateEmbedSignature(bot.id, domain, secretKey);
-    const isLocked = bot.domainLockEnabled !== false;
+    const domain = selectedDomain || effectiveDomains[0] || (bot?.websiteUrl ? this.normalizeDomain(bot.websiteUrl) : 'example.com');
+    const secretKey = bot?.embedSecretKey || 'secret_key';
+    const botId = bot?.id || 'default_bot';
+    const token = this.generateEmbedSignature(botId, domain, secretKey);
+    const isLocked = bot?.domainLockEnabled !== false;
 
-    const snippet = `<script src="${appOrigin}/widget.js" data-bot-id="${bot.id}" data-domain="${domain}" data-token="${token}" async></script>`;
+    const snippet = `<script src="${appOrigin}/widget.js" data-bot-id="${botId}" data-domain="${domain}" data-token="${token}" async></script>`;
 
     return {
       snippet,

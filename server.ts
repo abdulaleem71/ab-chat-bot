@@ -32,7 +32,7 @@ const app = express();
 // Enable trust proxy for reverse proxies (Cloud Run, Vercel, Nginx)
 app.set('trust proxy', 1);
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'nomadschat_secure_jwt_secret_key_2026';
 
 if (process.env.NODE_ENV === 'production') {
@@ -1122,7 +1122,9 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     // Production standalone node server (Render, Railway, Cloud Run, etc.)
-    const distPath = _dirname;
+    const distPath = fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'))
+      ? path.join(process.cwd(), 'dist')
+      : (fs.existsSync(path.join(_dirname, 'index.html')) ? _dirname : path.join(process.cwd(), 'dist'));
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.resolve(distPath, 'index.html'));

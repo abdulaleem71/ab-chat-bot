@@ -58,6 +58,7 @@ function DashboardContent() {
   const [isBotEditorOpen, setIsBotEditorOpen] = useState(false);
   const [editingBot, setEditingBot] = useState<Partial<Chatbot> | null>(null);
   const [isWidgetModalOpen, setIsWidgetModalOpen] = useState(false);
+  const [embedModalBot, setEmbedModalBot] = useState<Chatbot | null>(null);
   const [isFloatingWidgetOpen, setIsFloatingWidgetOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -236,12 +237,11 @@ function DashboardContent() {
   };
 
   const handleOpenEmbedModal = (bot?: Chatbot) => {
-    if (!isAuthenticated) {
-      setIsAuthModalOpen(true);
-      return;
+    const target = bot || selectedBot || (chatbots.length > 0 ? chatbots[0] : activeBot);
+    setEmbedModalBot(target);
+    if (target) {
+      setSelectedBot(target);
     }
-    const target = bot || activeBot;
-    setSelectedBot(target);
     setIsWidgetModalOpen(true);
   };
 
@@ -577,7 +577,7 @@ function DashboardContent() {
       />
 
       <WidgetEmbedModal
-        bot={activeBot}
+        bot={embedModalBot || selectedBot || activeBot}
         isOpen={isWidgetModalOpen}
         onClose={() => setIsWidgetModalOpen(false)}
         onTriggerFloatingWidget={() => setIsFloatingWidgetOpen(true)}
