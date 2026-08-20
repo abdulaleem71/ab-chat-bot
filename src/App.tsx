@@ -484,6 +484,7 @@ function DashboardContent() {
               selectedBot={activeBot}
               onSelectBot={setSelectedBot}
               onSendQuery={handleSendPlaygroundQuery}
+              onOpenEmbedModal={handleOpenEmbedModal}
             />
           )}
 
@@ -509,6 +510,7 @@ function DashboardContent() {
                 onTestBot={handleTestBot}
                 onOpenEmbedModal={handleOpenEmbedModal}
                 onTrainBot={handleTrainBot}
+                onDeleteBot={handleDeleteBot}
               />
             </div>
           )}

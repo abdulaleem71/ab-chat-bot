@@ -61,10 +61,42 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
   const embedData = SecurityService.generateSecureEmbedSnippet(bot, appOrigin, currentTargetDomain);
   const scriptSnippet = embedData.snippet;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(scriptSnippet);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+  const handleCopy = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(scriptSnippet);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = scriptSnippet;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = scriptSnippet;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2500);
+      } catch (err) {
+        console.warn('Clipboard write failed:', err);
+      }
+    }
   };
 
   const handleTestDomain = async (domainToTest: string) => {
@@ -375,7 +407,7 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
 {`useEffect(() => {
   const script = document.createElement('script');
   script.src = "${appOrigin}/widget.js";
-  script.setAttribute('data-bot-id', "${bot.id}");
+  script.setAttribute('data-bot-id', "${safeBotId}");
   script.setAttribute('data-domain', "${currentTargetDomain}");
   script.setAttribute('data-token', "${embedData.token}");
   script.async = true;

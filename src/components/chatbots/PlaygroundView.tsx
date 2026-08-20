@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Chatbot, Message, GroundingSource } from '../../types';
 import { MarkdownContent } from '../../lib/markdown';
-import { Send, Bot, User, Sparkles, BookOpen, RotateCcw, ShieldCheck, CheckCircle2, ChevronRight, Loader2, ExternalLink, Layers } from 'lucide-react';
+import { Send, Bot, User, Sparkles, BookOpen, RotateCcw, ShieldCheck, CheckCircle2, ChevronRight, Loader2, ExternalLink, Layers, Code } from 'lucide-react';
 
 interface PlaygroundViewProps {
   chatbots: Chatbot[];
   selectedBot: Chatbot;
   onSelectBot: (bot: Chatbot) => void;
   onSendQuery: (botId: string, message: string, history: Message[]) => Promise<{ reply: string; sourcesUsed: GroundingSource[] }>;
+  onOpenEmbedModal?: (bot: Chatbot) => void;
 }
 
 export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
@@ -15,6 +16,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
   selectedBot,
   onSelectBot,
   onSendQuery,
+  onOpenEmbedModal,
 }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -176,6 +178,16 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
                 </option>
               ))}
             </select>
+          )}
+
+          {onOpenEmbedModal && (
+            <button
+              onClick={() => onOpenEmbedModal(selectedBot)}
+              className="bg-black hover:bg-zinc-800 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            >
+              <Code className="w-3.5 h-3.5" />
+              <span>Get Embed Code</span>
+            </button>
           )}
 
           <button

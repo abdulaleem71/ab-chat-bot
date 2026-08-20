@@ -178,13 +178,22 @@ export const BotList: React.FC<BotListProps> = ({
               </div>
 
               {/* Action Buttons Footer */}
-              <div className="pt-4 mt-4 border-t border-zinc-100 flex items-center justify-between gap-2">
+              <div className="pt-4 mt-4 border-t border-zinc-100 flex items-center justify-between gap-2 flex-wrap">
                 <button
                   onClick={() => onTestBot(bot)}
                   className="flex-1 text-center text-xs font-bold bg-zinc-950 hover:bg-zinc-800 text-white py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
                 >
                   <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Test Playground</span>
+                  <span>Test Bot</span>
+                </button>
+
+                <button
+                  onClick={() => onOpenEmbedModal(bot)}
+                  className="text-center text-xs font-bold bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-900 py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
+                  title="Get Embed Code"
+                >
+                  <Code className="w-3.5 h-3.5 text-zinc-700" />
+                  <span>Get Embed Code</span>
                 </button>
 
                 <button
@@ -193,14 +202,6 @@ export const BotList: React.FC<BotListProps> = ({
                   title="Train Knowledge Base"
                 >
                   <BookOpen className="w-4 h-4" />
-                </button>
-
-                <button
-                  onClick={() => onOpenEmbedModal(bot)}
-                  className="p-2 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 border border-zinc-200 rounded-xl transition cursor-pointer"
-                  title="Get Embed Code"
-                >
-                  <Code className="w-4 h-4" />
                 </button>
 
                 {onDeleteBot && (
