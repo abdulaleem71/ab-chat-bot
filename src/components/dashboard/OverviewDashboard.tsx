@@ -1,6 +1,8 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { AnalyticsSummary, Chatbot, VisitorLead } from '../../types';
-import { MessageSquare, Users, CheckCircle2, Clock, Star, TrendingUp, Plus, ArrowUpRight, Sparkles, Code, BookOpen, Bot, ExternalLink, ShieldCheck } from 'lucide-react';
+import { MessageSquare, Users, ShieldCheck, Clock, Star, TrendingUp, Plus, ArrowUpRight, Code, BarChart2 } from 'lucide-react';
+import { MotionButton } from '../common/MotionButton';
 
 interface OverviewDashboardProps {
   analytics: AnalyticsSummary;
@@ -19,319 +21,401 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   onOpenCreateBotModal,
   onOpenEmbedModal,
 }) => {
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.05,
+      },
+    },
+  };
+
+  const itemVariants = {
+    hidden: { opacity: 0, y: 10 },
+    visible: {
+      opacity: 1,
+      y: 0,
+      transition: { duration: 0.25, ease: 'easeOut' },
+    },
+  };
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
-      {/* Top Banner / Welcome */}
-      <div className="bg-zinc-950 border border-zinc-800 rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
-        <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-gradient-to-l from-indigo-500/10 via-zinc-800/10 to-transparent pointer-events-none" />
+    <motion.div
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+      className="space-y-6"
+    >
+      {/* Top Hero Banner */}
+      <motion.div
+        variants={itemVariants}
+        className="bg-zinc-950 border border-zinc-800/90 rounded-2xl md:rounded-3xl p-6 sm:p-8 text-white shadow-xs relative overflow-hidden group"
+      >
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs font-semibold">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-700/80 text-zinc-300 text-xs font-semibold font-heading">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span>Grounded RAG Customer Concierge Engine</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">AI Workspace Control Center</h1>
-            <p className="text-xs sm:text-sm text-zinc-300 max-w-2xl font-normal leading-relaxed">
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-white font-heading">
+              AI Workspace Control Center
+            </h1>
+            <p className="text-xs sm:text-sm text-zinc-300 max-w-2xl font-normal leading-relaxed font-body">
               Deploy custom AI chatbots grounded on your site documentation, monitor visitor inquiries in real-time, capture qualified leads, and take over live conversations seamlessly.
             </p>
           </div>
 
           <div className="flex items-center gap-3 shrink-0 flex-wrap">
-            <button
+            <MotionButton
+              variant="outline"
+              size="md"
+              shimmer
+              leftIcon={<Plus className="w-4 h-4 text-zinc-950" />}
               onClick={onOpenCreateBotModal}
-              className="bg-white hover:bg-zinc-100 text-zinc-950 font-bold text-xs px-4 py-2.5 rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer active:scale-95"
+              className="bg-white hover:bg-zinc-100 text-zinc-950 border-white shadow-md"
             >
-              <Plus className="w-4 h-4 text-zinc-950" />
-              <span>Create AI Bot</span>
-            </button>
-            <button
+              Create AI Bot
+            </MotionButton>
+            <MotionButton
+              variant="dark"
+              size="md"
+              shimmer
+              leftIcon={<Code className="w-4 h-4 text-zinc-300" />}
               onClick={() => onOpenEmbedModal ? onOpenEmbedModal() : onNavigate('embed')}
-              className="bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs px-4 py-2.5 rounded-xl border border-zinc-700 transition flex items-center gap-2 cursor-pointer active:scale-95"
             >
-              <Code className="w-4 h-4 text-zinc-300" />
-              <span>Embed Widget</span>
-            </button>
+              Embed Widget
+            </MotionButton>
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      {/* KPI Metric Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        {/* Metric 1 */}
-        <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+      {/* 5 KPI Metric Cards */}
+      <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+        {/* Metric 1: Total Chats */}
+        <motion.div
+          whileHover={{ y: -2, transition: { duration: 0.15 } }}
+          className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between"
+        >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Total Chats</span>
-            <div className="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-900 flex items-center justify-center">
-              <MessageSquare className="w-4 h-4" />
+            <span className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">Total Chats</span>
+            <div className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-700 flex items-center justify-center">
+              <MessageSquare className="w-3.5 h-3.5" />
             </div>
           </div>
           <div>
-            <p className="text-2xl font-extrabold text-zinc-900 tracking-tight">{analytics.totalConversations.toLocaleString()}</p>
-            <p className="text-[11px] text-zinc-500 mt-1 font-medium">Across {chatbots.length} active bot{chatbots.length === 1 ? '' : 's'}</p>
+            <p className="text-2xl font-extrabold text-zinc-900 tracking-tight font-heading">{analytics.totalConversations.toLocaleString()}</p>
+            <p className="text-[11px] text-zinc-500 mt-1 font-medium font-body">Across {chatbots.length} active bot{chatbots.length === 1 ? '' : 's'}</p>
           </div>
-        </div>
+        </motion.div>
 
-        {/* Metric 2 */}
-        <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+        {/* Metric 2: Leads Captured */}
+        <motion.div
+          whileHover={{ y: -2, transition: { duration: 0.15 } }}
+          className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between"
+        >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Leads Captured</span>
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <Users className="w-4 h-4" />
+            <span className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">Leads Captured</span>
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <Users className="w-3.5 h-3.5" />
             </div>
           </div>
           <div>
-            <p className="text-2xl font-extrabold text-zinc-900 tracking-tight">{analytics.leadsCaptured}</p>
-            <p className="text-[11px] text-emerald-600 mt-1 font-semibold flex items-center gap-1">
+            <p className="text-2xl font-extrabold text-zinc-900 tracking-tight font-heading">{analytics.leadsCaptured}</p>
+            <p className="text-[11px] text-emerald-600 mt-1 font-semibold flex items-center gap-1 font-body">
               <TrendingUp className="w-3 h-3" /> Live Visitor Sync
             </p>
           </div>
-        </div>
+        </motion.div>
 
-        {/* Metric 3 */}
-        <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+        {/* Metric 3: AI Resolution */}
+        <motion.div
+          whileHover={{ y: -2, transition: { duration: 0.15 } }}
+          className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between"
+        >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">AI Resolution</span>
-            <div className="w-8 h-8 rounded-xl bg-zinc-100 text-zinc-900 flex items-center justify-center">
-              <CheckCircle2 className="w-4 h-4" />
+            <span className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">AI Resolution</span>
+            <div className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-700 flex items-center justify-center">
+              <ShieldCheck className="w-3.5 h-3.5" />
             </div>
           </div>
           <div>
-            <p className="text-2xl font-extrabold text-zinc-900 tracking-tight">{analytics.aiResolutionRate}%</p>
-            <p className="text-[11px] text-zinc-500 mt-1 font-medium">{analytics.humanTakeovers} human handoff{analytics.humanTakeovers === 1 ? '' : 's'}</p>
+            <p className="text-2xl font-extrabold text-zinc-900 tracking-tight font-heading">{analytics.aiResolutionRate}%</p>
+            <p className="text-[11px] text-zinc-500 mt-1 font-medium font-body">{analytics.humanTakeovers} human handoff{analytics.humanTakeovers === 1 ? '' : 's'}</p>
           </div>
-        </div>
+        </motion.div>
 
-        {/* Metric 4 */}
-        <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+        {/* Metric 4: Avg Latency */}
+        <motion.div
+          whileHover={{ y: -2, transition: { duration: 0.15 } }}
+          className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between"
+        >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Avg Latency</span>
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <Clock className="w-4 h-4" />
+            <span className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">Avg Latency</span>
+            <div className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-700 flex items-center justify-center">
+              <Clock className="w-3.5 h-3.5" />
             </div>
           </div>
           <div>
-            <p className="text-2xl font-extrabold text-zinc-900 tracking-tight">{analytics.avgResponseTimeSec}s</p>
-            <p className="text-[11px] text-zinc-500 mt-1 font-medium">Gemini 3.6 Flash Engine</p>
+            <p className="text-2xl font-extrabold text-zinc-900 tracking-tight font-heading">{analytics.avgResponseTimeSec}s</p>
+            <p className="text-[11px] text-zinc-500 mt-1 font-medium font-body">Gemini 3.7 Flash Engine</p>
           </div>
-        </div>
+        </motion.div>
 
-        {/* Metric 5 */}
-        <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs flex flex-col justify-between">
+        {/* Metric 5: CSAT Rating */}
+        <motion.div
+          whileHover={{ y: -2, transition: { duration: 0.15 } }}
+          className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between"
+        >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">CSAT Rating</span>
-            <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-              <Star className="w-4 h-4 fill-amber-400" />
+            <span className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">CSAT Rating</span>
+            <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-500 flex items-center justify-center">
+              <Star className="w-3.5 h-3.5 fill-amber-400" />
             </div>
           </div>
           <div>
-            <p className="text-2xl font-extrabold text-zinc-900 tracking-tight">{analytics.csatScore} <span className="text-xs text-zinc-400 font-normal">/ 5.0</span></p>
-            <p className="text-[11px] text-zinc-500 mt-1 font-medium">Customer satisfaction</p>
+            <p className="text-2xl font-extrabold text-zinc-900 tracking-tight font-heading">
+              {analytics.csatScore} <span className="text-xs text-zinc-400 font-normal font-body">/5.0</span>
+            </p>
+            <p className="text-[11px] text-zinc-500 mt-1 font-medium font-body">Customer satisfaction</p>
           </div>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
 
-      {/* Main Charts & Topics Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Daily Conversations Trend */}
-        <div className="lg:col-span-2 bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-extrabold text-zinc-900">Weekly Conversation Activity</h3>
-              <p className="text-xs text-zinc-500 font-medium">Visitor inquiries and lead conversions over the last 7 days</p>
-            </div>
-            <div className="flex items-center gap-4 text-xs font-semibold">
-              <span className="flex items-center gap-1.5 text-zinc-700">
-                <span className="w-3 h-3 rounded bg-zinc-950"></span> Total Chats
-              </span>
-              <span className="flex items-center gap-1.5 text-zinc-700">
-                <span className="w-3 h-3 rounded bg-emerald-500"></span> Leads
-              </span>
+      {/* Main Charts & Topics 2-Column Grid */}
+      <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Weekly Activity Bar Chart */}
+        <div className="lg:col-span-2 bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Weekly Conversation Activity</h3>
+                <p className="text-xs text-zinc-500 font-medium mt-0.5 font-body">Visitor inquiries and lead conversions over the last 7 days</p>
+              </div>
+              <div className="flex items-center gap-4 text-xs font-semibold font-heading">
+                <span className="flex items-center gap-1.5 text-zinc-700 text-xs">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-zinc-950 inline-block" /> Total Chats
+                </span>
+                <span className="flex items-center gap-1.5 text-zinc-700 text-xs">
+                  <span className="w-2.5 h-2.5 rounded-xs bg-zinc-700 inline-block" /> Leads
+                </span>
+              </div>
             </div>
           </div>
 
           {/* Bar Chart Visual */}
-          <div className="h-52 flex items-end justify-between gap-3 pt-6 border-b border-zinc-100">
+          <div className="h-56 flex items-end justify-between gap-3 pt-6 border-b border-zinc-100">
             {analytics.dailyTrends.map((item, idx) => {
               const maxVal = Math.max(...analytics.dailyTrends.map(t => t.conversations), 10);
-              const chatHeight = Math.max(12, Math.round((item.conversations / maxVal) * 100));
-              const leadHeight = Math.max(8, Math.round((item.leads / maxVal) * 100));
+              const chatHeight = Math.max(16, Math.round((item.conversations / maxVal) * 100));
+              const leadHeight = Math.max(10, Math.round((item.leads / maxVal) * 100));
 
               return (
-                <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
+                <div key={idx} className="flex-1 flex flex-col items-center gap-2.5 h-full justify-end group">
                   <div className="w-full flex items-end justify-center gap-1.5 h-full">
                     {/* Chat bar */}
-                    <div
-                      style={{ height: `${chatHeight}%` }}
-                      className="w-1/2 bg-zinc-950 hover:bg-zinc-800 rounded-t-md transition-all relative group"
+                    <motion.div
+                      initial={{ height: '0%' }}
+                      animate={{ height: `${chatHeight}%` }}
+                      transition={{ delay: 0.1 + idx * 0.04, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                      className="w-1/2 max-w-[20px] bg-zinc-950 hover:bg-zinc-800 rounded-t-xs relative group cursor-pointer"
                     >
-                      <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-1/2 -translate-x-1/2 bg-zinc-900 text-white text-[10px] py-1 px-2 rounded-md shadow-md pointer-events-none whitespace-nowrap z-20 font-bold">
+                      <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-1/2 -translate-x-1/2 bg-zinc-900 text-white text-[10px] py-1 px-2 rounded-md shadow-md pointer-events-none whitespace-nowrap z-20 font-bold transition-opacity">
                         {item.conversations} chats
                       </div>
-                    </div>
+                    </motion.div>
                     {/* Lead bar */}
-                    <div
-                      style={{ height: `${leadHeight}%` }}
-                      className="w-1/2 bg-emerald-500 hover:bg-emerald-600 rounded-t-md transition-all relative group"
+                    <motion.div
+                      initial={{ height: '0%' }}
+                      animate={{ height: `${leadHeight}%` }}
+                      transition={{ delay: 0.15 + idx * 0.04, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                      className="w-1/2 max-w-[20px] bg-zinc-700 hover:bg-zinc-600 rounded-t-xs relative group cursor-pointer"
                     >
-                      <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-1/2 -translate-x-1/2 bg-zinc-900 text-white text-[10px] py-1 px-2 rounded-md shadow-md pointer-events-none whitespace-nowrap z-20 font-bold">
+                      <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-1/2 -translate-x-1/2 bg-zinc-900 text-white text-[10px] py-1 px-2 rounded-md shadow-md pointer-events-none whitespace-nowrap z-20 font-bold transition-opacity">
                         {item.leads} leads
                       </div>
-                    </div>
+                    </motion.div>
                   </div>
-                  <span className="text-[11px] font-semibold text-zinc-500">{item.date}</span>
+                  <span className="text-[11px] font-semibold text-zinc-500 font-mono">{item.date}</span>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* Top Inquiry Topics */}
-        <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-extrabold text-zinc-900">Frequent Inquiry Topics</h3>
-              <button
-                onClick={() => onNavigate('knowledge')}
-                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
-              >
-                Manage RAG
-              </button>
-            </div>
-            <p className="text-xs text-zinc-500 font-medium mb-4">Common queries analyzed and grounded in your knowledge base</p>
+        {/* Right Stack: Frequent Inquiry Topics & Grounded KB Box */}
+        <div className="space-y-4 flex flex-col justify-between">
+          <div className="bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs flex flex-col justify-between flex-1">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Frequent Inquiry Topics</h3>
+                <motion.button
+                  whileHover={{ x: 2 }}
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => onNavigate('knowledge')}
+                  className="text-xs font-bold text-zinc-900 hover:text-black cursor-pointer font-heading underline-offset-4 hover:underline"
+                >
+                  Manage RAG
+                </motion.button>
+              </div>
+              <p className="text-xs text-zinc-500 font-medium mb-4 font-body">Common queries analyzed and grounded in your knowledge base.</p>
 
-            <div className="space-y-3">
-              {analytics.topTopics.map((topic, idx) => {
-                const maxTopicCount = Math.max(...analytics.topTopics.map(t => t.count), 1);
-                const percent = Math.min(100, Math.round((topic.count / maxTopicCount) * 100));
+              {analytics.topTopics && analytics.topTopics.length > 0 ? (
+                <div className="space-y-3">
+                  {analytics.topTopics.map((topic, idx) => {
+                    const maxTopicCount = Math.max(...analytics.topTopics.map(t => t.count), 1);
+                    const percent = Math.min(100, Math.round((topic.count / maxTopicCount) * 100));
 
-                return (
-                  <div key={idx} className="space-y-1">
-                    <div className="flex justify-between text-xs font-medium">
-                      <span className="text-zinc-800 font-semibold truncate max-w-[180px]">{topic.topic}</span>
-                      <span className="text-zinc-500 font-bold">{topic.count} queries</span>
-                    </div>
-                    <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
-                      <div
-                        className="bg-zinc-900 h-full rounded-full transition-all"
-                        style={{ width: `${percent}%` }}
-                      />
-                    </div>
+                    return (
+                      <div key={idx} className="space-y-1">
+                        <div className="flex justify-between text-xs font-medium font-body">
+                          <span className="text-zinc-800 font-semibold truncate max-w-[180px]">{topic.topic}</span>
+                          <span className="text-zinc-500 font-bold font-mono">{topic.count} queries</span>
+                        </div>
+                        <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
+                          <div
+                            className="bg-zinc-950 h-full rounded-full transition-all"
+                            style={{ width: `${percent}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="border border-dashed border-zinc-200 rounded-2xl p-6 text-center bg-zinc-50/50 flex flex-col items-center justify-center gap-2 my-auto">
+                  <div className="w-9 h-9 rounded-xl bg-white border border-zinc-200 text-zinc-400 flex items-center justify-center mb-1 shadow-2xs">
+                    <BarChart2 className="w-4 h-4 text-zinc-400" />
                   </div>
-                );
-              })}
+                  <p className="text-xs text-zinc-500 max-w-xs leading-relaxed font-normal font-body">
+                    Not enough data to analyze frequent topics yet. Chat with your bot to generate insights.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="mt-6 pt-4 border-t border-zinc-100 bg-zinc-50 p-3.5 rounded-2xl border border-zinc-200/80">
-            <div className="flex items-center gap-2 text-zinc-900 font-bold text-xs mb-1">
-              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Grounded Knowledge Base Active</span>
+          <div className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs flex items-start gap-3">
+            <ShieldCheck className="w-5 h-5 text-zinc-800 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-xs font-extrabold text-zinc-900 mb-0.5 font-heading">Grounded Knowledge Base Active</h4>
+              <p className="text-[11px] text-zinc-500 leading-relaxed font-normal font-body">
+                Queries are automatically cross-checked with scraped pages and uploaded documents to prevent hallucinations.
+              </p>
             </div>
-            <p className="text-[11px] text-zinc-600 font-normal leading-relaxed">
-              Queries are automatically cross-checked with scraped pages and uploaded documents to prevent hallucinations.
-            </p>
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      {/* Active AI Chatbots Quick Hub */}
-      <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs">
+      {/* Deployed AI Chatbots Preview */}
+      <motion.div variants={itemVariants} className="bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-sm font-extrabold text-zinc-900">Deployed AI Chatbots</h3>
-            <p className="text-xs text-zinc-500 font-medium">Configure bots, test live grounding, or copy embed scripts</p>
+            <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Deployed AI Chatbots</h3>
+            <p className="text-xs text-zinc-500 font-medium mt-0.5 font-body">Configure bots, test live grounding, or copy embed scripts</p>
           </div>
-          <button
+          <motion.button
+            whileHover={{ x: 2 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => onNavigate('chatbots')}
-            className="text-xs font-bold text-zinc-900 hover:text-zinc-700 flex items-center gap-1 cursor-pointer"
+            className="text-xs font-bold text-zinc-900 hover:text-black flex items-center gap-1 cursor-pointer font-heading"
           >
             <span>View All ({chatbots.length})</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
-          </button>
+          </motion.button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {chatbots.map(bot => (
-            <div
+            <motion.div
               key={bot.id}
-              className="border border-zinc-200 rounded-2xl p-4.5 bg-zinc-50/50 hover:bg-white hover:border-zinc-900 transition flex flex-col justify-between group"
+              whileHover={{ y: -3, transition: { duration: 0.15 } }}
+              className="border border-zinc-200/90 rounded-2xl p-4.5 bg-zinc-50/40 hover:bg-white hover:border-zinc-900 transition-all flex flex-col justify-between group shadow-2xs"
             >
               <div>
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="flex items-center gap-3">
                     <div
                       style={{ backgroundColor: bot.primaryColor || '#09090b' }}
-                      className="w-10 h-10 rounded-xl text-lg flex items-center justify-center text-white font-bold shadow-xs shrink-0"
+                      className="w-10 h-10 rounded-xl text-lg flex items-center justify-center text-white font-bold shadow-2xs shrink-0"
                     >
                       {bot.avatar || '🤖'}
                     </div>
                     <div>
-                      <h4 className="text-xs font-extrabold text-zinc-900 group-hover:text-black">{bot.name}</h4>
-                      <p className="text-[11px] text-zinc-500 line-clamp-1">{bot.description}</p>
+                      <h4 className="text-xs font-extrabold text-zinc-900 group-hover:text-black font-heading">{bot.name}</h4>
+                      <p className="text-[11px] text-zinc-500 line-clamp-1 font-body">{bot.description || 'Handles customer inquiries'}</p>
                     </div>
                   </div>
-                  <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">
+                  <span className="bg-zinc-100 text-zinc-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase flex items-center gap-1 font-mono">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                     {bot.status}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-[11px] bg-white p-2.5 rounded-xl border border-zinc-200/80 mb-3">
                   <div>
-                    <span className="text-[10px] text-zinc-400 uppercase font-bold block">Engine</span>
-                    <span className="text-zinc-800 font-semibold">{bot.model}</span>
+                    <span className="text-[10px] text-zinc-400 uppercase font-bold block font-heading">Engine</span>
+                    <span className="text-zinc-800 font-semibold font-body">{bot.model}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-zinc-400 uppercase font-bold block">Tone</span>
-                    <span className="text-zinc-800 font-semibold">{bot.tone}</span>
+                    <span className="text-[10px] text-zinc-400 uppercase font-bold block font-heading">Tone</span>
+                    <span className="text-zinc-800 font-semibold font-body">{bot.tone}</span>
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 pt-2 border-t border-zinc-200/60">
-                <button
+                <MotionButton
+                  variant="primary"
+                  size="xs"
+                  shimmer
                   onClick={() => onNavigate('playground')}
-                  className="flex-1 text-center text-xs font-bold bg-zinc-950 hover:bg-zinc-800 text-white py-1.5 px-3 rounded-lg transition cursor-pointer"
+                  className="flex-1"
                 >
                   Test Bot
-                </button>
-                <button
+                </MotionButton>
+                <MotionButton
+                  variant="outline"
+                  size="xs"
+                  shimmer
+                  leftIcon={<Code className="w-3.5 h-3.5" />}
                   onClick={() => onOpenEmbedModal ? onOpenEmbedModal(bot) : onNavigate('embed')}
-                  className="text-xs font-bold text-zinc-700 hover:text-black bg-white hover:bg-zinc-100 border border-zinc-200 py-1.5 px-3 rounded-lg transition cursor-pointer flex items-center gap-1"
                 >
-                  <Code className="w-3 h-3" />
-                  <span>Embed</span>
-                </button>
+                  Embed
+                </MotionButton>
               </div>
-            </div>
+            </motion.div>
           ))}
         </div>
-      </div>
+      </motion.div>
 
       {/* Recent Visitors & Leads Captured Table */}
-      <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs">
+      <motion.div variants={itemVariants} className="bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-sm font-extrabold text-zinc-900">Recent Captured Leads</h3>
-            <p className="text-xs text-zinc-500 font-medium">Contact information captured automatically from live chatbot sessions</p>
+            <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Recent Captured Leads</h3>
+            <p className="text-xs text-zinc-500 font-medium mt-0.5 font-body">Contact information captured automatically from live chatbot sessions</p>
           </div>
-          <button
+          <motion.button
+            whileHover={{ x: 2 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => onNavigate('inbox')}
-            className="text-xs font-bold text-zinc-900 hover:text-zinc-700 flex items-center gap-1 cursor-pointer"
+            className="text-xs font-bold text-zinc-900 hover:text-black flex items-center gap-1 cursor-pointer font-heading"
           >
             <span>Open Support Inbox</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
-          </button>
+          </motion.button>
         </div>
 
         {leads.length === 0 ? (
-          <div className="text-center py-8 text-zinc-400 text-xs font-medium">
+          <div className="text-center py-8 text-zinc-400 text-xs font-medium font-body">
             No leads captured yet. Enable lead capture in your Chatbot Settings.
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
-                <tr className="border-b border-zinc-200 text-zinc-400 font-semibold uppercase tracking-wider text-[10px]">
+                <tr className="border-b border-zinc-200 text-zinc-400 font-semibold uppercase tracking-wider text-[10px] font-heading">
                   <th className="pb-3 px-3">Visitor Name</th>
                   <th className="pb-3 px-3">Email Address</th>
                   <th className="pb-3 px-3">Organization</th>
@@ -339,8 +423,8 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                   <th className="pb-3 px-3">Captured At</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100">
-                {leads.slice(0, 5).map(lead => (
+              <tbody className="divide-y divide-zinc-100 font-body">
+                {leads.slice(0, 6).map(lead => (
                   <tr key={lead.id} className="hover:bg-zinc-50/80 transition">
                     <td className="py-3 px-3 font-bold text-zinc-900">{lead.name}</td>
                     <td className="py-3 px-3 text-zinc-900 font-medium font-mono text-[11px]">{lead.email}</td>
@@ -355,7 +439,9 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </table>
           </div>
         )}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };
+
+

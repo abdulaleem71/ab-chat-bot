@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Search, ChevronDown, ChevronUp, Sparkles, HelpCircle, MessageSquare, ShieldCheck, Zap, Code, Bot } from 'lucide-react';
+import { MotionButton } from '../common/MotionButton';
 
 interface FaqItem {
   id: string;
@@ -127,17 +129,18 @@ export const FaqView: React.FC<FaqViewProps> = ({ onOpenTestChat }) => {
         {/* Category Chips */}
         <div className="flex flex-wrap justify-center gap-2 pt-3">
           {categories.map(cat => (
-            <button
+            <motion.button
               key={cat}
+              whileTap={{ scale: 0.95 }}
               onClick={() => setActiveCategory(cat)}
-              className={`px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer active:scale-95 ${
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer font-heading ${
                 activeCategory === cat
-                  ? 'bg-black text-white shadow-md'
-                  : 'bg-white text-zinc-700 hover:bg-zinc-100 border border-zinc-200'
+                  ? 'bg-zinc-950 text-white shadow-md'
+                  : 'bg-white text-zinc-700 hover:bg-zinc-100/80 border border-zinc-200'
               }`}
             >
               {cat === 'all' ? 'All Questions' : cat}
-            </button>
+            </motion.button>
           ))}
         </div>
       </div>
@@ -147,8 +150,8 @@ export const FaqView: React.FC<FaqViewProps> = ({ onOpenTestChat }) => {
         {filteredFaqs.length === 0 ? (
           <div className="bg-white border border-zinc-200 rounded-3xl p-8 text-center text-zinc-500">
             <HelpCircle className="w-8 h-8 text-zinc-300 mx-auto mb-2" />
-            <p className="text-xs font-bold text-black">No questions matching "{searchQuery}"</p>
-            <p className="text-[11px] text-zinc-400 mt-1">Try searching for broader terms or select another category.</p>
+            <p className="text-xs font-bold text-zinc-950 font-heading">No questions matching "{searchQuery}"</p>
+            <p className="text-[11px] text-zinc-400 mt-1 font-body">Try searching for broader terms or select another category.</p>
           </div>
         ) : (
           filteredFaqs.map(faq => {
@@ -156,34 +159,45 @@ export const FaqView: React.FC<FaqViewProps> = ({ onOpenTestChat }) => {
             return (
               <div
                 key={faq.id}
-                className="bg-white border border-zinc-200 rounded-2xl overflow-hidden transition duration-200 hover:border-black/30 shadow-xs"
+                className="bg-white border border-zinc-200/90 rounded-2xl overflow-hidden transition duration-200 hover:border-zinc-300 shadow-2xs"
               >
-                <button
+                <motion.button
+                  whileTap={{ scale: 0.99 }}
                   onClick={() => toggleFaq(faq.id)}
-                  className="w-full px-6 py-4 text-left flex items-center justify-between gap-4 font-bold text-black text-xs sm:text-sm cursor-pointer"
+                  className="w-full px-6 py-4 text-left flex items-center justify-between gap-4 font-bold text-zinc-950 text-xs sm:text-sm cursor-pointer font-heading"
                 >
                   <span className="flex items-center gap-3">
-                    <span className="w-2 h-2 rounded-full bg-black shrink-0" />
+                    <span className="w-2 h-2 rounded-full bg-zinc-950 shrink-0" />
                     <span>{faq.question}</span>
                   </span>
                   {isOpen ? (
-                    <ChevronUp className="w-4 h-4 text-black shrink-0" />
+                    <ChevronUp className="w-4 h-4 text-zinc-950 shrink-0" />
                   ) : (
                     <ChevronDown className="w-4 h-4 text-zinc-400 shrink-0" />
                   )}
-                </button>
+                </motion.button>
 
-                {isOpen && (
-                  <div className="px-6 pb-5 pt-1 text-xs text-zinc-700 leading-relaxed border-t border-zinc-100 bg-zinc-50/50 animate-in fade-in duration-200">
-                    <p className="pl-4 border-l-2 border-black font-medium">{faq.answer}</p>
-                    <div className="mt-3 flex items-center justify-between text-[10px] text-zinc-400">
-                      <span>Category: <strong className="text-black">{faq.category}</strong></span>
-                      <span className="text-zinc-800 font-extrabold flex items-center gap-1">
-                        <ShieldCheck className="w-3.5 h-3.5 text-black" /> Grounded & Verified
-                      </span>
-                    </div>
-                  </div>
-                )}
+                <AnimatePresence initial={false}>
+                  {isOpen && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="px-6 pb-5 pt-1 text-xs text-zinc-700 leading-relaxed border-t border-zinc-100 bg-zinc-50/50 font-body">
+                        <p className="pl-4 border-l-2 border-zinc-950 font-medium">{faq.answer}</p>
+                        <div className="mt-3 flex items-center justify-between text-[10px] text-zinc-400 font-mono">
+                          <span>Category: <strong className="text-zinc-900">{faq.category}</strong></span>
+                          <span className="text-zinc-800 font-extrabold flex items-center gap-1 font-heading">
+                            <ShieldCheck className="w-3.5 h-3.5 text-zinc-950" /> Grounded & Verified
+                          </span>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             );
           })
@@ -191,28 +205,32 @@ export const FaqView: React.FC<FaqViewProps> = ({ onOpenTestChat }) => {
       </div>
 
       {/* Still Have Questions Box */}
-      <div className="bg-black text-white rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xl relative overflow-hidden group">
+      <div className="bg-zinc-950 text-white rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xl relative overflow-hidden group">
         <div className="absolute top-0 right-0 w-64 h-64 bg-zinc-800/40 rounded-full blur-3xl group-hover:scale-125 transition-transform duration-500" />
         <div className="flex items-center gap-4 relative z-10">
-          <div className="w-12 h-12 rounded-2xl bg-white text-black flex items-center justify-center shrink-0 shadow-lg font-bold">
-            <MessageSquare className="w-6 h-6 text-black" />
+          <div className="w-12 h-12 rounded-2xl bg-white text-zinc-950 flex items-center justify-center shrink-0 shadow-lg font-bold">
+            <MessageSquare className="w-6 h-6 text-zinc-950" />
           </div>
           <div>
-            <h3 className="text-base font-extrabold text-white">Still have a question?</h3>
-            <p className="text-xs text-zinc-300 font-medium mt-0.5">
+            <h3 className="text-base font-extrabold text-white font-heading">Still have a question?</h3>
+            <p className="text-xs text-zinc-300 font-medium mt-0.5 font-body">
               Test our live AI support widget or start a conversation with our AI bot in real-time.
             </p>
           </div>
         </div>
 
         {onOpenTestChat && (
-          <button
-            onClick={onOpenTestChat}
-            className="bg-white hover:bg-zinc-100 text-black text-xs font-extrabold px-6 py-3.5 rounded-2xl shadow-lg transition flex items-center gap-2 whitespace-nowrap active:scale-95 cursor-pointer relative z-10"
-          >
-            <Bot className="w-4 h-4 text-black" />
-            <span>Ask AI Support Bot</span>
-          </button>
+          <div className="relative z-10">
+            <MotionButton
+              variant="secondary"
+              size="md"
+              shimmer
+              onClick={onOpenTestChat}
+              leftIcon={<Bot className="w-4 h-4 text-zinc-950" />}
+            >
+              Ask AI Support Bot
+            </MotionButton>
+          </div>
         )}
       </div>
     </div>

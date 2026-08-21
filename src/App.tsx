@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navbar } from './components/layout/Navbar';
 import { Sidebar } from './components/layout/Sidebar';
@@ -15,30 +16,9 @@ import { PricingView } from './components/pricing/PricingView';
 import { FeaturesView } from './components/features/FeaturesView';
 import { FaqView } from './components/faq/FaqView';
 import { Footer } from './components/layout/Footer';
+import { AdminApp } from './admin/AdminApp';
 import { Chatbot, KnowledgeSource, Conversation, Message, VisitorLead, GroundingSource, AnalyticsSummary } from './types';
 import { MessageSquare, X, AlertCircle, Loader2 } from 'lucide-react';
-
-const DEFAULT_DEMO_BOT: Chatbot = {
-  id: 'usr_acme_bot_1',
-  tenantId: 'tenant_acme',
-  name: 'Acme Support AI',
-  description: 'Grounded AI Customer Support Agent for Acme Inc.',
-  systemInstruction: 'You are an intelligent support assistant for Acme Inc.',
-  tone: 'Professional',
-  primaryColor: '#4F46E5',
-  textColor: '#FFFFFF',
-  avatar: '🤖',
-  greetingMessage: 'Hello! How can I assist you with Acme products today?',
-  suggestedQuestions: ['What are your business hours?', 'How do I embed the chat widget?', 'How can I reset my password?'],
-  model: 'gemini-3.7-flash',
-  fallbackMessage: 'I am not sure about that. Let me connect you with a human agent.',
-  collectLeadEmail: true,
-  leadTitle: 'Connect with Acme Support',
-  humanOperatorOnline: true,
-  status: 'active',
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-};
 
 function DashboardContent() {
   const { token, isAuthenticated } = useAuth();
@@ -51,8 +31,8 @@ function DashboardContent() {
   const [leads, setLeads] = useState<VisitorLead[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
 
-  // Effective current bot fallback for preview and widgets
-  const activeBot = selectedBot || (chatbots.length > 0 ? chatbots[0] : DEFAULT_DEMO_BOT);
+  // Effective current bot for preview and views
+  const activeBot = selectedBot || (chatbots.length > 0 ? chatbots[0] : null);
 
   // Modals & Floating preview & Mobile Menu
   const [isBotEditorOpen, setIsBotEditorOpen] = useState(false);
@@ -373,31 +353,27 @@ function DashboardContent() {
   const unreadCount = conversations.filter(c => c.unreadByAgent).length;
 
   const defaultAnalytics: AnalyticsSummary = analytics || {
-    totalConversations: conversations.length,
-    leadsCaptured: leads.length,
-    aiResolutionRate: 95.0,
-    avgResponseTimeSec: 1.2,
-    csatScore: 4.8,
+    totalConversations: conversations.length > 0 ? conversations.length : 8,
+    leadsCaptured: leads.length > 0 ? leads.length : 4,
+    aiResolutionRate: 100,
+    avgResponseTimeSec: 3.3,
+    csatScore: 0.0,
     totalMessages: Object.values(messages).flat().length,
     humanTakeovers: conversations.filter(c => c.status === 'human_takeover').length,
-    topTopics: [
-      { topic: 'SSO & SAML Setup', count: 12 },
-      { topic: 'API Rate Limits & Pricing', count: 8 },
-      { topic: 'Team Workspace Invites', count: 5 },
-    ],
+    topTopics: [],
     dailyTrends: [
-      { date: 'Mon', conversations: 4, leads: 2 },
-      { date: 'Tue', conversations: 6, leads: 3 },
-      { date: 'Wed', conversations: 8, leads: 4 },
-      { date: 'Thu', conversations: 5, leads: 2 },
-      { date: 'Fri', conversations: 10, leads: 5 },
-      { date: 'Sat', conversations: 7, leads: 3 },
-      { date: 'Sun', conversations: 9, leads: 4 },
+      { date: 'Aug 15', conversations: 4, leads: 2 },
+      { date: 'Aug 16', conversations: 6, leads: 3 },
+      { date: 'Aug 17', conversations: 8, leads: 4 },
+      { date: 'Aug 18', conversations: 5, leads: 2 },
+      { date: 'Aug 19', conversations: 9, leads: 5 },
+      { date: 'Aug 20', conversations: 7, leads: 3 },
+      { date: 'Aug 21', conversations: 8, leads: 4 },
     ],
   };
 
   return (
-    <div className="min-h-screen bg-slate-100/70 text-slate-900 font-sans flex flex-col antialiased selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-dot-grid text-zinc-900 font-sans flex flex-col antialiased selection:bg-zinc-900 selection:text-white">
       {/* Top Navigation */}
       <Navbar
         onOpenWidgetModal={() => handleOpenEmbedModal()}
@@ -413,7 +389,7 @@ function DashboardContent() {
         {isMobileMenuOpen && (
           <div className="lg:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex animate-in fade-in duration-200">
             <div className="w-72 bg-white h-full shadow-2xl flex flex-col z-50 animate-in slide-in-from-left duration-200">
-              <div className="p-4 border-b border-zinc-200 flex items-center justify-between bg-black text-white shrink-0">
+              <div className="p-4 border-b border-zinc-200 flex items-center justify-between bg-zinc-950 text-white shrink-0">
                 <span className="font-extrabold text-sm tracking-tight">Main Workspace Menu</span>
                 <button
                   onClick={() => setIsMobileMenuOpen(false)}
@@ -443,103 +419,117 @@ function DashboardContent() {
         </div>
 
         {/* Dynamic Main Workspace Container */}
-        <main className="flex-1 p-3 sm:p-6 md:p-8 overflow-y-auto max-w-7xl mx-auto w-full">
-          {activeTab === 'overview' && (
-            <OverviewDashboard
-              analytics={defaultAnalytics}
-              chatbots={chatbots}
-              leads={leads}
-              onNavigate={setActiveTab}
-              onOpenCreateBotModal={handleCreateBot}
-              onOpenEmbedModal={handleOpenEmbedModal}
-            />
-          )}
+        <main className="flex-1 p-4 sm:p-6 lg:p-7 overflow-y-auto max-w-7xl mx-auto w-full">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              {activeTab === 'overview' && (
+                <OverviewDashboard
+                  analytics={defaultAnalytics}
+                  chatbots={chatbots}
+                  leads={leads}
+                  onNavigate={setActiveTab}
+                  onOpenCreateBotModal={handleCreateBot}
+                  onOpenEmbedModal={handleOpenEmbedModal}
+                />
+              )}
 
-          {activeTab === 'chatbots' && (
-            <BotList
-              chatbots={chatbots}
-              onOpenCreateModal={handleCreateBot}
-              onEditBot={handleEditBot}
-              onTestBot={handleTestBot}
-              onOpenEmbedModal={handleOpenEmbedModal}
-              onTrainBot={handleTrainBot}
-              onDeleteBot={handleDeleteBot}
-            />
-          )}
+              {activeTab === 'chatbots' && (
+                <BotList
+                  chatbots={chatbots}
+                  onOpenCreateModal={handleCreateBot}
+                  onEditBot={handleEditBot}
+                  onTestBot={handleTestBot}
+                  onOpenEmbedModal={handleOpenEmbedModal}
+                  onTrainBot={handleTrainBot}
+                  onDeleteBot={handleDeleteBot}
+                />
+              )}
 
-          {activeTab === 'knowledge' && (
-            <KnowledgeManager
-              selectedBot={activeBot}
-              knowledgeSources={knowledgeSources}
-              onAddSource={handleAddKnowledgeSource}
-              onScrapeUrl={handleScrapeUrl}
-              onIngestHtml={handleIngestHtml}
-              onDeleteSource={handleDeleteKnowledgeSource}
-            />
-          )}
+              {activeTab === 'knowledge' && (
+                <KnowledgeManager
+                  selectedBot={activeBot}
+                  allBots={chatbots}
+                  onSelectBot={setSelectedBot}
+                  onCreateBot={handleCreateBot}
+                  knowledgeSources={knowledgeSources}
+                  onAddSource={handleAddKnowledgeSource}
+                  onScrapeUrl={handleScrapeUrl}
+                  onIngestHtml={handleIngestHtml}
+                  onDeleteSource={handleDeleteKnowledgeSource}
+                />
+              )}
 
-          {activeTab === 'playground' && (
-            <PlaygroundView
-              chatbots={chatbots.length > 0 ? chatbots : [activeBot]}
-              selectedBot={activeBot}
-              onSelectBot={setSelectedBot}
-              onSendQuery={handleSendPlaygroundQuery}
-              onOpenEmbedModal={handleOpenEmbedModal}
-            />
-          )}
+              {activeTab === 'playground' && (
+                <PlaygroundView
+                  chatbots={chatbots}
+                  selectedBot={activeBot}
+                  onSelectBot={setSelectedBot}
+                  onCreateBot={handleCreateBot}
+                  onSendQuery={handleSendPlaygroundQuery}
+                  onOpenEmbedModal={handleOpenEmbedModal}
+                />
+              )}
 
-          {activeTab === 'inbox' && (
-            <InboxView
-              conversations={conversations}
-              messages={messages}
-              chatbots={chatbots}
-              onSendMessage={handleInboxSendMessage}
-              onToggleTakeover={handleToggleTakeover}
-              onResolveConversation={handleResolveConversation}
-            />
-          )}
+              {activeTab === 'inbox' && (
+                <InboxView
+                  conversations={conversations}
+                  messages={messages}
+                  chatbots={chatbots}
+                  onSendMessage={handleInboxSendMessage}
+                  onToggleTakeover={handleToggleTakeover}
+                  onResolveConversation={handleResolveConversation}
+                />
+              )}
 
-          {activeTab === 'embed' && (
-            <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs">
-              <h2 className="text-lg font-bold text-slate-900 mb-2">Embed Code Generator</h2>
-              <p className="text-xs text-slate-500 mb-6">Select a bot to retrieve script snippets and platform guides.</p>
-              <BotList
-                chatbots={chatbots}
-                onOpenCreateModal={handleCreateBot}
-                onEditBot={handleEditBot}
-                onTestBot={handleTestBot}
-                onOpenEmbedModal={handleOpenEmbedModal}
-                onTrainBot={handleTrainBot}
-                onDeleteBot={handleDeleteBot}
-              />
-            </div>
-          )}
+              {activeTab === 'embed' && (
+                <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs">
+                  <h2 className="text-lg font-bold text-slate-900 mb-2">Embed Code Generator</h2>
+                  <p className="text-xs text-slate-500 mb-6">Select a bot to retrieve script snippets and platform guides.</p>
+                  <BotList
+                    chatbots={chatbots}
+                    onOpenCreateModal={handleCreateBot}
+                    onEditBot={handleEditBot}
+                    onTestBot={handleTestBot}
+                    onOpenEmbedModal={handleOpenEmbedModal}
+                    onTrainBot={handleTrainBot}
+                    onDeleteBot={handleDeleteBot}
+                  />
+                </div>
+              )}
 
-          {activeTab === 'analytics' && (
-            <OverviewDashboard
-              analytics={defaultAnalytics}
-              chatbots={chatbots}
-              leads={leads}
-              onNavigate={setActiveTab}
-              onOpenCreateBotModal={handleCreateBot}
-              onOpenEmbedModal={handleOpenEmbedModal}
-            />
-          )}
+              {activeTab === 'analytics' && (
+                <OverviewDashboard
+                  analytics={defaultAnalytics}
+                  chatbots={chatbots}
+                  leads={leads}
+                  onNavigate={setActiveTab}
+                  onOpenCreateBotModal={handleCreateBot}
+                  onOpenEmbedModal={handleOpenEmbedModal}
+                />
+              )}
 
-          {activeTab === 'features' && (
-            <FeaturesView onNavigateToTab={setActiveTab} />
-          )}
+              {activeTab === 'features' && (
+                <FeaturesView onNavigateToTab={setActiveTab} />
+              )}
 
-          {activeTab === 'pricing' && (
-            <PricingView
-              onOpenAuthModal={() => setIsAuthModalOpen(true)}
-              onNavigateToFaq={() => setActiveTab('faq')}
-            />
-          )}
+              {activeTab === 'pricing' && (
+                <PricingView
+                  onOpenAuthModal={() => setIsAuthModalOpen(true)}
+                  onNavigateToFaq={() => setActiveTab('faq')}
+                />
+              )}
 
-          {activeTab === 'faq' && (
-            <FaqView onOpenTestChat={() => setIsFloatingWidgetOpen(true)} />
-          )}
+              {activeTab === 'faq' && (
+                <FaqView onOpenTestChat={() => setIsFloatingWidgetOpen(true)} />
+              )}
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
 
@@ -548,22 +538,47 @@ function DashboardContent() {
 
       {/* Floating Live Widget Test Launcher */}
       <div className="fixed bottom-6 right-6 z-50">
-        {!isFloatingWidgetOpen ? (
-          <button
-            onClick={() => setIsFloatingWidgetOpen(true)}
-            style={{ backgroundColor: activeBot.primaryColor || '#4F46E5' }}
-            className="w-14 h-14 rounded-full text-white flex items-center justify-center shadow-xl hover:scale-105 transition duration-200 cursor-pointer"
-            title="Test Floating AI Widget"
-          >
-            <MessageSquare className="w-6 h-6" />
-          </button>
-        ) : (
-          <EmbedChatWidget
-            bot={activeBot}
-            isFloating={true}
-            onClose={() => setIsFloatingWidgetOpen(false)}
-          />
-        )}
+        <AnimatePresence mode="wait">
+          {!isFloatingWidgetOpen ? (
+            <motion.button
+              key="floating-btn"
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.95 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              onClick={() => {
+                if (activeBot) {
+                  setIsFloatingWidgetOpen(true);
+                } else {
+                  handleCreateBot();
+                }
+              }}
+              style={{ backgroundColor: activeBot?.primaryColor || '#09090b' }}
+              className="w-14 h-14 rounded-full text-white flex items-center justify-center shadow-xl cursor-pointer ring-4 ring-white/80"
+              title={activeBot ? 'Test Floating AI Widget' : 'Create a Chatbot to Test Live Widget'}
+            >
+              <MessageSquare className="w-6 h-6" />
+            </motion.button>
+          ) : (
+            activeBot && (
+              <motion.div
+                key="floating-widget"
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+              >
+                <EmbedChatWidget
+                  bot={activeBot}
+                  isFloating={true}
+                  onClose={() => setIsFloatingWidgetOpen(false)}
+                />
+              </motion.div>
+            )
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Modals */}
@@ -694,10 +709,42 @@ function StandaloneEmbedView({ botId }: { botId: string }) {
 }
 
 export default function App() {
+  const [isAdminMode, setIsAdminMode] = useState<boolean>(() => {
+    return window.location.pathname.startsWith('/admin') || window.location.hash === '#admin';
+  });
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setIsAdminMode(window.location.pathname.startsWith('/admin') || window.location.hash === '#admin');
+    };
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('hashchange', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('hashchange', handlePopState);
+    };
+  }, []);
+
   const path = window.location.pathname;
   if (path.startsWith('/embed/')) {
     const botId = path.split('/embed/')[1];
     return <StandaloneEmbedView botId={botId} />;
+  }
+
+  if (isAdminMode) {
+    return (
+      <AdminApp
+        onReturnToUserApp={() => {
+          if (window.location.pathname.startsWith('/admin')) {
+            window.history.pushState({}, '', '/');
+          }
+          if (window.location.hash === '#admin') {
+            window.location.hash = '';
+          }
+          setIsAdminMode(false);
+        }}
+      />
+    );
   }
 
   return (
@@ -706,3 +753,4 @@ export default function App() {
     </AuthProvider>
   );
 }
+

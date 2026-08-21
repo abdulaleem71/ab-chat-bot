@@ -135,6 +135,20 @@ export async function initDb(): Promise<void> {
       );
     `);
 
+    // Create OAuth Accounts Table (Google, GitHub, etc.)
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS oauth_accounts (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        provider_user_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(provider, provider_user_id)
+      );
+    `);
+
     // Create Chatbots Table
     await client.execute(`
       CREATE TABLE IF NOT EXISTS chatbots (
@@ -276,11 +290,35 @@ export async function initDb(): Promise<void> {
       );
     `);
 
+    // Create Domain Verifications & Security Registry Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS domain_verifications (
+        id TEXT PRIMARY KEY,
+        domain TEXT UNIQUE NOT NULL,
+        tenant_id TEXT,
+        verification_status TEXT NOT NULL DEFAULT 'verified',
+        verification_method TEXT NOT NULL DEFAULT 'dns_txt',
+        verification_token TEXT NOT NULL,
+        ssl_status TEXT NOT NULL DEFAULT 'valid',
+        http_status INTEGER NOT NULL DEFAULT 200,
+        response_time_ms INTEGER NOT NULL DEFAULT 45,
+        is_whitelisted INTEGER NOT NULL DEFAULT 1,
+        is_blocked INTEGER NOT NULL DEFAULT 0,
+        lock_enforced INTEGER NOT NULL DEFAULT 1,
+        last_checked_at TEXT NOT NULL,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
+      );
+    `);
+
     // Create Performance Indexes
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_chatbots_tenant ON chatbots(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_ks_bot ON knowledge_sources(chatbot_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_kc_bot ON knowledge_chunks(chatbot_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_conv_bot ON conversations(chatbot_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_oauth_provider_user ON oauth_accounts(provider, provider_user_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_oauth_user_id ON oauth_accounts(user_id);`);
 
     // Column Migration for website_url
     try {

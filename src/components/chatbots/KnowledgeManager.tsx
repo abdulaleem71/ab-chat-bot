@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { Chatbot, KnowledgeSource, KnowledgeType } from '../../types';
 import { Globe, FileText, HelpCircle, Plus, Trash2, CheckCircle2, Sparkles, Loader2, Link2, ExternalLink, Laptop, Code } from 'lucide-react';
+import { MotionButton } from '../common/MotionButton';
 
 interface KnowledgeManagerProps {
-  selectedBot: Chatbot;
+  selectedBot?: Chatbot | null;
   allBots?: Chatbot[];
   onSelectBot?: (bot: Chatbot) => void;
+  onCreateBot?: () => void;
   knowledgeSources: KnowledgeSource[];
   onAddSource: (source: Partial<KnowledgeSource>) => Promise<void>;
   onScrapeUrl: (url: string) => Promise<void>;
@@ -17,6 +20,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   selectedBot,
   allBots = [],
   onSelectBot,
+  onCreateBot,
   knowledgeSources,
   onAddSource,
   onScrapeUrl,
@@ -34,6 +38,31 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   const [docContent, setDocContent] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  if (!selectedBot) {
+    return (
+      <div className="bg-white border border-zinc-200/80 rounded-3xl p-12 text-center shadow-xs animate-in fade-in duration-200">
+        <div className="w-16 h-16 bg-zinc-100 rounded-3xl flex items-center justify-center mx-auto mb-4 text-zinc-400">
+          <Sparkles className="w-8 h-8 text-indigo-600" />
+        </div>
+        <h2 className="text-xl font-bold text-zinc-900 mb-2 font-heading">No Chatbot Selected</h2>
+        <p className="text-xs text-zinc-500 max-w-md mx-auto mb-6 font-body">
+          Create or select a chatbot to manage its ground truth knowledge base, crawl website pages, and configure custom FAQ documents.
+        </p>
+        {onCreateBot && (
+          <MotionButton
+            variant="primary"
+            size="md"
+            shimmer
+            leftIcon={<Plus className="w-4 h-4" />}
+            onClick={onCreateBot}
+          >
+            Create New Chatbot
+          </MotionButton>
+        )}
+      </div>
+    );
+  }
 
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -203,49 +232,57 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
       {/* Input Ingestion Form */}
       <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs space-y-6">
         <div className="flex border-b border-zinc-200 overflow-x-auto scrollbar-none gap-2">
-          <button
+          <motion.button
             type="button"
+            whileHover={{ y: -1 }}
+            whileTap={{ scale: 0.97 }}
             onClick={() => setActiveTab('url')}
-            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 ${
+            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 font-heading ${
               activeTab === 'url' ? 'border-zinc-950 text-zinc-950 font-extrabold' : 'border-transparent text-zinc-500 hover:text-zinc-900'
             }`}
           >
             <Globe className="w-4 h-4" />
             <span>Live Website URL</span>
-          </button>
+          </motion.button>
 
-          <button
+          <motion.button
             type="button"
+            whileHover={{ y: -1 }}
+            whileTap={{ scale: 0.97 }}
             onClick={() => setActiveTab('local')}
-            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 ${
+            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 font-heading ${
               activeTab === 'local' ? 'border-zinc-950 text-zinc-950 font-extrabold' : 'border-transparent text-zinc-500 hover:text-zinc-900'
             }`}
           >
             <Laptop className="w-4 h-4 text-indigo-600" />
             <span>Localhost & HTML Source</span>
-          </button>
+          </motion.button>
 
-          <button
+          <motion.button
             type="button"
+            whileHover={{ y: -1 }}
+            whileTap={{ scale: 0.97 }}
             onClick={() => setActiveTab('faq')}
-            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 ${
+            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 font-heading ${
               activeTab === 'faq' ? 'border-zinc-950 text-zinc-950 font-extrabold' : 'border-transparent text-zinc-500 hover:text-zinc-900'
             }`}
           >
             <HelpCircle className="w-4 h-4" />
             <span>Q&A FAQ Builder</span>
-          </button>
+          </motion.button>
 
-          <button
+          <motion.button
             type="button"
+            whileHover={{ y: -1 }}
+            whileTap={{ scale: 0.97 }}
             onClick={() => setActiveTab('text')}
-            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 ${
+            className={`pb-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer shrink-0 font-heading ${
               activeTab === 'text' ? 'border-zinc-950 text-zinc-950 font-extrabold' : 'border-transparent text-zinc-500 hover:text-zinc-900'
             }`}
           >
             <FileText className="w-4 h-4" />
             <span>Raw Text & Documentation</span>
-          </button>
+          </motion.button>
         </div>
 
         {statusMessage && (
@@ -261,7 +298,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
             ) : (
               <Sparkles className="w-4 h-4 text-red-600 shrink-0" />
             )}
-            <span>{statusMessage.text}</span>
+            <span className="font-body">{statusMessage.text}</span>
           </div>
         )}
 
@@ -269,7 +306,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         {activeTab === 'url' && (
           <form onSubmit={handleScrape} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-zinc-800 mb-1.5">Live Website URL</label>
+              <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Live Website URL</label>
               <div className="flex flex-col sm:flex-row gap-2">
                 <div className="relative flex-1">
                   <Link2 className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -278,20 +315,23 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                     value={inputUrl}
                     onChange={e => setInputUrl(e.target.value)}
                     placeholder="https://example.com or https://company.com/services"
-                    className="w-full pl-9 pr-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium"
+                    className="w-full pl-9 pr-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium font-body"
                     required
                   />
                 </div>
-                <button
+                <MotionButton
                   type="submit"
+                  variant="primary"
+                  size="md"
+                  shimmer
                   disabled={isLoading || !inputUrl.trim()}
-                  className="bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-bold px-6 py-2.5 rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer active:scale-95 shrink-0"
+                  leftIcon={isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
+                  className="shrink-0"
                 >
-                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
-                  <span>{isLoading ? 'Crawling Page...' : 'Scrape & Ingest'}</span>
-                </button>
+                  {isLoading ? 'Crawling Page...' : 'Scrape & Ingest'}
+                </MotionButton>
               </div>
-              <p className="text-[11px] text-zinc-500 mt-2 font-medium">
+              <p className="text-[11px] text-zinc-500 mt-2 font-medium font-body">
                 Fetches live HTML, converts content into structured Markdown with headings and lists, and generates overlapping RAG chunks for accurate answering.
               </p>
             </div>
@@ -301,19 +341,19 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         {/* Tab 2: Localhost & HTML Source */}
         {activeTab === 'local' && (
           <form onSubmit={handleIngestRawHtml} className="space-y-4">
-            <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 text-indigo-950 text-xs space-y-1.5">
-              <div className="font-bold flex items-center gap-2 text-indigo-900">
+            <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 text-indigo-950 text-xs space-y-1.5 font-body">
+              <div className="font-bold flex items-center gap-2 text-indigo-900 font-heading">
                 <Laptop className="w-4 h-4 text-indigo-600" />
                 <span>Local Website (localhost:3000 / localhost:5173) & HTML Ingestion</span>
               </div>
-              <p className="text-indigo-800/90 text-[11px] leading-relaxed">
+              <p className="text-indigo-800/90 text-[11px] leading-relaxed font-body">
                 Because cloud sandboxes cannot directly connect to your personal computer's loopback network, you can paste the HTML source code from your local development browser (<strong>Right Click &rarr; View Page Source / Inspect</strong>) or enter page content below to index your local project instantly.
               </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-zinc-800 mb-1.5">Local Source URL / Identifier</label>
+                <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Local Source URL / Identifier</label>
                 <input
                   type="text"
                   value={localUrl}
@@ -323,19 +363,19 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-zinc-800 mb-1.5">Custom Title (Optional)</label>
+                <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Custom Title (Optional)</label>
                 <input
                   type="text"
                   value={htmlDocTitle}
                   onChange={e => setHtmlDocTitle(e.target.value)}
                   placeholder="e.g., Localhost Product Catalog & Services"
-                  className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium"
+                  className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium font-body"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-zinc-800 mb-1.5">Page HTML / Body Source Markup</label>
+              <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Page HTML / Body Source Markup</label>
               <textarea
                 value={rawHtmlContent}
                 onChange={e => setRawHtmlContent(e.target.value)}
@@ -346,14 +386,16 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
               />
             </div>
 
-            <button
+            <MotionButton
               type="submit"
+              variant="dark"
+              size="md"
+              shimmer
               disabled={isLoading || !rawHtmlContent.trim()}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-6 py-2.5 rounded-xl shadow-md transition flex items-center gap-2 disabled:opacity-50 cursor-pointer active:scale-95"
+              leftIcon={isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Code className="w-4 h-4" />}
             >
-              {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Code className="w-4 h-4" />}
-              <span>Index Local Website HTML</span>
-            </button>
+              Index Local Website HTML
+            </MotionButton>
           </form>
         )}
 
@@ -361,35 +403,37 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         {activeTab === 'faq' && (
           <form onSubmit={handleAddFaq} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-zinc-800 mb-1.5">Frequently Asked Question</label>
+              <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Frequently Asked Question</label>
               <input
                 type="text"
                 value={faqQuestion}
                 onChange={e => setFaqQuestion(e.target.value)}
                 placeholder="e.g., Do you offer Shopify development?"
-                className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium"
+                className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium font-body"
                 required
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-zinc-800 mb-1.5">Accurate Answer</label>
+              <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Accurate Answer</label>
               <textarea
                 value={faqAnswer}
                 onChange={e => setFaqAnswer(e.target.value)}
                 rows={3}
                 placeholder="We provide custom Shopify development, Shopify Plus development, Liquid development, and conversion optimization."
-                className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium"
+                className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium font-body"
                 required
               />
             </div>
-            <button
+            <MotionButton
               type="submit"
+              variant="primary"
+              size="md"
+              shimmer
               disabled={isLoading || !faqQuestion.trim() || !faqAnswer.trim()}
-              className="bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-bold px-6 py-2.5 rounded-xl shadow-md transition flex items-center gap-2 disabled:opacity-50 cursor-pointer active:scale-95"
+              leftIcon={<Plus className="w-4 h-4" />}
             >
-              <Plus className="w-4 h-4" />
-              <span>Add FAQ Pair</span>
-            </button>
+              Add FAQ Pair
+            </MotionButton>
           </form>
         )}
 
@@ -397,18 +441,18 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         {activeTab === 'text' && (
           <form onSubmit={handleAddDoc} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-zinc-800 mb-1.5">Document Title</label>
+              <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Document Title</label>
               <input
                 type="text"
                 value={docTitle}
                 onChange={e => setDocTitle(e.target.value)}
                 placeholder="e.g., Services & Capabilities Overview"
-                className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium"
+                className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium font-body"
                 required
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-zinc-800 mb-1.5">Raw Text / Markdown Content</label>
+              <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Raw Text / Markdown Content</label>
               <textarea
                 value={docContent}
                 onChange={e => setDocContent(e.target.value)}
@@ -418,14 +462,16 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 required
               />
             </div>
-            <button
+            <MotionButton
               type="submit"
+              variant="primary"
+              size="md"
+              shimmer
               disabled={isLoading || !docTitle.trim() || !docContent.trim()}
-              className="bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-bold px-6 py-2.5 rounded-xl shadow-md transition flex items-center gap-2 disabled:opacity-50 cursor-pointer active:scale-95"
+              leftIcon={<Plus className="w-4 h-4" />}
             >
-              <Plus className="w-4 h-4" />
-              <span>Index Document</span>
-            </button>
+              Index Document
+            </MotionButton>
           </form>
         )}
       </div>
@@ -434,16 +480,16 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
       <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-sm font-extrabold text-zinc-900">Indexed Knowledge Context ({currentBotSources.length})</h3>
-            <p className="text-xs text-zinc-500 font-medium">Grounding context used to synthesize answers and generate citation references</p>
+            <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Indexed Knowledge Context ({currentBotSources.length})</h3>
+            <p className="text-xs text-zinc-500 font-medium font-body">Grounding context used to synthesize answers and generate citation references</p>
           </div>
         </div>
 
         {currentBotSources.length === 0 ? (
           <div className="text-center py-10 border-2 border-dashed border-zinc-200 rounded-2xl space-y-2">
             <Globe className="w-8 h-8 text-zinc-300 mx-auto" />
-            <p className="text-xs font-bold text-zinc-700">No knowledge sources trained yet</p>
-            <p className="text-[11px] text-zinc-400">Scrape a website URL, paste HTML source, or add FAQ pairs above to teach this AI bot your product details.</p>
+            <p className="text-xs font-bold text-zinc-700 font-heading">No knowledge sources trained yet</p>
+            <p className="text-[11px] text-zinc-400 font-body">Scrape a website URL, paste HTML source, or add FAQ pairs above to teach this AI bot your product details.</p>
           </div>
         ) : (
           <div className="divide-y divide-zinc-100">
@@ -461,8 +507,8 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                   </div>
                   <div className="min-w-0 space-y-1">
                     <div className="flex items-center gap-2">
-                      <h4 className="text-xs font-extrabold text-zinc-900 truncate">{source.title}</h4>
-                      <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase">
+                      <h4 className="text-xs font-extrabold text-zinc-900 truncate font-heading">{source.title}</h4>
+                      <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase font-mono">
                         {source.status}
                       </span>
                     </div>
@@ -472,18 +518,18 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                         href={source.sourceUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-[11px] text-indigo-600 hover:underline flex items-center gap-1 truncate"
+                        className="text-[11px] text-indigo-600 hover:underline flex items-center gap-1 truncate font-mono"
                       >
                         <span className="truncate">{source.sourceUrl}</span>
                         <ExternalLink className="w-3 h-3 shrink-0" />
                       </a>
                     )}
 
-                    <p className="text-[11px] text-zinc-500 line-clamp-2 max-w-2xl font-normal leading-relaxed">
+                    <p className="text-[11px] text-zinc-500 line-clamp-2 max-w-2xl font-normal leading-relaxed font-body">
                       {source.content}
                     </p>
 
-                    <div className="flex items-center gap-2 text-[10px] text-zinc-400 font-medium">
+                    <div className="flex items-center gap-2 text-[10px] text-zinc-400 font-medium font-body">
                       <span className="font-semibold text-zinc-600">{source.chunkCount || 1} RAG Chunks</span>
                       <span>•</span>
                       <span>Updated {new Date(source.updatedAt).toLocaleDateString()}</span>
@@ -491,13 +537,15 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                   </div>
                 </div>
 
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.15 }}
+                  whileTap={{ scale: 0.9 }}
                   onClick={() => onDeleteSource(source.id)}
                   className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition cursor-pointer shrink-0"
                   title="Remove Source"
                 >
                   <Trash2 className="w-4 h-4" />
-                </button>
+                </motion.button>
               </div>
             ))}
           </div>

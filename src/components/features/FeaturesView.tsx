@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { Bot, BookOpen, Code, Inbox, Sparkles, BarChart3, Users, Zap, ShieldCheck, ArrowRight, CheckCircle2, Globe, FileText, Cpu, MessageSquare } from 'lucide-react';
+import { MotionButton } from '../common/MotionButton';
 
 interface FeaturesViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -127,24 +129,25 @@ export const FeaturesView: React.FC<FeaturesViewProps> = ({ onNavigateToTab }) =
         </p>
 
         {/* Filter Buttons */}
-        <div className="flex justify-center gap-2 pt-4">
+        <div className="flex flex-wrap justify-center gap-2 pt-4">
           {[
             { id: 'all', label: 'All Capabilities' },
             { id: 'ai', label: 'AI & Knowledge RAG' },
             { id: 'inbox', label: 'Live Inbox & Leads' },
             { id: 'embed', label: 'Embed & Customization' },
           ].map(cat => (
-            <button
+            <motion.button
               key={cat.id}
+              whileTap={{ scale: 0.95 }}
               onClick={() => setActiveCategory(cat.id as any)}
-              className={`px-4 py-2 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer active:scale-95 ${
+              className={`px-4 py-2 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer font-heading ${
                 activeCategory === cat.id
-                  ? 'bg-black text-white shadow-md'
-                  : 'bg-white text-zinc-700 hover:bg-zinc-100 border border-zinc-200'
+                  ? 'bg-zinc-950 text-white shadow-md'
+                  : 'bg-white text-zinc-700 hover:bg-zinc-100/80 border border-zinc-200'
               }`}
             >
               {cat.label}
-            </button>
+            </motion.button>
           ))}
         </div>
       </div>
@@ -154,27 +157,29 @@ export const FeaturesView: React.FC<FeaturesViewProps> = ({ onNavigateToTab }) =
         {filteredFeatures.map(feature => {
           const Icon = feature.icon;
           return (
-            <div
+            <motion.div
               key={feature.id}
-              className="bg-white border border-zinc-200 rounded-3xl p-6 flex flex-col justify-between hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group"
+              whileHover={{ y: -4 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white border border-zinc-200/90 rounded-3xl p-6 flex flex-col justify-between hover:shadow-xl hover:border-zinc-300 transition-all duration-300 group"
             >
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <div className="w-10 h-10 rounded-2xl bg-black text-white flex items-center justify-center group-hover:scale-110 transition-transform duration-200 shadow-xs">
+                  <div className="w-10 h-10 rounded-2xl bg-zinc-950 text-white flex items-center justify-center group-hover:scale-110 transition-transform duration-200 shadow-xs">
                     <Icon className="w-5 h-5 text-white" />
                   </div>
-                  <span className="text-[10px] font-extrabold tracking-wider text-black bg-zinc-100 px-2.5 py-0.5 rounded-full border border-zinc-200 uppercase">
+                  <span className="text-[10px] font-extrabold font-mono tracking-wider text-zinc-950 bg-zinc-100 px-2.5 py-0.5 rounded-full border border-zinc-200 uppercase">
                     {feature.badge}
                   </span>
                 </div>
 
-                <h3 className="text-base font-extrabold text-black mb-1.5">{feature.title}</h3>
-                <p className="text-xs text-zinc-500 font-medium mb-4 leading-relaxed">{feature.description}</p>
+                <h3 className="text-base font-extrabold text-zinc-950 mb-1.5 font-heading">{feature.title}</h3>
+                <p className="text-xs text-zinc-500 font-medium mb-4 leading-relaxed font-body">{feature.description}</p>
 
-                <div className="space-y-2 mb-6 pt-3 border-t border-zinc-100">
+                <div className="space-y-2 mb-6 pt-3 border-t border-zinc-100 font-body">
                   {feature.details.map((detail, idx) => (
                     <div key={idx} className="flex items-start gap-2 text-xs text-zinc-800 font-medium">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-black shrink-0 mt-0.5" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-zinc-950 shrink-0 mt-0.5" />
                       <span>{detail}</span>
                     </div>
                   ))}
@@ -182,15 +187,17 @@ export const FeaturesView: React.FC<FeaturesViewProps> = ({ onNavigateToTab }) =
               </div>
 
               {onNavigateToTab && (
-                <button
+                <MotionButton
+                  variant="secondary"
+                  size="md"
+                  fullWidth
                   onClick={() => onNavigateToTab(feature.actionTab)}
-                  className="w-full py-2.5 px-3 bg-zinc-100 hover:bg-black hover:text-white text-black text-xs font-bold rounded-xl border border-zinc-200 transition-all duration-200 flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                  rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
                 >
-                  <span>{feature.actionText}</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
+                  {feature.actionText}
+                </MotionButton>
               )}
-            </div>
+            </motion.div>
           );
         })}
       </div>

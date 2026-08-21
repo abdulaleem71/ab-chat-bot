@@ -24,6 +24,19 @@ import { KnowledgeService } from './src/services/knowledgeService';
 import { ChatService } from './src/services/chatService';
 import { SecurityService } from './src/services/securityService';
 import { Chatbot } from './src/types';
+import { AdminAuthService } from './src/admin/services/adminAuthService';
+import { AdminAuditRepo } from './src/admin/repositories/adminAuditRepo';
+import { AdminOverviewRepo } from './src/admin/repositories/adminOverviewRepo';
+import { AdminUserRepo } from './src/admin/repositories/adminUserRepo';
+import { AdminChatbotRepo } from './src/admin/repositories/adminChatbotRepo';
+import { AdminDomainRepo } from './src/admin/repositories/adminDomainRepo';
+import { AdminConversationRepo } from './src/admin/repositories/adminConversationRepo';
+import { AdminAnalyticsRepo } from './src/admin/repositories/adminAnalyticsRepo';
+import { AdminFunnelRepo } from './src/admin/repositories/adminFunnelRepo';
+import { AdminIntelligenceRepo } from './src/admin/repositories/adminIntelligenceRepo';
+import { AdminAlertsRepo } from './src/admin/repositories/adminAlertsRepo';
+import { AdminUser } from './src/admin/types';
+import { OAuthService } from './src/services/oauthService';
 
 const _filename = typeof __filename !== 'undefined' ? __filename : (import.meta?.url ? fileURLToPath(import.meta.url) : '');
 const _dirname = typeof __dirname !== 'undefined' ? __dirname : (_filename ? path.dirname(_filename) : process.cwd());
@@ -49,8 +62,13 @@ try {
   console.warn('⚠️ Configuration Warning:', configErr.message);
 }
 
-ensureDbInitialized().then(() => {
+ensureDbInitialized().then(async () => {
   console.log('✅ Persistent database schema initialized successfully.');
+  try {
+    await AdminAuthService.ensureAdminAccountsExist();
+  } catch (adminInitErr: any) {
+    console.warn('⚠️ Admin accounts provisioning notice:', adminInitErr.message || adminInitErr);
+  }
 }).catch(err => {
   console.error('❌ Failed to initialize database on startup:', err.message);
 });
@@ -186,6 +204,43 @@ function requireAuth(req: AuthenticatedRequest, res: express.Response, next: exp
   } catch {
     return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired token' });
   }
+}
+
+// Dedicated Admin Server-Side Authentication Middleware
+export interface AdminAuthenticatedRequest extends express.Request {
+  admin?: AdminUser;
+}
+
+export function requireAdminAuth(req: AdminAuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, error: 'Administrator clearance required: Missing bearer token' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  const verifiedAdmin = AdminAuthService.verifyAdminToken(token, JWT_SECRET);
+
+  if (!verifiedAdmin) {
+    // Log unauthorized access attempt
+    AdminAuditRepo.logAction({
+      adminId: 'unknown',
+      adminEmail: 'unknown',
+      action: 'ADMIN_ENDPOINT_ACCESS_DENIED',
+      targetResource: req.originalUrl || req.path,
+      ipAddress: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || ''),
+      userAgent: String(req.headers['user-agent'] || ''),
+      status: 'denied',
+      detailsJson: JSON.stringify({ path: req.path, method: req.method }),
+    }).catch(() => {});
+
+    return res.status(403).json({
+      success: false,
+      error: 'Forbidden: Access restricted to authorized administrator accounts only.',
+    });
+  }
+
+  req.admin = verifiedAdmin;
+  next();
 }
 
 // ==========================================
@@ -342,54 +397,259 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
   });
 }));
 
+// ==========================================
+// OAUTH STATUS & CONFIGURATION DIAGNOSTICS
+// ==========================================
+app.get('/api/auth/oauth/status', (req, res) => {
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
+  const origin = `${protocol}://${host}`;
+
+  res.json({
+    success: true,
+    providers: {
+      google: {
+        configured: OAuthService.isGoogleConfigured(),
+        clientIdConfigured: Boolean(process.env.GOOGLE_CLIENT_ID?.trim()),
+        clientSecretConfigured: Boolean(process.env.GOOGLE_CLIENT_SECRET?.trim()),
+        callbackUrl: `${origin}/api/auth/google/callback`,
+        authorizedRedirectUriHelp: `${origin}/api/auth/google/callback`,
+      },
+      github: {
+        configured: OAuthService.isGitHubConfigured(),
+        clientIdConfigured: Boolean(process.env.GITHUB_CLIENT_ID?.trim()),
+        clientSecretConfigured: Boolean(process.env.GITHUB_CLIENT_SECRET?.trim()),
+        callbackUrl: `${origin}/api/auth/github/callback`,
+        authorizedRedirectUriHelp: `${origin}/api/auth/github/callback`,
+      },
+    },
+  });
+});
+
+// ==========================================
+// GOOGLE OAUTH FLOW
+// ==========================================
+app.get('/api/auth/google/url', (req, res) => {
+  try {
+    if (!OAuthService.isGoogleConfigured()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Google OAuth is not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in environment variables.',
+        configured: false,
+      });
+    }
+
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
+    const defaultRedirectUri = `${protocol}://${host}/api/auth/google/callback`;
+    const requestedRedirectUri = (req.query.redirect_uri as string) || defaultRedirectUri;
+
+    const { url, state } = OAuthService.getGoogleAuthUrl(requestedRedirectUri);
+    res.json({ success: true, url, state, redirectUri: requestedRedirectUri, configured: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Failed to generate Google auth URL' });
+  }
+});
+
+const handleGoogleCallback = async (req: express.Request, res: express.Response) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  try {
+    // 1. Check for provider-level errors (e.g. user cancelled)
+    if (req.query.error) {
+      const errorMsg = req.query.error === 'access_denied'
+        ? 'Google sign-in was cancelled.'
+        : `Google OAuth Error: ${req.query.error_description || req.query.error}`;
+      return res.send(OAuthService.renderCallbackHtml({ success: false, provider: 'google', error: errorMsg }));
+    }
+
+    const code = req.query.code as string;
+    const state = req.query.state as string;
+
+    if (!code || !state) {
+      return res.status(400).send(OAuthService.renderCallbackHtml({
+        success: false,
+        provider: 'google',
+        error: 'Missing required authorization code or state parameter.',
+      }));
+    }
+
+    // 2. Verify state token
+    const statePayload = OAuthService.verifyState(state, 'google');
+    if (!statePayload) {
+      return res.status(400).send(OAuthService.renderCallbackHtml({
+        success: false,
+        provider: 'google',
+        error: 'OAuth state token has expired or is invalid. Please try signing in again.',
+      }));
+    }
+
+    // 3. Exchange code for access token
+    const accessToken = await OAuthService.exchangeGoogleCode(code, statePayload.redirectUri);
+
+    // 4. Fetch Google user profile
+    const googleUser = await OAuthService.fetchGoogleUserInfo(accessToken);
+
+    // 5. Account resolution, tenant creation & JWT generation
+    const { user, tenant, token } = await OAuthService.processOAuthLogin({
+      provider: 'google',
+      providerUserId: googleUser.id,
+      email: googleUser.email,
+      name: googleUser.name,
+      avatarUrl: googleUser.picture,
+    });
+
+    return res.send(OAuthService.renderCallbackHtml({
+      success: true,
+      provider: 'google',
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        tenantId: user.tenant_id,
+        role: user.role,
+        avatarUrl: googleUser.picture,
+      },
+      tenant: {
+        id: tenant.id,
+        name: tenant.name,
+        ownerEmail: tenant.owner_email,
+        plan: tenant.plan,
+        createdAt: tenant.created_at,
+      },
+    }));
+  } catch (err: any) {
+    console.error('[Google OAuth Callback Error]:', err.message || err);
+    return res.status(500).send(OAuthService.renderCallbackHtml({
+      success: false,
+      provider: 'google',
+      error: err.message || 'An unexpected error occurred during Google authentication.',
+    }));
+  }
+};
+
+app.get('/api/auth/google/callback', asyncHandler(handleGoogleCallback));
+app.get('/auth/google/callback', asyncHandler(handleGoogleCallback));
+
+// ==========================================
+// GITHUB OAUTH FLOW
+// ==========================================
+app.get('/api/auth/github/url', (req, res) => {
+  try {
+    if (!OAuthService.isGitHubConfigured()) {
+      return res.status(400).json({
+        success: false,
+        error: 'GitHub OAuth is not configured. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in environment variables.',
+        configured: false,
+      });
+    }
+
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
+    const defaultRedirectUri = `${protocol}://${host}/api/auth/github/callback`;
+    const requestedRedirectUri = (req.query.redirect_uri as string) || defaultRedirectUri;
+
+    const { url, state } = OAuthService.getGithubAuthUrl(requestedRedirectUri);
+    res.json({ success: true, url, state, redirectUri: requestedRedirectUri, configured: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Failed to generate GitHub auth URL' });
+  }
+});
+
+const handleGithubCallback = async (req: express.Request, res: express.Response) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  try {
+    // 1. Check for provider-level errors
+    if (req.query.error) {
+      const errorMsg = req.query.error === 'access_denied'
+        ? 'GitHub sign-in was cancelled.'
+        : `GitHub OAuth Error: ${req.query.error_description || req.query.error}`;
+      return res.send(OAuthService.renderCallbackHtml({ success: false, provider: 'github', error: errorMsg }));
+    }
+
+    const code = req.query.code as string;
+    const state = req.query.state as string;
+
+    if (!code || !state) {
+      return res.status(400).send(OAuthService.renderCallbackHtml({
+        success: false,
+        provider: 'github',
+        error: 'Missing required authorization code or state parameter.',
+      }));
+    }
+
+    // 2. Verify state token
+    const statePayload = OAuthService.verifyState(state, 'github');
+    if (!statePayload) {
+      return res.status(400).send(OAuthService.renderCallbackHtml({
+        success: false,
+        provider: 'github',
+        error: 'OAuth state token has expired or is invalid. Please try signing in again.',
+      }));
+    }
+
+    // 3. Exchange code for access token
+    const accessToken = await OAuthService.exchangeGithubCode(code, statePayload.redirectUri);
+
+    // 4. Fetch GitHub user profile and verified email
+    const githubUser = await OAuthService.fetchGithubUserInfo(accessToken);
+
+    // 5. Account resolution, tenant creation & JWT generation
+    const { user, tenant, token } = await OAuthService.processOAuthLogin({
+      provider: 'github',
+      providerUserId: githubUser.id,
+      email: githubUser.email,
+      name: githubUser.name,
+      avatarUrl: githubUser.avatarUrl,
+    });
+
+    return res.send(OAuthService.renderCallbackHtml({
+      success: true,
+      provider: 'github',
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        tenantId: user.tenant_id,
+        role: user.role,
+        avatarUrl: githubUser.avatarUrl,
+      },
+      tenant: {
+        id: tenant.id,
+        name: tenant.name,
+        ownerEmail: tenant.owner_email,
+        plan: tenant.plan,
+        createdAt: tenant.created_at,
+      },
+    }));
+  } catch (err: any) {
+    console.error('[GitHub OAuth Callback Error]:', err.message || err);
+    return res.status(500).send(OAuthService.renderCallbackHtml({
+      success: false,
+      provider: 'github',
+      error: err.message || 'An unexpected error occurred during GitHub authentication.',
+    }));
+  }
+};
+
+app.get('/api/auth/github/callback', asyncHandler(handleGithubCallback));
+app.get('/auth/github/callback', asyncHandler(handleGithubCallback));
+
 app.post('/api/auth/social', authLimiter, asyncHandler(async (req, res) => {
   const { provider, email: inputEmail, name: inputName } = req.body || {};
-  const providerName = provider === 'github' ? 'GitHub' : 'Google';
+  const providerName = provider === 'github' ? 'github' : 'google';
   const email = (inputEmail && typeof inputEmail === 'string' && inputEmail.includes('@'))
     ? inputEmail.trim().toLowerCase()
-    : `${providerName.toLowerCase()}.user@example.com`;
-  const name = inputName || `${providerName} User`;
+    : `${providerName}.user@example.com`;
+  const name = inputName || (providerName === 'github' ? 'GitHub User' : 'Google User');
 
-  let user = await UserRepo.findUserByEmail(email);
-
-  if (!user) {
-    const tenantId = 'tenant_' + Date.now();
-    const userId = 'usr_' + Date.now();
-    const now = new Date().toISOString();
-
-    await UserRepo.createTenant({
-      id: tenantId,
-      name: `${name}'s Workspace`,
-      owner_email: email,
-      plan: 'Pro',
-      created_at: now,
-    });
-
-    const passwordHash = await bcrypt.hash(`social_${Date.now()}`, 10);
-    user = await UserRepo.createUser({
-      id: userId,
-      tenant_id: tenantId,
-      email: email,
-      name: name,
-      password_hash: passwordHash,
-      role: 'Admin',
-      created_at: now,
-    });
-  }
-
-  const tenant = await UserRepo.findTenantById(user.tenant_id) || {
-    id: user.tenant_id,
-    name: `${name}'s Workspace`,
-    owner_email: user.email,
-    plan: 'Pro',
-    created_at: new Date().toISOString(),
-  };
-
-  const token = jwt.sign(
-    { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
-    JWT_SECRET,
-    { expiresIn: '7d' }
-  );
+  const { user, tenant, token } = await OAuthService.processOAuthLogin({
+    provider: providerName,
+    providerUserId: `mock_${Date.now()}`,
+    email,
+    name,
+  });
 
   res.json({
     success: true,
@@ -474,6 +734,895 @@ app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedReque
       createdAt: tenantRow.created_at,
     } : null,
   });
+}));
+
+// ==========================================
+// ADMIN AUTHENTICATION & SECURITY ENDPOINTS
+// ==========================================
+app.post('/api/admin/auth/login', authLimiter, asyncHandler(async (req, res) => {
+  const { email, password } = req.body || {};
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminAuthService.authenticateAdmin(email, password, JWT_SECRET, { ip, userAgent });
+  if (!result.success) {
+    return res.status(401).json(result);
+  }
+
+  res.json(result);
+}));
+
+app.get('/api/admin/auth/me', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  res.json({
+    success: true,
+    admin: req.admin,
+    authorizedWhitelist: AdminAuthService.getAuthorizedAdminEmails(),
+    serverTime: new Date().toISOString(),
+  });
+}));
+
+app.post('/api/admin/auth/logout', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  await AdminAuditRepo.logAction({
+    adminId: req.admin!.id,
+    adminEmail: req.admin!.email,
+    action: 'ADMIN_LOGOUT',
+    status: 'success',
+    ipAddress: ip,
+    userAgent,
+  });
+
+  res.json({ success: true, message: 'Admin session terminated successfully.' });
+}));
+
+app.get('/api/admin/audit-logs', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 100);
+  const offset = Number(req.query.offset) || 0;
+  const action = req.query.action ? String(req.query.action) : undefined;
+  const search = req.query.search ? String(req.query.search) : undefined;
+  const adminEmail = req.query.adminEmail ? String(req.query.adminEmail) : undefined;
+  const targetResource = req.query.targetResource ? String(req.query.targetResource) : undefined;
+  const status = req.query.status ? String(req.query.status) : undefined;
+
+  const result = await AdminAuditRepo.getRecentLogs({
+    limit,
+    offset,
+    action,
+    search,
+    adminEmail,
+    targetResource,
+    status,
+  });
+  res.json({ success: true, ...result, limit, offset });
+}));
+
+app.get('/api/admin/audit-logs/export', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { action, adminEmail, targetResource, status, format = 'csv' } = req.query as Record<string, string>;
+
+  const result = await AdminAuditRepo.getRecentLogs({
+    limit: 1000,
+    offset: 0,
+    action,
+    adminEmail,
+    targetResource,
+    status,
+  });
+
+  if (format === 'csv') {
+    const headers = ['Timestamp', 'Admin Email', 'Action', 'Target Resource', 'Target ID', 'Status', 'IP Address', 'User Agent', 'Details JSON'];
+    const rows = result.logs.map((l) => [
+      `"${l.createdAt}"`,
+      `"${l.adminEmail}"`,
+      `"${l.action}"`,
+      `"${l.targetResource || ''}"`,
+      `"${l.targetId || ''}"`,
+      `"${l.status}"`,
+      `"${l.ipAddress || ''}"`,
+      `"${(l.userAgent || '').replace(/"/g, '""')}"`,
+      `"${(l.detailsJson || '').replace(/"/g, '""')}"`,
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="admin-audit-logs-${Date.now()}.csv"`);
+    return res.send(csvContent);
+  }
+
+  res.json({
+    success: true,
+    exportedAt: new Date().toISOString(),
+    logs: result.logs,
+  });
+}));
+
+app.get('/api/admin/overview', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const metrics = await AdminOverviewRepo.getOverviewMetrics();
+  res.json({
+    success: true,
+    data: metrics,
+    timestamp: new Date().toISOString(),
+  });
+}));
+
+// ==========================================
+// ADMIN USER MANAGEMENT ENDPOINTS
+// ==========================================
+app.get('/api/admin/users', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 100);
+  const offset = Number(req.query.offset) || 0;
+  const search = req.query.search ? String(req.query.search) : undefined;
+  const role = req.query.role ? String(req.query.role) : undefined;
+  const plan = req.query.plan ? String(req.query.plan) : undefined;
+  const sortBy = (req.query.sortBy as any) || 'created_at';
+  const sortOrder = req.query.sortOrder === 'ASC' ? 'ASC' : 'DESC';
+
+  const result = await AdminUserRepo.getUsersList({
+    search,
+    role,
+    plan,
+    limit,
+    offset,
+    sortBy,
+    sortOrder,
+  });
+
+  res.json({
+    success: true,
+    ...result,
+    limit,
+    offset,
+  });
+}));
+
+app.get('/api/admin/users/:userId', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const userId = req.params.userId;
+  const userDetail = await AdminUserRepo.getUserDetail(userId);
+
+  if (!userDetail) {
+    return res.status(404).json({ success: false, error: 'User not found in system directory.' });
+  }
+
+  res.json({
+    success: true,
+    data: userDetail,
+  });
+}));
+
+app.post('/api/admin/users/:userId/update-role', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const userId = req.params.userId;
+  const { newRole } = req.body || {};
+
+  if (!newRole || typeof newRole !== 'string') {
+    return res.status(400).json({ success: false, error: 'Valid role string is required.' });
+  }
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminUserRepo.updateUserRole(userId, newRole.trim().toLowerCase(), {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  res.json({ success: true, message: `User role updated successfully to '${newRole}'.` });
+}));
+
+app.post('/api/admin/users/:userId/update-plan', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const userId = req.params.userId;
+  const { tenantId, newPlan } = req.body || {};
+
+  if (!tenantId || !newPlan) {
+    return res.status(400).json({ success: false, error: 'tenantId and newPlan are required.' });
+  }
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminUserRepo.updateTenantPlan(userId, tenantId, newPlan, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  res.json({ success: true, message: `Tenant workspace plan updated successfully to '${newPlan}'.` });
+}));
+
+app.post('/api/admin/users/:userId/reset-password', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const userId = req.params.userId;
+  const { newPassword } = req.body || {};
+
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+    return res.status(400).json({ success: false, error: 'New password must be at least 6 characters.' });
+  }
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminUserRepo.resetUserPassword(userId, newPassword, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  res.json({ success: true, message: 'User password reset and hash updated securely.' });
+}));
+
+// ==========================================
+// ADMIN CHATBOTS MANAGEMENT ENDPOINTS
+// ==========================================
+app.get('/api/admin/chatbots', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 100);
+  const offset = Number(req.query.offset) || 0;
+  const search = req.query.search ? String(req.query.search) : undefined;
+  const status = req.query.status ? String(req.query.status) : undefined;
+  const model = req.query.model ? String(req.query.model) : undefined;
+  const domainLock = (req.query.domainLock as any) || 'all';
+  const tenantId = req.query.tenantId ? String(req.query.tenantId) : undefined;
+  const sortBy = (req.query.sortBy as any) || 'created_at';
+  const sortOrder = req.query.sortOrder === 'ASC' ? 'ASC' : 'DESC';
+
+  const result = await AdminChatbotRepo.getChatbotsList({
+    search,
+    status,
+    model,
+    domainLock,
+    tenantId,
+    limit,
+    offset,
+    sortBy,
+    sortOrder,
+  });
+
+  res.json({
+    success: true,
+    ...result,
+    limit,
+    offset,
+  });
+}));
+
+app.get('/api/admin/chatbots/:id', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const botId = req.params.id;
+  const botDetail = await AdminChatbotRepo.getChatbotDetail(botId);
+
+  if (!botDetail) {
+    return res.status(404).json({ success: false, error: 'Chatbot not found in system directory.' });
+  }
+
+  res.json({
+    success: true,
+    data: botDetail,
+  });
+}));
+
+app.post('/api/admin/chatbots/:id/status', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const botId = req.params.id;
+  const { status } = req.body || {};
+
+  if (!status || !['active', 'inactive', 'archived'].includes(status)) {
+    return res.status(400).json({ success: false, error: 'Valid status is required (active, inactive, archived).' });
+  }
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminChatbotRepo.updateStatus(botId, status, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  res.json(result);
+}));
+
+app.post('/api/admin/chatbots/:id/domain-lock', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const botId = req.params.id;
+  const { domainLockEnabled, allowedDomains, websiteUrl } = req.body || {};
+
+  if (typeof domainLockEnabled !== 'boolean') {
+    return res.status(400).json({ success: false, error: 'domainLockEnabled boolean is required.' });
+  }
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminChatbotRepo.updateDomainLockSettings(
+    botId,
+    {
+      domainLockEnabled,
+      allowedDomains: Array.isArray(allowedDomains) ? allowedDomains : [],
+      websiteUrl,
+    },
+    {
+      id: req.admin!.id,
+      email: req.admin!.email,
+      ip,
+      userAgent,
+    }
+  );
+
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  res.json(result);
+}));
+
+app.post('/api/admin/chatbots/:id/regenerate-key', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const botId = req.params.id;
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminChatbotRepo.regenerateEmbedSecretKey(botId, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  res.json(result);
+}));
+
+app.post('/api/admin/chatbots/:id/config', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const botId = req.params.id;
+  const updates = req.body || {};
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminChatbotRepo.updateChatbotConfig(botId, updates, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  res.json(result);
+}));
+
+// ==========================================
+// ADMIN WEBSITES & DOMAIN VERIFICATION CENTER ENDPOINTS
+// ==========================================
+app.get('/api/admin/domains', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 100);
+  const offset = Number(req.query.offset) || 0;
+  const search = req.query.search ? String(req.query.search) : undefined;
+  const verificationStatus = req.query.verificationStatus ? String(req.query.verificationStatus) : undefined;
+  const sslStatus = req.query.sslStatus ? String(req.query.sslStatus) : undefined;
+  const tenantId = req.query.tenantId ? String(req.query.tenantId) : undefined;
+  const sortBy = (req.query.sortBy as any) || 'last_checked_at';
+  const sortOrder = req.query.sortOrder === 'ASC' ? 'ASC' : 'DESC';
+
+  const result = await AdminDomainRepo.getDomainsList({
+    search,
+    verificationStatus,
+    sslStatus,
+    tenantId,
+    sortBy,
+    sortOrder,
+    limit,
+    offset,
+  });
+
+  res.json({
+    success: true,
+    ...result,
+    limit,
+    offset,
+  });
+}));
+
+app.get('/api/admin/domains/:domain', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const domain = req.params.domain;
+  const domainDetail = await AdminDomainRepo.getDomainDetail(domain);
+
+  if (!domainDetail) {
+    return res.status(404).json({ success: false, error: `Domain '${domain}' not found in verification registry.` });
+  }
+
+  res.json({
+    success: true,
+    data: domainDetail,
+  });
+}));
+
+app.post('/api/admin/domains/verify', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { domain } = req.body || {};
+  if (!domain || typeof domain !== 'string') {
+    return res.status(400).json({ success: false, error: 'Domain name is required for verification.' });
+  }
+
+  const diagnostics = await AdminDomainRepo.runDomainDiagnostics(domain);
+  res.json({
+    success: true,
+    diagnostics,
+  });
+}));
+
+app.post('/api/admin/domains/:domain/status', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const domain = req.params.domain;
+  const { status, notes } = req.body || {};
+
+  if (!status || !['verified', 'pending', 'whitelisted', 'blocked', 'revoked'].includes(status)) {
+    return res.status(400).json({ success: false, error: "Valid status ('verified', 'pending', 'whitelisted', 'blocked', 'revoked') is required." });
+  }
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminDomainRepo.updateDomainStatus(domain, status, notes, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  res.json(result);
+}));
+
+app.post('/api/admin/domains/:domain/whitelist', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const domain = req.params.domain;
+  const { isWhitelisted } = req.body || {};
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminDomainRepo.toggleWhitelist(domain, isWhitelisted !== false, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  res.json(result);
+}));
+
+app.post('/api/admin/domains/:domain/block', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const domain = req.params.domain;
+  const { isBlocked } = req.body || {};
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminDomainRepo.toggleBlock(domain, isBlocked !== false, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  res.json(result);
+}));
+
+app.post('/api/admin/domains/register', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { domain, tenantId, notes } = req.body || {};
+
+  if (!domain || typeof domain !== 'string') {
+    return res.status(400).json({ success: false, error: 'Domain name is required.' });
+  }
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminDomainRepo.registerDomain(domain, tenantId, notes, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  res.json(result);
+}));
+
+// ==========================================
+// ADMIN CONVERSATIONS & TRANSCRIPT LOGS ENDPOINTS
+// ==========================================
+app.get('/api/admin/conversations', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const {
+    search,
+    status,
+    chatbotId,
+    tenantId,
+    csatRating,
+    hasLeadOnly,
+    sortBy,
+    sortOrder,
+    limit,
+    offset,
+  } = req.query as Record<string, string>;
+
+  const result = await AdminConversationRepo.getConversationsList({
+    search,
+    status,
+    chatbotId,
+    tenantId,
+    csatRating,
+    hasLeadOnly: hasLeadOnly === 'true',
+    sortBy: sortBy as any,
+    sortOrder: (sortOrder?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC') as any,
+    limit: limit ? parseInt(limit, 10) : 50,
+    offset: offset ? parseInt(offset, 10) : 0,
+  });
+
+  res.json({ success: true, ...result });
+}));
+
+app.get('/api/admin/conversations/export', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { tenantId, chatbotId, format = 'json' } = req.query as Record<string, string>;
+
+  const result = await AdminConversationRepo.getConversationsList({
+    tenantId,
+    chatbotId,
+    limit: 1000,
+  });
+
+  if (format === 'csv') {
+    const headers = ['Conversation ID', 'Chatbot', 'Tenant', 'Visitor Name', 'Visitor Email', 'Visitor Location', 'Status', 'Messages', 'CSAT', 'Has Lead', 'Created At'];
+    const rows = result.conversations.map(c => [
+      `"${c.id}"`,
+      `"${c.chatbotName.replace(/"/g, '""')}"`,
+      `"${c.tenantName.replace(/"/g, '""')}"`,
+      `"${(c.visitorName || 'Anonymous').replace(/"/g, '""')}"`,
+      `"${(c.visitorEmail || 'N/A').replace(/"/g, '""')}"`,
+      `"${(c.visitorLocation || 'N/A').replace(/"/g, '""')}"`,
+      `"${c.status}"`,
+      c.messageCount,
+      c.csatRating !== undefined ? c.csatRating : 'N/A',
+      c.hasLead ? 'Yes' : 'No',
+      `"${c.createdAt}"`,
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="conversations-export-${Date.now()}.csv"`);
+    return res.send(csvContent);
+  }
+
+  res.json({
+    success: true,
+    count: result.conversations.length,
+    exportedAt: new Date().toISOString(),
+    conversations: result.conversations,
+  });
+}));
+
+app.get('/api/admin/conversations/:id', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const detail = await AdminConversationRepo.getConversationDetail(req.params.id);
+  if (!detail) {
+    return res.status(404).json({ success: false, error: 'Conversation not found.' });
+  }
+
+  res.json({ success: true, ...detail });
+}));
+
+app.patch('/api/admin/conversations/:id/status', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { status } = req.body || {};
+  if (!status || !['active', 'closed', 'archived', 'flagged'].includes(status)) {
+    return res.status(400).json({ success: false, error: 'Valid status required (active, closed, archived, flagged).' });
+  }
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminConversationRepo.updateStatus(req.params.id, status, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  res.json(result);
+}));
+
+app.delete('/api/admin/conversations/:id', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+
+  const result = await AdminConversationRepo.deleteConversation(req.params.id, {
+    id: req.admin!.id,
+    email: req.admin!.email,
+    ip,
+    userAgent,
+  });
+
+  res.json(result);
+}));
+
+// ==========================================
+// ADMIN PRODUCT ANALYTICS ENDPOINTS
+// ==========================================
+app.get('/api/admin/analytics', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { range = '30d', tenantId, chatbotId } = req.query as Record<string, string>;
+
+  const report = await AdminAnalyticsRepo.getAnalyticsReport({
+    range: range as any,
+    tenantId: tenantId && tenantId !== 'all' ? tenantId : undefined,
+    chatbotId: chatbotId && chatbotId !== 'all' ? chatbotId : undefined,
+  });
+
+  res.json({ success: true, ...report });
+}));
+
+app.get('/api/admin/analytics/export', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { range = '30d', tenantId, chatbotId, format = 'json' } = req.query as Record<string, string>;
+
+  const report = await AdminAnalyticsRepo.getAnalyticsReport({
+    range: range as any,
+    tenantId: tenantId && tenantId !== 'all' ? tenantId : undefined,
+    chatbotId: chatbotId && chatbotId !== 'all' ? chatbotId : undefined,
+  });
+
+  if (format === 'csv') {
+    const headers = ['Date / Interval', 'Conversations', 'Messages', 'User Sent', 'Bot Sent', 'Leads Captured', 'Est Tokens', 'Avg Latency (ms)'];
+    const rows = report.timeSeries.map((t) => [
+      `"${t.date}"`,
+      t.conversations,
+      t.messages,
+      t.userMessages,
+      t.botMessages,
+      t.leads,
+      t.estimatedTokens,
+      t.avgResponseTimeMs,
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="analytics-timeseries-${range}-${Date.now()}.csv"`);
+    return res.send(csvContent);
+  }
+
+  res.json({
+    success: true,
+    exportedAt: new Date().toISOString(),
+    filter: { range, tenantId, chatbotId },
+    report,
+  });
+}));
+
+// ==========================================
+// ADMIN CONVERSION FUNNEL & LEADS ENDPOINTS
+// ==========================================
+app.get('/api/admin/funnel', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { range = '30d', tenantId, chatbotId, minScore } = req.query as Record<string, string>;
+
+  const data = await AdminFunnelRepo.getFunnelAnalytics({
+    range: range as any,
+    tenantId: tenantId && tenantId !== 'all' ? tenantId : undefined,
+    chatbotId: chatbotId && chatbotId !== 'all' ? chatbotId : undefined,
+    minScore: minScore ? Number(minScore) : undefined,
+  });
+
+  res.json({ success: true, ...data });
+}));
+
+app.get('/api/admin/funnel/leads/:id', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const leadData = await AdminFunnelRepo.getLeadById(req.params.id);
+  if (!leadData) {
+    return res.status(404).json({ error: 'Lead not found' });
+  }
+
+  res.json({ success: true, ...leadData });
+}));
+
+app.get('/api/admin/funnel/export', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { range = '30d', tenantId, chatbotId, format = 'csv' } = req.query as Record<string, string>;
+
+  const data = await AdminFunnelRepo.getFunnelAnalytics({
+    range: range as any,
+    tenantId: tenantId && tenantId !== 'all' ? tenantId : undefined,
+    chatbotId: chatbotId && chatbotId !== 'all' ? chatbotId : undefined,
+  });
+
+  if (format === 'csv') {
+    const headers = ['Lead ID', 'Name', 'Email', 'Company', 'Phone', 'Intent Score', 'Tier', 'Workspace', 'Chatbot', 'Captured Date', 'First Inquiry', 'Key Signals'];
+    const rows = data.topLeads.map((l) => [
+      `"${l.id}"`,
+      `"${l.name.replace(/"/g, '""')}"`,
+      `"${l.email}"`,
+      `"${(l.company || '').replace(/"/g, '""')}"`,
+      `"${l.phone || ''}"`,
+      l.score,
+      `"${l.tier}"`,
+      `"${l.tenantName.replace(/"/g, '""')}"`,
+      `"${l.chatbotName.replace(/"/g, '""')}"`,
+      `"${l.capturedAt}"`,
+      `"${(l.firstQuestion || '').replace(/"/g, '""')}"`,
+      `"${l.highIntentKeywords.join('; ')}"`,
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="leads-intelligence-${range}-${Date.now()}.csv"`);
+    return res.send(csvContent);
+  }
+
+  res.json({
+    success: true,
+    exportedAt: new Date().toISOString(),
+    filter: { range, tenantId, chatbotId },
+    leads: data.topLeads,
+  });
+}));
+
+// ==========================================
+// ADMIN USER INTELLIGENCE & VISITOR PROFILES
+// ==========================================
+app.get('/api/admin/intelligence', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { range = '30d', tenantId, chatbotId, cohort } = req.query as Record<string, string>;
+
+  const data = await AdminIntelligenceRepo.getIntelligenceData({
+    range: range as any,
+    tenantId: tenantId && tenantId !== 'all' ? tenantId : undefined,
+    chatbotId: chatbotId && chatbotId !== 'all' ? chatbotId : undefined,
+    cohort: cohort && cohort !== 'all' ? cohort : undefined,
+  });
+
+  res.json({ success: true, ...data });
+}));
+
+app.get('/api/admin/intelligence/export', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { range = '30d', tenantId, chatbotId, format = 'csv' } = req.query as Record<string, string>;
+
+  const data = await AdminIntelligenceRepo.getIntelligenceData({
+    range: range as any,
+    tenantId: tenantId && tenantId !== 'all' ? tenantId : undefined,
+    chatbotId: chatbotId && chatbotId !== 'all' ? chatbotId : undefined,
+  });
+
+  if (format === 'csv') {
+    const headers = ['Visitor ID', 'Location', 'Browser/Platform', 'First Seen', 'Last Seen', 'Conversations', 'Messages', 'Engagement Score', 'Cohort', 'Lead Email', 'Primary Bot', 'Workspace'];
+    const rows = data.topVisitors.map((v) => [
+      `"${v.visitorId}"`,
+      `"${v.visitorLocation}"`,
+      `"${v.visitorBrowser}"`,
+      `"${v.firstSeenAt}"`,
+      `"${v.lastSeenAt}"`,
+      v.conversationCount,
+      v.messageCount,
+      v.engagementScore,
+      `"${v.cohort}"`,
+      `"${v.leadEmail || 'N/A'}"`,
+      `"${v.primaryChatbotName}"`,
+      `"${v.primaryTenantName}"`,
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="visitor-intelligence-${range}-${Date.now()}.csv"`);
+    return res.send(csvContent);
+  }
+
+  res.json({
+    success: true,
+    exportedAt: new Date().toISOString(),
+    filter: { range, tenantId, chatbotId },
+    visitors: data.topVisitors,
+  });
+}));
+
+// ==========================================
+// ADMIN SYSTEM ALERTS & HEALTH MONITOR
+// ==========================================
+app.get('/api/admin/alerts', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { status, severity, category, limit, offset } = req.query as Record<string, string>;
+
+  const result = await AdminAlertsRepo.getAlertsList({
+    status,
+    severity,
+    category,
+    limit: limit ? parseInt(limit, 10) : 50,
+    offset: offset ? parseInt(offset, 10) : 0,
+  });
+
+  res.json({ success: true, ...result });
+}));
+
+app.post('/api/admin/alerts/:id/acknowledge', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const alertId = req.params.id;
+  const result = await AdminAlertsRepo.acknowledgeAlert(alertId);
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+  await AdminAuditRepo.logAction({
+    adminId: req.admin!.id,
+    adminEmail: req.admin!.email,
+    action: 'SYSTEM_ALERT_ACKNOWLEDGE',
+    targetResource: 'SYSTEM_ALERT',
+    targetId: alertId,
+    ipAddress: ip,
+    userAgent,
+    status: 'success',
+  });
+
+  res.json(result);
+}));
+
+app.post('/api/admin/alerts/:id/resolve', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const alertId = req.params.id;
+  const result = await AdminAlertsRepo.resolveAlert(alertId, req.admin!.email);
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+  await AdminAuditRepo.logAction({
+    adminId: req.admin!.id,
+    adminEmail: req.admin!.email,
+    action: 'SYSTEM_ALERT_RESOLVE',
+    targetResource: 'SYSTEM_ALERT',
+    targetId: alertId,
+    ipAddress: ip,
+    userAgent,
+    status: 'success',
+  });
+
+  res.json(result);
+}));
+
+app.post('/api/admin/alerts/resolve-all', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const result = await AdminAlertsRepo.resolveAll(req.admin!.email);
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '');
+  const userAgent = String(req.headers['user-agent'] || '');
+  await AdminAuditRepo.logAction({
+    adminId: req.admin!.id,
+    adminEmail: req.admin!.email,
+    action: 'SYSTEM_ALERT_RESOLVE_ALL',
+    targetResource: 'SYSTEM_ALERT',
+    ipAddress: ip,
+    userAgent,
+    status: 'success',
+  });
+
+  res.json(result);
+}));
+
+app.post('/api/admin/alerts/create', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { title, message, severity = 'info', category = 'system', source = 'AdminConsole', metadata } = req.body || {};
+
+  if (!title || !message) {
+    return res.status(400).json({ success: false, error: 'Title and message are required.' });
+  }
+
+  const alert = await AdminAlertsRepo.createAlert({
+    title,
+    message,
+    severity: severity as any,
+    category: category as any,
+    source,
+    metadata,
+  });
+
+  res.json({ success: true, alert });
 }));
 
 // ==========================================

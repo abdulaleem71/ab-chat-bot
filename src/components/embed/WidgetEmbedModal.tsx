@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Chatbot } from '../../types';
-import { Code, Copy, Check, ExternalLink, Globe, Sparkles, Layers, Play, Shield, ShieldCheck, ShieldAlert, Lock, RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
+import { Code, Copy, Check, ExternalLink, Globe, Sparkles, Layers, Play, Shield, ShieldCheck, ShieldAlert, Lock, RefreshCw, CheckCircle2, XCircle, X } from 'lucide-react';
 import { SecurityService } from '../../services/securityService';
+import { MotionButton } from '../common/MotionButton';
 
 interface WidgetEmbedModalProps {
   bot?: Partial<Chatbot> | null;
@@ -140,84 +142,77 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-hidden animate-in fade-in duration-150">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 flex flex-col max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] my-auto relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-hidden">
+      {/* Backdrop */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs"
+      />
+
+      {/* Modal Dialog */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 12 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+        className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 flex flex-col max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] my-auto relative z-10"
+      >
         {/* Header */}
-        <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0">
+        <div className="p-6 border-b border-zinc-200/80 flex items-center justify-between bg-zinc-50/50 shrink-0">
           <div className="flex items-center gap-3">
             <div
               style={{ backgroundColor: safeBotColor }}
-              className="w-10 h-10 rounded-xl text-xl flex items-center justify-center text-white font-bold"
+              className="w-10 h-10 rounded-2xl text-xl flex items-center justify-center text-white font-bold shadow-xs"
             >
               {safeBotAvatar}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-slate-900">Embed & Deploy {safeBotName}</h2>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                <h2 className="text-lg font-extrabold text-zinc-950 font-heading">Embed & Deploy {safeBotName}</h2>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 font-mono">
                   <ShieldCheck className="w-3 h-3 text-emerald-600" />
                   Domain Locked
                 </span>
               </div>
-              <p className="text-xs text-slate-500">Secure embed code tied cryptographically to your authorized website domain</p>
+              <p className="text-xs text-zinc-500 font-medium font-body">Secure embed code tied cryptographically to your authorized website domain</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 cursor-pointer">
-            ✕
-          </button>
+          <motion.button
+            whileHover={{ scale: 1.1, rotate: 90 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={onClose}
+            className="p-2 text-zinc-400 hover:text-zinc-700 rounded-xl hover:bg-zinc-100 cursor-pointer transition"
+          >
+            <X className="w-4 h-4" />
+          </motion.button>
         </div>
 
         {/* Tab Selection */}
-        <div className="flex border-b border-slate-200 bg-white px-6 overflow-x-auto shrink-0">
-          <button
-            onClick={() => setActiveTab('script')}
-            className={`py-3 px-4 text-xs font-semibold border-b-2 transition whitespace-nowrap ${
-              activeTab === 'script' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            HTML & Script Tag
-          </button>
-          <button
-            onClick={() => setActiveTab('security')}
-            className={`py-3 px-4 text-xs font-semibold border-b-2 transition whitespace-nowrap flex items-center gap-1.5 ${
-              activeTab === 'security' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Shield className="w-3.5 h-3.5" />
-            <span>Domain Security & Verification</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('wordpress')}
-            className={`py-3 px-4 text-xs font-semibold border-b-2 transition whitespace-nowrap ${
-              activeTab === 'wordpress' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            WordPress
-          </button>
-          <button
-            onClick={() => setActiveTab('shopify')}
-            className={`py-3 px-4 text-xs font-semibold border-b-2 transition whitespace-nowrap ${
-              activeTab === 'shopify' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Shopify
-          </button>
-          <button
-            onClick={() => setActiveTab('webflow')}
-            className={`py-3 px-4 text-xs font-semibold border-b-2 transition whitespace-nowrap ${
-              activeTab === 'webflow' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Webflow
-          </button>
-          <button
-            onClick={() => setActiveTab('react')}
-            className={`py-3 px-4 text-xs font-semibold border-b-2 transition whitespace-nowrap ${
-              activeTab === 'react' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            React / Next.js
-          </button>
+        <div className="flex border-b border-zinc-200 bg-white px-6 overflow-x-auto shrink-0 scrollbar-none gap-1">
+          {[
+            { id: 'script', label: 'HTML & Script Tag' },
+            { id: 'security', label: 'Domain Security & Verification', icon: <Shield className="w-3.5 h-3.5" /> },
+            { id: 'wordpress', label: 'WordPress' },
+            { id: 'shopify', label: 'Shopify' },
+            { id: 'webflow', label: 'Webflow' },
+            { id: 'react', label: 'React / Next.js' },
+          ].map(t => (
+            <motion.button
+              key={t.id}
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => setActiveTab(t.id as any)}
+              className={`py-3 px-3.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 font-heading ${
+                activeTab === t.id ? 'border-zinc-950 text-zinc-950 font-extrabold' : 'border-transparent text-zinc-500 hover:text-zinc-900'
+              }`}
+            >
+              {t.icon}
+              <span>{t.label}</span>
+            </motion.button>
+          ))}
         </div>
 
         {/* Modal Content Body */}
@@ -226,24 +221,26 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
           <div>
             <div className="flex items-center justify-between mb-2">
               <div>
-                <label className="text-xs font-bold text-slate-800">Secure Embed Code (Locked to Domain)</label>
-                <p className="text-[11px] text-slate-500">Includes HMAC-SHA256 signature verified server-side on every request</p>
+                <label className="text-xs font-bold text-zinc-800 font-heading">Secure Embed Code (Locked to Domain)</label>
+                <p className="text-[11px] text-zinc-500 font-medium font-body">Includes HMAC-SHA256 signature verified server-side on every request</p>
               </div>
-              <button
+              <MotionButton
+                variant={copied ? 'secondary' : 'light'}
+                size="sm"
+                shimmer={!copied}
                 onClick={handleCopy}
-                className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100"
+                leftIcon={copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
               >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copied ? 'Copied to Clipboard!' : 'Copy Code'}</span>
-              </button>
+                {copied ? 'Copied to Clipboard!' : 'Copy Code'}
+              </MotionButton>
             </div>
 
-            <div className="bg-slate-900 text-slate-100 p-4 rounded-2xl font-mono text-xs overflow-x-auto relative border border-slate-800 shadow-inner">
+            <div className="bg-zinc-950 text-zinc-100 p-4 rounded-2xl font-mono text-xs overflow-x-auto relative border border-zinc-800 shadow-inner">
               <code>{scriptSnippet}</code>
             </div>
 
-            <div className="flex items-center justify-between mt-2 text-[11px] text-slate-500 px-1">
-              <span>Authorized Host: <strong className="text-slate-800 font-mono">{currentTargetDomain}</strong></span>
+            <div className="flex items-center justify-between mt-2 text-[11px] text-zinc-500 px-1 font-body">
+              <span>Authorized Host: <strong className="text-zinc-900 font-mono">{currentTargetDomain}</strong></span>
               <span className="text-emerald-700 font-medium flex items-center gap-1">
                 <Lock className="w-3 h-3" /> Server-enforced protection active
               </span>
@@ -251,16 +248,16 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
           </div>
 
           {/* Domain Security Protection Banner */}
-          <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200/80 rounded-2xl p-4 flex items-start gap-3">
+          <div className="bg-gradient-to-r from-indigo-50/80 to-blue-50/80 border border-indigo-200/80 rounded-2xl p-4 flex items-start gap-3">
             <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
               <ShieldCheck className="w-4 h-4" />
             </div>
             <div className="text-xs space-y-1">
-              <h4 className="font-bold text-indigo-950 flex items-center gap-1.5">
+              <h4 className="font-bold text-indigo-950 flex items-center gap-1.5 font-heading">
                 <span>Theft-Proof Server-Side Domain Protection</span>
-                <span className="bg-indigo-200/80 text-indigo-900 text-[10px] px-2 py-0.5 rounded-full font-medium">Active</span>
+                <span className="bg-indigo-200/80 text-indigo-900 text-[10px] px-2 py-0.5 rounded-full font-bold font-mono">Active</span>
               </h4>
-              <p className="text-indigo-900 leading-relaxed text-[11px]">
+              <p className="text-indigo-900 leading-relaxed text-[11px] font-body">
                 If someone copies your embed code and pastes it onto another website, our backend server automatically inspects browser Origin & Referer headers and blocks access with <strong>403 Forbidden</strong>. Your AI credits and knowledge base remain 100% secure.
               </p>
             </div>
@@ -268,16 +265,16 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
 
           {/* Security Diagnostic Tab */}
           {activeTab === 'security' && (
-            <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50 space-y-4">
+            <div className="border border-zinc-200 rounded-2xl p-4 bg-zinc-50 space-y-4">
               <div>
-                <h4 className="text-xs font-bold text-slate-900 mb-1 flex items-center gap-1.5">
+                <h4 className="text-xs font-bold text-zinc-900 mb-1 flex items-center gap-1.5 font-heading">
                   <Globe className="w-3.5 h-3.5 text-indigo-600" />
                   <span>Authorized Domains Whitelist</span>
                 </h4>
-                <p className="text-[11px] text-slate-500 mb-2">The chatbot will only load and respond to visitor inquiries on these domains:</p>
+                <p className="text-[11px] text-zinc-500 mb-2 font-body">The chatbot will only load and respond to visitor inquiries on these domains:</p>
                 <div className="flex flex-wrap gap-2">
                   {effectiveDomains.map(d => (
-                    <span key={d} className="inline-flex items-center gap-1 px-3 py-1 bg-white border border-slate-300 rounded-xl text-xs font-mono font-semibold text-slate-800 shadow-2xs">
+                    <span key={d} className="inline-flex items-center gap-1 px-3 py-1 bg-white border border-zinc-200 rounded-xl text-xs font-mono font-semibold text-zinc-800 shadow-2xs">
                       <Lock className="w-3 h-3 text-indigo-600" />
                       {d}
                     </span>
@@ -286,9 +283,9 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
               </div>
 
               {/* Diagnostic Domain Test */}
-              <div className="pt-3 border-t border-slate-200">
-                <h4 className="text-xs font-bold text-slate-900 mb-1">Live Server Authorization Diagnostic Test</h4>
-                <p className="text-[11px] text-slate-500 mb-2">Test how the server responds when a request arrives from any specific website domain:</p>
+              <div className="pt-3 border-t border-zinc-200">
+                <h4 className="text-xs font-bold text-zinc-900 mb-1 font-heading">Live Server Authorization Diagnostic Test</h4>
+                <p className="text-[11px] text-zinc-500 mb-2 font-body">Test how the server responds when a request arrives from any specific website domain:</p>
 
                 <div className="flex items-center gap-2">
                   <input
@@ -296,18 +293,20 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
                     value={testDomainInput}
                     onChange={e => setTestDomainInput(e.target.value)}
                     placeholder="e.g. mywebsite.com or stolen-site.com"
-                    className="flex-1 px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-indigo-600 focus:outline-hidden font-mono"
+                    className="flex-1 px-3 py-2.5 text-xs border border-zinc-200 rounded-xl bg-white focus:border-zinc-900 focus:outline-hidden font-mono"
                     onKeyDown={e => e.key === 'Enter' && handleTestDomain(testDomainInput)}
                   />
-                  <button
+                  <MotionButton
                     type="button"
+                    variant="dark"
+                    size="sm"
+                    shimmer
                     onClick={() => handleTestDomain(testDomainInput)}
                     disabled={!testDomainInput.trim() || isTesting}
-                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-xs transition flex items-center gap-1.5 shrink-0"
+                    leftIcon={isTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
                   >
-                    {isTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
-                    <span>Test Domain Access</span>
-                  </button>
+                    Test Access
+                  </MotionButton>
                 </div>
 
                 {/* Test Result Feedback */}
@@ -323,10 +322,10 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
                       <XCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
                     )}
                     <div>
-                      <div className="font-bold mb-0.5">
+                      <div className="font-bold mb-0.5 font-heading">
                         {testResult.isAllowed ? '✅ Access Granted (200 OK)' : '🚫 Access Rejected (403 Forbidden)'}
                       </div>
-                      <p className="text-[11px] leading-relaxed opacity-90">{testResult.reason}</p>
+                      <p className="text-[11px] leading-relaxed opacity-90 font-body">{testResult.reason}</p>
                     </div>
                   </div>
                 )}
@@ -335,21 +334,23 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
           )}
 
           {/* Test Widget Live Button */}
-          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex items-center justify-between">
+          <div className="bg-indigo-50/80 border border-indigo-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h4 className="text-xs font-bold text-indigo-950">Test Floating Widget In Studio</h4>
-              <p className="text-[11px] text-indigo-800">Trigger the floating chat bubble on bottom right to test live interaction.</p>
+              <h4 className="text-xs font-bold text-indigo-950 font-heading">Test Floating Widget In Studio</h4>
+              <p className="text-[11px] text-indigo-800 font-body">Trigger the floating chat bubble on bottom right to test live interaction.</p>
             </div>
-            <button
+            <MotionButton
+              variant="primary"
+              size="md"
+              shimmer
               onClick={() => {
                 onTriggerFloatingWidget();
                 onClose();
               }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-md transition flex items-center gap-1.5 shrink-0"
+              leftIcon={<Play className="w-3.5 h-3.5 fill-white" />}
             >
-              <Play className="w-3.5 h-3.5 fill-white" />
-              <span>Launch Widget</span>
-            </button>
+              Launch Widget
+            </MotionButton>
           </div>
 
           {/* Platform Specific Instructions */}
@@ -419,15 +420,16 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-end">
-          <button
+        <div className="p-4 border-t border-zinc-200/80 bg-zinc-50 flex items-center justify-end">
+          <MotionButton
             onClick={onClose}
-            className="px-5 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-xl shadow-xs transition"
+            variant="dark"
+            size="md"
           >
             Done
-          </button>
+          </MotionButton>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 };

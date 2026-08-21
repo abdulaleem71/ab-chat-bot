@@ -18,7 +18,73 @@ export interface TenantRow {
   created_at: string;
 }
 
+export interface OAuthAccountRow {
+  id: string;
+  user_id: string;
+  provider: string;
+  provider_user_id: string;
+  email: string;
+  created_at: string;
+}
+
 export class UserRepo {
+  static async findUserByOAuth(provider: string, providerUserId: string): Promise<UserRow | null> {
+    const db = getDb();
+    const res = await db.execute({
+      sql: `
+        SELECT u.* 
+        FROM users u
+        INNER JOIN oauth_accounts oa ON u.id = oa.user_id
+        WHERE oa.provider = ? AND oa.provider_user_id = ?
+        LIMIT 1;
+      `,
+      args: [provider, String(providerUserId)],
+    });
+    if (res.rows.length === 0) return null;
+    const r = res.rows[0];
+    return {
+      id: String(r.id),
+      email: String(r.email),
+      password_hash: String(r.password_hash),
+      name: String(r.name),
+      tenant_id: String(r.tenant_id),
+      role: String(r.role),
+      created_at: String(r.created_at),
+    };
+  }
+
+  static async linkOAuthAccount(userId: string, provider: string, providerUserId: string, email: string): Promise<void> {
+    const db = getDb();
+    const id = `oa_${provider}_${providerUserId}`;
+    const now = new Date().toISOString();
+    await db.execute({
+      sql: `
+        INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, email, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(provider, provider_user_id) DO UPDATE SET
+          user_id = excluded.user_id,
+          email = excluded.email;
+      `,
+      args: [id, userId, provider, String(providerUserId), email.toLowerCase(), now],
+    });
+  }
+
+  static async findOAuthAccountsByUserId(userId: string): Promise<OAuthAccountRow[]> {
+    const db = getDb();
+    const res = await db.execute({
+      sql: `SELECT * FROM oauth_accounts WHERE user_id = ?;`,
+      args: [userId],
+    });
+    return res.rows.map(r => ({
+      id: String(r.id),
+      user_id: String(r.user_id),
+      provider: String(r.provider),
+      provider_user_id: String(r.provider_user_id),
+      email: String(r.email),
+      created_at: String(r.created_at),
+    }));
+  }
+
   static async findUserByEmail(email: string): Promise<UserRow | null> {
     const db = getDb();
     const res = await db.execute({

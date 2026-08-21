@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Chatbot, BotTone, BotModel } from '../../types';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle, Lock, Plus, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { SecurityService } from '../../services/securityService';
+import { MotionButton } from '../common/MotionButton';
 
 interface BotEditorModalProps {
   bot: Partial<Chatbot> | null;
@@ -134,33 +136,49 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
   const avatars = ['🤖', '💼', '📦', '💬', '⚡', '🎧', '✨', '🌟'];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-hidden animate-in fade-in duration-200">
-      <div
-        ref={modalRef}
-        className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full border border-zinc-200 flex flex-col max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] my-auto relative overflow-hidden"
-      >
-        {/* Modal Header */}
-        <div className="p-4 sm:p-6 border-b border-zinc-100 flex items-center justify-between bg-black text-white shrink-0">
-          <div className="flex items-center gap-3">
-            <div
-              style={{ backgroundColor: formData.primaryColor || '#000000' }}
-              className="w-10 h-10 rounded-xl text-xl flex items-center justify-center text-white shadow-md border border-white/20 shrink-0"
-            >
-              {formData.avatar}
-            </div>
-            <div>
-              <h2 className="text-base sm:text-lg font-extrabold text-white">
-                {bot?.id ? `Configure ${formData.name}` : 'Create New AI Chatbot'}
-              </h2>
-              <p className="text-[11px] sm:text-xs text-zinc-300 font-medium">Customize AI persona, theme color, navigation & grounding</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800 transition cursor-pointer shrink-0">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-hidden">
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="fixed inset-0 bg-black/75 backdrop-blur-xs"
+          />
 
-        {/* Modal Tabs */}
+          {/* Modal Dialog */}
+          <motion.div
+            ref={modalRef}
+            initial={{ opacity: 0, scale: 0.94, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.94, y: 12 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+            className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full border border-zinc-200 flex flex-col max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] my-auto relative z-10 overflow-hidden"
+          >
+            {/* Modal Header */}
+            <div className="p-4 sm:p-6 border-b border-zinc-100 flex items-center justify-between bg-black text-white shrink-0">
+              <div className="flex items-center gap-3">
+                <div
+                  style={{ backgroundColor: formData.primaryColor || '#000000' }}
+                  className="w-10 h-10 rounded-xl text-xl flex items-center justify-center text-white shadow-md border border-white/20 shrink-0"
+                >
+                  {formData.avatar}
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-extrabold text-white">
+                    {bot?.id ? `Configure ${formData.name}` : 'Create New AI Chatbot'}
+                  </h2>
+                  <p className="text-[11px] sm:text-xs text-zinc-300 font-medium">Customize AI persona, theme color, navigation & grounding</p>
+                </div>
+              </div>
+              <button onClick={onClose} className="p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800 transition cursor-pointer shrink-0">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Tabs */}
         <div className="flex border-b border-zinc-200 bg-zinc-50 px-4 sm:px-6 overflow-x-auto shrink-0 scrollbar-none">
           <button
             type="button"
@@ -491,21 +509,23 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                     placeholder="e.g. app.mywebsite.com, staging.mywebsite.com"
                     className="flex-1 px-3.5 py-2 text-xs border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black focus:border-black focus:outline-hidden font-mono"
                   />
-                  <button
+                  <MotionButton
                     type="button"
+                    variant="dark"
+                    size="sm"
+                    shimmer
+                    leftIcon={<Plus className="w-3.5 h-3.5 text-white" />}
                     onClick={handleAddDomain}
                     disabled={!newDomainInput.trim()}
-                    className="px-4 py-2 bg-black hover:bg-zinc-800 disabled:opacity-40 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0"
                   >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add Domain</span>
-                  </button>
+                    Add Domain
+                  </MotionButton>
                 </div>
 
                 {/* Whitelist Badges */}
                 <div className="flex flex-wrap gap-2 pt-1">
                   {(formData.allowedDomains || []).length === 0 ? (
-                    <p className="text-[11px] text-zinc-400 italic">No additional domains configured. Primary website domain is used.</p>
+                    <p className="text-[11px] text-zinc-400 italic font-body">No additional domains configured. Primary website domain is used.</p>
                   ) : (
                     formData.allowedDomains?.map(domain => (
                       <div
@@ -514,14 +534,16 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                       >
                         <Lock className="w-3 h-3 text-indigo-600" />
                         <span>{domain}</span>
-                        <button
+                        <motion.button
                           type="button"
+                          whileHover={{ scale: 1.2 }}
+                          whileTap={{ scale: 0.9 }}
                           onClick={() => handleRemoveDomain(domain)}
                           className="p-0.5 text-zinc-400 hover:text-red-600 rounded-md transition cursor-pointer ml-1"
                           title="Remove domain"
                         >
                           <X className="w-3 h-3" />
-                        </button>
+                        </motion.button>
                       </div>
                     ))
                   )}
@@ -531,7 +553,7 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
               {/* Security Mechanism Notice */}
               <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-2xl flex items-start gap-2.5 text-zinc-600 text-[11px] leading-relaxed">
                 <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                <p>
+                <p className="font-body">
                   <strong>Zero-Risk Revenue Protection:</strong> Embed scripts generate a cryptographically signed HMAC token for each domain. If someone copies your script and pastes it into another domain, the server rejects requests with HTTP 403 Forbidden.
                 </p>
               </div>
@@ -542,8 +564,8 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
             <>
               <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-200">
                 <div>
-                  <h4 className="text-xs font-extrabold text-black">Enable Lead Capture Gate</h4>
-                  <p className="text-[11px] text-zinc-500 font-medium">Ask visitors for their email before initiating chat</p>
+                  <h4 className="text-xs font-extrabold text-black font-heading">Enable Lead Capture Gate</h4>
+                  <p className="text-[11px] text-zinc-500 font-medium font-body">Ask visitors for their email before initiating chat</p>
                 </div>
                 <input
                   type="checkbox"
@@ -555,12 +577,12 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
 
               {formData.collectLeadEmail && (
                 <div>
-                  <label className="block text-xs font-bold text-zinc-800 mb-1">Lead Banner Title</label>
+                  <label className="block text-xs font-bold text-zinc-800 mb-1 font-heading">Lead Banner Title</label>
                   <input
                     type="text"
                     value={formData.leadTitle}
                     onChange={e => setFormData({ ...formData, leadTitle: e.target.value })}
-                    className="w-full px-3.5 py-2 text-xs border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black focus:border-black focus:outline-hidden font-medium"
+                    className="w-full px-3.5 py-2 text-xs border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black focus:border-black focus:outline-hidden font-medium font-body"
                   />
                 </div>
               )}
@@ -571,39 +593,46 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
           <div className="pt-4 border-t border-zinc-100 flex items-center justify-between gap-3">
             <div>
               {bot?.id && onDelete && (
-                <button
+                <MotionButton
                   type="button"
+                  variant="danger"
+                  size="sm"
+                  shimmer
+                  leftIcon={<Trash2 className="w-3.5 h-3.5 text-white" />}
                   onClick={() => {
                     onDelete(bot.id!);
                     onClose();
                   }}
-                  className="px-3.5 py-2 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                  <span>Delete Chatbot</span>
-                </button>
+                  Delete Chatbot
+                </MotionButton>
               )}
             </div>
 
             <div className="flex items-center gap-2">
-              <button
+              <MotionButton
                 type="button"
+                variant="ghost"
+                size="sm"
                 onClick={onClose}
-                className="px-4 py-2 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-xl transition cursor-pointer"
               >
                 Cancel
-              </button>
-              <button
+              </MotionButton>
+              <MotionButton
                 type="submit"
-                className="px-6 py-2.5 text-xs font-extrabold bg-black hover:bg-zinc-800 text-white rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                variant="primary"
+                size="md"
+                shimmer
+                leftIcon={<Save className="w-4 h-4 text-white" />}
               >
-                <Save className="w-4 h-4 text-white" />
-                <span>Save Chatbot Settings</span>
-              </button>
+                Save Chatbot Settings
+              </MotionButton>
             </div>
           </div>
         </form>
-      </div>
-    </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
   );
 };

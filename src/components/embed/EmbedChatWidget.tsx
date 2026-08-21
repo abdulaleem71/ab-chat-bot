@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Chatbot, Message, GroundingSource } from '../../types';
 import { Send, Bot, Loader2, Sparkles, X, Minimize2, RotateCcw, ChevronDown, ChevronUp, ExternalLink, Check, AlertCircle } from 'lucide-react';
 import { MarkdownContent } from '../../lib/markdown';
@@ -307,20 +308,24 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          <button
+          <motion.button
+            whileHover={{ scale: 1.15, rotate: -45 }}
+            whileTap={{ scale: 0.9 }}
             onClick={handleResetChat}
             className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
             title="Reset Conversation"
           >
             <RotateCcw className="w-4 h-4" />
-          </button>
-          <button
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.15, rotate: 90 }}
+            whileTap={{ scale: 0.9 }}
             onClick={handleClose}
             className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
             title="Close Assistant"
           >
             {isFloating ? <X className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
-          </button>
+          </motion.button>
         </div>
       </div>
 
@@ -329,82 +334,87 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
         ref={messagesContainerRef}
         className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-zinc-50/60 scrollbar-thin"
       >
-        {messages.map((msg, idx) => {
-          const isUser = msg.sender === 'visitor';
-          const isAgent = msg.sender === 'agent';
+        <AnimatePresence initial={false}>
+          {messages.map((msg, idx) => {
+            const isUser = msg.sender === 'visitor';
+            const isAgent = msg.sender === 'agent';
 
-          return (
-            <div
-              key={msg.id || idx}
-              className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[88%] ${isUser ? 'ml-auto' : 'mr-auto'}`}
-            >
-              {!isUser && (
-                <div className="flex items-center gap-1.5 mb-1 px-1">
-                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
-                    {isAgent ? 'Support Specialist' : bot.name}
-                  </span>
-                  {isAgent && (
-                    <span className="bg-amber-100 text-amber-800 text-[9px] font-bold px-1.5 py-0.2 rounded-sm">
-                      Human
-                    </span>
-                  )}
-                </div>
-              )}
-
-              <div
-                style={isUser ? { backgroundColor: primaryColor } : {}}
-                className={`px-3.5 py-2.5 rounded-2xl shadow-xs text-xs sm:text-sm ${
-                  isUser
-                    ? 'text-white rounded-br-xs'
-                    : isAgent
-                    ? 'bg-amber-50/90 text-amber-950 border border-amber-200 rounded-bl-xs'
-                    : 'bg-white text-zinc-900 border border-zinc-200/90 rounded-bl-xs'
-                }`}
+            return (
+              <motion.div
+                key={msg.id || idx}
+                initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[88%] ${isUser ? 'ml-auto' : 'mr-auto'}`}
               >
-                {isUser ? (
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
-                ) : (
-                  <MarkdownContent content={msg.content} />
-                )}
-
-                {/* Grounding Source Citations */}
-                {!isUser && msg.sourcesUsed && msg.sourcesUsed.length > 0 && (
-                  <div className="mt-2.5 pt-2 border-t border-zinc-100">
-                    <button
-                      onClick={() => toggleSource(msg.id)}
-                      className="flex items-center gap-1 text-[11px] font-semibold text-zinc-500 hover:text-zinc-800 cursor-pointer transition"
-                    >
-                      <Sparkles className="w-3 h-3 text-indigo-500" />
-                      <span>{msg.sourcesUsed.length} Grounded Source{msg.sourcesUsed.length > 1 ? 's' : ''}</span>
-                      {expandedSources[msg.id] ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    </button>
-
-                    {expandedSources[msg.id] && (
-                      <div className="mt-2 space-y-1.5">
-                        {msg.sourcesUsed.map((src, sIdx) => (
-                          <div key={sIdx} className="bg-zinc-50 p-2 rounded-lg border border-zinc-200 text-[11px] space-y-0.5">
-                            <div className="font-semibold text-zinc-800 flex items-center justify-between gap-1">
-                              <span className="truncate">{src.title || 'Knowledge Base Document'}</span>
-                            </div>
-                            {src.snippet && (
-                              <p className="text-[10px] text-zinc-500 line-clamp-2 leading-relaxed">
-                                {src.snippet}
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                {!isUser && (
+                  <div className="flex items-center gap-1.5 mb-1 px-1">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                      {isAgent ? 'Support Specialist' : bot.name}
+                    </span>
+                    {isAgent && (
+                      <span className="bg-amber-100 text-amber-800 text-[9px] font-bold px-1.5 py-0.2 rounded-sm">
+                        Human
+                      </span>
                     )}
                   </div>
                 )}
-              </div>
 
-              <span className="text-[9px] text-zinc-400 px-1 mt-0.5">
-                {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            </div>
-          );
-        })}
+                <div
+                  style={isUser ? { backgroundColor: primaryColor } : {}}
+                  className={`px-3.5 py-2.5 rounded-2xl shadow-xs text-xs sm:text-sm ${
+                    isUser
+                      ? 'text-white rounded-br-xs'
+                      : isAgent
+                      ? 'bg-amber-50/90 text-amber-950 border border-amber-200 rounded-bl-xs'
+                      : 'bg-white text-zinc-900 border border-zinc-200/90 rounded-bl-xs'
+                  }`}
+                >
+                  {isUser ? (
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                  ) : (
+                    <MarkdownContent content={msg.content} />
+                  )}
+
+                  {/* Grounding Source Citations */}
+                  {!isUser && msg.sourcesUsed && msg.sourcesUsed.length > 0 && (
+                    <div className="mt-2.5 pt-2 border-t border-zinc-100">
+                      <button
+                        onClick={() => toggleSource(msg.id)}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-zinc-500 hover:text-zinc-800 cursor-pointer transition"
+                      >
+                        <Sparkles className="w-3 h-3 text-indigo-500" />
+                        <span>{msg.sourcesUsed.length} Grounded Source{msg.sourcesUsed.length > 1 ? 's' : ''}</span>
+                        {expandedSources[msg.id] ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                      </button>
+
+                      {expandedSources[msg.id] && (
+                        <div className="mt-2 space-y-1.5">
+                          {msg.sourcesUsed.map((src, sIdx) => (
+                            <div key={sIdx} className="bg-zinc-50 p-2 rounded-lg border border-zinc-200 text-[11px] space-y-0.5">
+                              <div className="font-semibold text-zinc-800 flex items-center justify-between gap-1">
+                                <span className="truncate">{src.title || 'Knowledge Base Document'}</span>
+                              </div>
+                              {src.snippet && (
+                                <p className="text-[10px] text-zinc-500 line-clamp-2 leading-relaxed">
+                                  {src.snippet}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <span className="text-[9px] text-zinc-400 px-1 mt-0.5">
+                  {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
 
         {/* Suggested Questions Pills (shown under initial greeting) */}
         {messages.length === 1 && bot.suggestedQuestions && bot.suggestedQuestions.length > 0 && (
@@ -414,14 +424,16 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
             </span>
             <div className="flex flex-col gap-1.5">
               {bot.suggestedQuestions.map((q, idx) => (
-                <button
+                <motion.button
                   key={idx}
+                  whileHover={{ scale: 1.02, x: 2 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={() => handleSendMessage(q)}
-                  className="text-left text-xs bg-white hover:bg-zinc-100/90 text-zinc-700 hover:text-black p-2.5 rounded-xl border border-zinc-200/80 shadow-2xs transition active:scale-98 flex items-center justify-between group cursor-pointer"
+                  className="text-left text-xs bg-white hover:bg-zinc-100/90 text-zinc-700 hover:text-black p-2.5 rounded-xl border border-zinc-200/80 shadow-2xs transition flex items-center justify-between group cursor-pointer"
                 >
                   <span className="truncate font-medium">{q}</span>
                   <Send className="w-3 h-3 text-zinc-400 group-hover:text-zinc-700 shrink-0 ml-2" />
-                </button>
+                </motion.button>
               ))}
             </div>
           </div>
@@ -435,13 +447,15 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
                 <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
                 <h4 className="text-xs font-bold text-zinc-900">{bot.leadTitle || 'Stay connected with support'}</h4>
               </div>
-              <button
+              <motion.button
+                whileHover={{ scale: 1.15 }}
+                whileTap={{ scale: 0.9 }}
                 onClick={() => setShowLeadPrompt(false)}
                 className="text-zinc-400 hover:text-zinc-600 p-0.5 rounded cursor-pointer"
                 title="Dismiss"
               >
                 <X className="w-3.5 h-3.5" />
-              </button>
+              </motion.button>
             </div>
             <form onSubmit={handleLeadSubmit} className="space-y-1.5">
               <div className="grid grid-cols-2 gap-1.5">
@@ -461,15 +475,17 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
                   className="w-full text-xs px-2.5 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg focus:outline-none focus:border-indigo-500 focus:bg-white"
                 />
               </div>
-              <button
+              <motion.button
                 type="submit"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
                 disabled={isSubmittingLead || !leadEmail}
                 style={{ backgroundColor: primaryColor }}
                 className="w-full text-white text-[11px] font-bold py-1.5 rounded-lg shadow-xs transition hover:opacity-90 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1"
               >
                 {isSubmittingLead ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                 <span>Save Contact Details</span>
-              </button>
+              </motion.button>
             </form>
           </div>
         )}
@@ -512,15 +528,17 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
             disabled={isLoading}
             className="flex-1 text-xs sm:text-sm px-3.5 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:bg-white transition text-zinc-900 placeholder:text-zinc-400"
           />
-          <button
+          <motion.button
             type="submit"
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.92 }}
             disabled={!input.trim() || isLoading}
             style={{ backgroundColor: primaryColor }}
-            className="text-white p-2 sm:p-2.5 rounded-xl transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
+            className="text-white p-2 sm:p-2.5 rounded-xl transition hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
             title="Send Message"
           >
             {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          </button>
+          </motion.button>
         </form>
         <div className="flex items-center justify-between text-[10px] text-zinc-400 mt-2 px-1">
           <span>Powered by NomadsChat RAG</span>

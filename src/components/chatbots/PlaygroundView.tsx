@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { motion } from 'motion/react';
 import { Chatbot, Message, GroundingSource } from '../../types';
 import { MarkdownContent } from '../../lib/markdown';
 import { Send, Bot, User, Sparkles, BookOpen, RotateCcw, ShieldCheck, CheckCircle2, ChevronRight, Loader2, ExternalLink, Layers, Code } from 'lucide-react';
+import { MotionButton } from '../common/MotionButton';
 
 interface PlaygroundViewProps {
   chatbots: Chatbot[];
-  selectedBot: Chatbot;
+  selectedBot?: Chatbot | null;
   onSelectBot: (bot: Chatbot) => void;
+  onCreateBot?: () => void;
   onSendQuery: (botId: string, message: string, history: Message[]) => Promise<{ reply: string; sourcesUsed: GroundingSource[] }>;
   onOpenEmbedModal?: (bot: Chatbot) => void;
 }
@@ -15,24 +18,35 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
   chatbots,
   selectedBot,
   onSelectBot,
+  onCreateBot,
   onSendQuery,
   onOpenEmbedModal,
 }) => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'm_init',
-      conversationId: 'playground',
-      chatbotId: selectedBot.id,
-      sender: 'bot',
-      content: selectedBot.greetingMessage || 'Hello! How can I assist you today?',
-      timestamp: new Date().toISOString(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeSources, setActiveSources] = useState<GroundingSource[]>([]);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (selectedBot) {
+      setMessages([
+        {
+          id: 'm_init_' + selectedBot.id,
+          conversationId: 'playground',
+          chatbotId: selectedBot.id,
+          sender: 'bot',
+          content: selectedBot.greetingMessage || 'Hello! How can I assist you today?',
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      setActiveSources([]);
+    } else {
+      setMessages([]);
+      setActiveSources([]);
+    }
+  }, [selectedBot?.id]);
 
   const scrollToBottom = (smooth = true) => {
     requestAnimationFrame(() => {
@@ -60,22 +74,33 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
     }
   }, [isLoading]);
 
-  // Reset when selected bot changes
-  useEffect(() => {
-    setMessages([
-      {
-        id: 'm_init_' + selectedBot.id,
-        conversationId: 'playground',
-        chatbotId: selectedBot.id,
-        sender: 'bot',
-        content: selectedBot.greetingMessage || 'Hello! How can I assist you today?',
-        timestamp: new Date().toISOString(),
-      },
-    ]);
-    setActiveSources([]);
-  }, [selectedBot.id]);
+  if (!selectedBot) {
+    return (
+      <div className="bg-white border border-zinc-200/80 rounded-3xl p-12 text-center shadow-xs animate-in fade-in duration-200">
+        <div className="w-16 h-16 bg-zinc-100 rounded-3xl flex items-center justify-center mx-auto mb-4 text-zinc-400">
+          <Bot className="w-8 h-8 text-indigo-600" />
+        </div>
+        <h2 className="text-xl font-bold text-zinc-900 mb-2 font-heading">No Active Chatbots</h2>
+        <p className="text-xs text-zinc-500 max-w-md mx-auto mb-6 font-body">
+          Create your first grounded AI chatbot to test live responses in the interactive playground.
+        </p>
+        {onCreateBot && (
+          <MotionButton
+            variant="primary"
+            size="md"
+            shimmer
+            leftIcon={<Bot className="w-4 h-4" />}
+            onClick={onCreateBot}
+          >
+            Create New Chatbot
+          </MotionButton>
+        )}
+      </div>
+    );
+  }
 
   const handleResetChat = () => {
+    if (!selectedBot) return;
     setMessages([
       {
         id: 'm_init_' + Date.now(),
@@ -90,6 +115,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
   };
 
   const handleSend = async (textToSend?: string) => {
+    if (!selectedBot) return;
     const queryText = textToSend || input;
     if (!queryText.trim() || isLoading) return;
 
@@ -124,6 +150,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
         setActiveSources(res.sourcesUsed);
       }
     } catch (err) {
+      console.log('Error querying playground bot:', err);
       const errorMsg: Message = {
         id: 'err_' + Date.now(),
         conversationId: 'playground',
@@ -181,22 +208,25 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
           )}
 
           {onOpenEmbedModal && (
-            <button
+            <MotionButton
+              variant="dark"
+              size="sm"
+              shimmer
+              leftIcon={<Code className="w-3.5 h-3.5" />}
               onClick={() => onOpenEmbedModal(selectedBot)}
-              className="bg-black hover:bg-zinc-800 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
             >
-              <Code className="w-3.5 h-3.5" />
-              <span>Get Embed Code</span>
-            </button>
+              Get Embed Code
+            </MotionButton>
           )}
 
-          <button
+          <MotionButton
+            variant="outline"
+            size="sm"
+            leftIcon={<RotateCcw className="w-3.5 h-3.5 text-zinc-700" />}
             onClick={handleResetChat}
-            className="bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Chat</span>
-          </button>
+            Reset Chat
+          </MotionButton>
         </div>
       </div>
 
@@ -214,12 +244,12 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
                 {selectedBot.avatar || '🤖'}
               </div>
               <div>
-                <h3 className="text-xs font-extrabold">{selectedBot.name}</h3>
-                <p className="text-[10px] text-white/80 font-medium">Model: {selectedBot.model} • Grounded RAG</p>
+                <h3 className="text-xs font-extrabold font-heading">{selectedBot.name}</h3>
+                <p className="text-[10px] text-white/80 font-medium font-body">Model: {selectedBot.model} • Grounded RAG</p>
               </div>
             </div>
 
-            <span className="text-[10px] font-bold bg-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
+            <span className="text-[10px] font-bold bg-white/20 px-2.5 py-1 rounded-full uppercase tracking-wider font-mono">
               Interactive Test
             </span>
           </div>
@@ -254,11 +284,11 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
 
                   {msg.sourcesUsed && msg.sourcesUsed.length > 0 && (
                     <div className="mt-3 pt-2.5 border-t border-zinc-100 space-y-1">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block font-heading">
                         Citations & Sources:
                       </span>
                       {msg.sourcesUsed.map((s, idx) => (
-                        <div key={idx} className="text-[11px] text-zinc-600 bg-zinc-50 p-1.5 rounded-lg border border-zinc-200/60 font-medium">
+                        <div key={idx} className="text-[11px] text-zinc-600 bg-zinc-50 p-1.5 rounded-lg border border-zinc-200/60 font-medium font-body">
                           <strong>[{idx + 1}]</strong> {s.title} {s.url && `(${s.url})`}
                         </div>
                       ))}
@@ -282,7 +312,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
                 >
                   <Loader2 className="w-4 h-4 animate-spin" />
                 </div>
-                <div className="bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-xs text-zinc-500 font-medium flex items-center gap-2 shadow-2xs">
+                <div className="bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-xs text-zinc-500 font-medium flex items-center gap-2 shadow-2xs font-body">
                   <span>Synthesizing grounded response with Gemini...</span>
                 </div>
               </div>
@@ -291,19 +321,21 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
           </div>
 
           {/* Quick Prompts */}
-          <div className="p-3 bg-zinc-50 border-t border-zinc-200/80 flex items-center gap-2 overflow-x-auto">
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider shrink-0 px-1">
+          <div className="p-3 bg-zinc-50 border-t border-zinc-200/80 flex items-center gap-2 overflow-x-auto scrollbar-none">
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider shrink-0 px-1 font-heading">
               Sample Queries:
             </span>
             {sampleQuestions.map((q, idx) => (
-              <button
+              <motion.button
                 key={idx}
+                whileHover={{ scale: 1.05, y: -1 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => handleSend(q)}
                 disabled={isLoading}
-                className="text-[11px] font-semibold bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 px-2.5 py-1 rounded-xl whitespace-nowrap transition cursor-pointer disabled:opacity-50"
+                className="text-[11px] font-semibold bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 px-2.5 py-1 rounded-xl whitespace-nowrap transition cursor-pointer disabled:opacity-50 font-body"
               >
                 {q}
-              </button>
+              </motion.button>
             ))}
           </div>
 
@@ -321,16 +353,18 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
               onChange={e => setInput(e.target.value)}
               placeholder="Ask anything to test chatbot grounding..."
               disabled={isLoading}
-              className="flex-1 px-4 py-2.5 text-xs bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:bg-white transition font-medium"
+              className="flex-1 px-4 py-2.5 text-xs bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:bg-white transition font-medium font-body"
             />
-            <button
+            <MotionButton
               type="submit"
+              variant="primary"
+              size="md"
+              shimmer
               disabled={isLoading || !input.trim()}
-              className="bg-zinc-950 hover:bg-zinc-800 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+              leftIcon={isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
             >
-              {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              <span>Send</span>
-            </button>
+              Send
+            </MotionButton>
           </form>
         </div>
 

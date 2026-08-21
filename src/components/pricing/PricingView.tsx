@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { useAuth } from '../../context/AuthContext';
 import { CheckoutModal } from './CheckoutModal';
 import { PaymentGatewaysModal } from './PaymentGatewaysModal';
 import { Check, Sparkles, Zap, Shield, HelpCircle, ArrowRight, Bot, MessageSquare, Layers, Users, Headphones, CheckCircle2, DollarSign, CreditCard, Lock, ShieldCheck } from 'lucide-react';
+import { MotionButton } from '../common/MotionButton';
 
 interface PricingViewProps {
   onOpenAuthModal?: () => void;
@@ -111,40 +113,43 @@ export const PricingView: React.FC<PricingViewProps> = ({ onOpenAuthModal, onNav
 
         {/* Admin Payout & Payment Gateways Config Bar */}
         <div className="pt-2">
-          <button
+          <MotionButton
+            variant="dark"
+            size="md"
+            shimmer
             onClick={() => setIsGatewaysModalOpen(true)}
-            className="inline-flex flex-col sm:flex-row items-center justify-center gap-2 bg-zinc-900 hover:bg-black text-white p-3 sm:px-4 sm:py-2 rounded-2xl text-xs font-extrabold transition shadow-md border border-zinc-800 cursor-pointer active:scale-95 max-w-full"
+            leftIcon={<DollarSign className="w-4 h-4 text-emerald-400 shrink-0" />}
           >
-            <div className="flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Configure Payment Gateways & How to Receive Payouts</span>
-            </div>
-            <span className="bg-emerald-950 border border-emerald-800 text-emerald-400 text-[10px] font-bold px-2.5 py-0.5 rounded-full">
+            <span className="font-heading">Configure Payment Gateways & Payouts</span>
+            <span className="ml-2 bg-emerald-950 border border-emerald-800 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-full font-mono">
               PayPal • Cards • G Pay • Apple Pay
             </span>
-          </button>
+          </MotionButton>
         </div>
 
         {/* Billing Cycle Toggle */}
         <div className="flex items-center justify-center gap-3 pt-4">
-          <span className={`text-xs font-bold ${billingCycle === 'monthly' ? 'text-black' : 'text-zinc-400'}`}>
+          <span className={`text-xs font-bold font-heading ${billingCycle === 'monthly' ? 'text-zinc-950' : 'text-zinc-400'}`}>
             Monthly Billing
           </span>
-          <button
+          <motion.button
+            whileTap={{ scale: 0.95 }}
             onClick={() => setBillingCycle(billingCycle === 'monthly' ? 'annual' : 'monthly')}
-            className="w-12 h-6 bg-black rounded-full p-1 relative transition-colors duration-200 focus:outline-hidden cursor-pointer"
+            className="w-12 h-6 bg-zinc-950 rounded-full p-1 relative transition-colors duration-200 focus:outline-hidden cursor-pointer"
           >
-            <div
-              className={`w-4 h-4 bg-white rounded-full shadow-md transition-transform duration-200 ${
-                billingCycle === 'annual' ? 'translate-x-6' : 'translate-x-0'
+            <motion.div
+              layout
+              transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+              className={`w-4 h-4 bg-white rounded-full shadow-md ${
+                billingCycle === 'annual' ? 'ml-6' : 'ml-0'
               }`}
             />
-          </button>
+          </motion.button>
           <div className="flex items-center gap-1.5">
-            <span className={`text-xs font-bold ${billingCycle === 'annual' ? 'text-black' : 'text-zinc-400'}`}>
+            <span className={`text-xs font-bold font-heading ${billingCycle === 'annual' ? 'text-zinc-950' : 'text-zinc-400'}`}>
               Annual Billing
             </span>
-            <span className="bg-black text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+            <span className="bg-zinc-950 text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider font-mono">
               Save 20%
             </span>
           </div>
@@ -156,16 +161,18 @@ export const PricingView: React.FC<PricingViewProps> = ({ onOpenAuthModal, onNav
         {plans.map(plan => {
           const price = billingCycle === 'annual' ? plan.annualPrice : plan.monthlyPrice;
           return (
-            <div
+            <motion.div
               key={plan.id}
-              className={`relative rounded-3xl bg-white border p-7 flex flex-col justify-between transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl ${
+              whileHover={{ y: -6 }}
+              transition={{ duration: 0.2 }}
+              className={`relative rounded-3xl bg-white border p-7 flex flex-col justify-between shadow-sm ${
                 plan.popular
-                  ? 'border-black ring-2 ring-black/10 shadow-xl scale-102 z-10'
-                  : 'border-zinc-200 shadow-sm hover:border-black/30'
+                  ? 'border-zinc-950 ring-2 ring-zinc-950/10 shadow-xl'
+                  : 'border-zinc-200/90 hover:border-zinc-400/80 hover:shadow-md'
               }`}
             >
               {plan.popular && (
-                <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-black text-white text-[11px] font-extrabold px-4 py-1 rounded-full shadow-md uppercase tracking-wider flex items-center gap-1.5 border border-zinc-800">
+                <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-zinc-950 text-white text-[11px] font-extrabold px-4 py-1 rounded-full shadow-md uppercase tracking-wider flex items-center gap-1.5 border border-zinc-800 font-mono">
                   <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
                   <span>{plan.badge}</span>
                 </div>
@@ -175,11 +182,11 @@ export const PricingView: React.FC<PricingViewProps> = ({ onOpenAuthModal, onNav
                 {/* Plan Title & Tagline */}
                 <div className="flex justify-between items-start mb-2">
                   <div>
-                    <h3 className="text-xl font-extrabold text-black">{plan.name}</h3>
-                    <p className="text-xs text-zinc-500 font-medium mt-1 min-h-[32px] leading-relaxed">{plan.tagline}</p>
+                    <h3 className="text-xl font-extrabold text-zinc-950 font-heading">{plan.name}</h3>
+                    <p className="text-xs text-zinc-500 font-medium mt-1 min-h-[32px] leading-relaxed font-body">{plan.tagline}</p>
                   </div>
                   {plan.isCurrent && (
-                    <span className="bg-black text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-black uppercase tracking-wider">
+                    <span className="bg-zinc-950 text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-zinc-950 uppercase tracking-wider font-mono">
                       Active
                     </span>
                   )}
@@ -187,21 +194,21 @@ export const PricingView: React.FC<PricingViewProps> = ({ onOpenAuthModal, onNav
 
                 {/* Price Display */}
                 <div className="my-6 pb-6 border-b border-zinc-100">
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-4xl sm:text-5xl font-extrabold text-black tracking-tight">${price}</span>
+                  <div className="flex items-baseline gap-1 font-heading">
+                    <span className="text-4xl sm:text-5xl font-extrabold text-zinc-950 tracking-tight">${price}</span>
                     <span className="text-xs text-zinc-500 font-bold">/ month</span>
                   </div>
                   {billingCycle === 'annual' && price > 0 && (
-                    <p className="text-[11px] text-zinc-800 font-bold mt-1">Billed annually (${price * 12}/yr)</p>
+                    <p className="text-[11px] text-zinc-800 font-bold mt-1 font-body">Billed annually (${price * 12}/yr)</p>
                   )}
                 </div>
 
                 {/* Feature List */}
                 <div className="space-y-3 mb-8">
-                  <p className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider">Included Features</p>
+                  <p className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-mono">Included Features</p>
                   {plan.features.map((feat, idx) => (
-                    <div key={idx} className="flex items-start gap-2.5 text-xs text-zinc-800 font-medium">
-                      <div className="w-4 h-4 rounded-full bg-black text-white flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+                    <div key={idx} className="flex items-start gap-2.5 text-xs text-zinc-800 font-medium font-body">
+                      <div className="w-4 h-4 rounded-full bg-zinc-950 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
                         <Check className="w-2.5 h-2.5 stroke-[3]" />
                       </div>
                       <span>{feat}</span>
@@ -209,7 +216,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ onOpenAuthModal, onNav
                   ))}
 
                   {plan.limitations.map((lim, idx) => (
-                    <div key={idx} className="flex items-start gap-2.5 text-xs text-zinc-400 line-through">
+                    <div key={idx} className="flex items-start gap-2.5 text-xs text-zinc-400 line-through font-body">
                       <div className="w-4 h-4 rounded-full bg-zinc-100 text-zinc-400 flex items-center justify-center shrink-0 mt-0.5">
                         <span className="text-[10px] font-bold">×</span>
                       </div>
@@ -220,7 +227,12 @@ export const PricingView: React.FC<PricingViewProps> = ({ onOpenAuthModal, onNav
               </div>
 
               {/* Action Button */}
-              <button
+              <MotionButton
+                variant={plan.isCurrent ? 'secondary' : plan.popular ? 'dark' : 'primary'}
+                size="lg"
+                shimmer={!plan.isCurrent}
+                fullWidth
+                disabled={plan.isCurrent}
                 onClick={() => {
                   if (plan.isCurrent) return;
                   if (plan.id === 'Free') {
@@ -234,16 +246,11 @@ export const PricingView: React.FC<PricingViewProps> = ({ onOpenAuthModal, onNav
                     });
                   }
                 }}
-                className={`w-full py-3.5 px-4 rounded-2xl text-xs font-bold transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 cursor-pointer ${
-                  plan.isCurrent
-                    ? 'bg-zinc-100 text-zinc-800 cursor-default border border-zinc-300 font-bold'
-                    : 'bg-black hover:bg-zinc-800 text-white shadow-md hover:shadow-lg'
-                }`}
+                rightIcon={!plan.isCurrent ? <ArrowRight className="w-4 h-4" /> : undefined}
               >
-                <span>{plan.ctaText}</span>
-                {!plan.isCurrent && <ArrowRight className="w-4 h-4 text-white" />}
-              </button>
-            </div>
+                {plan.ctaText}
+              </MotionButton>
+            </motion.div>
           );
         })}
       </div>
@@ -316,20 +323,23 @@ export const PricingView: React.FC<PricingViewProps> = ({ onOpenAuthModal, onNav
             Start completely free. No credit card required to build and embed your first chatbot.
           </p>
         </div>
-        <div className="flex gap-3 relative z-10">
-          <button
+        <div className="flex flex-wrap gap-3 relative z-10">
+          <MotionButton
+            variant="secondary"
+            size="md"
+            shimmer
             onClick={onOpenAuthModal}
-            className="bg-white hover:bg-zinc-100 text-black text-xs font-extrabold px-6 py-3.5 rounded-2xl transition shadow-lg whitespace-nowrap active:scale-95 cursor-pointer"
           >
             Create Free Account
-          </button>
+          </MotionButton>
           {onNavigateToFaq && (
-            <button
+            <MotionButton
+              variant="dark"
+              size="md"
               onClick={onNavigateToFaq}
-              className="bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold px-6 py-3.5 rounded-2xl border border-zinc-700 transition whitespace-nowrap active:scale-95 cursor-pointer"
             >
               Read FAQs
-            </button>
+            </MotionButton>
           )}
         </div>
       </div>

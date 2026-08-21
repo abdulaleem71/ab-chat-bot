@@ -204,8 +204,20 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
             <span className="hover:text-white cursor-pointer">Privacy Policy</span>
             <span className="hover:text-white cursor-pointer">Terms of Service</span>
             <span className="hover:text-white cursor-pointer">Security Standards</span>
+            <a
+              href="#admin"
+              onClick={(e) => {
+                e.preventDefault();
+                window.location.hash = 'admin';
+              }}
+              className="inline-flex items-center gap-1 text-zinc-400 hover:text-white transition font-medium border border-zinc-800 px-2 py-0.5 rounded-md hover:border-zinc-700 bg-zinc-950"
+            >
+              <Lock className="w-3 h-3 text-zinc-400" />
+              <span>Admin Portal</span>
+            </a>
           </div>
         </div>
+
       </div>
     </footer>
   );
