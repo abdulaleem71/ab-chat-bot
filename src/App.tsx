@@ -190,11 +190,19 @@ function DashboardContent() {
   };
 
   const handleTrainBot = (bot: Chatbot) => {
+    if (!isAuthenticated) {
+      setIsAuthModalOpen(true);
+      return;
+    }
     setSelectedBot(bot);
     setActiveTab('knowledge');
   };
 
   const handleDeleteBot = async (bot: Chatbot) => {
+    if (!isAuthenticated) {
+      setIsAuthModalOpen(true);
+      return;
+    }
     if (!bot || !bot.id) return;
     try {
       const res = await fetch(`/api/chatbots/${bot.id}`, {
@@ -217,6 +225,10 @@ function DashboardContent() {
   };
 
   const handleOpenEmbedModal = (bot?: Chatbot) => {
+    if (!isAuthenticated) {
+      setIsAuthModalOpen(true);
+      return;
+    }
     const target = bot || selectedBot || (chatbots.length > 0 ? chatbots[0] : activeBot);
     setEmbedModalBot(target);
     if (target) {
