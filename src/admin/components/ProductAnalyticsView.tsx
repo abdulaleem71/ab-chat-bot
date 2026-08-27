@@ -372,12 +372,18 @@ export const ProductAnalyticsView: React.FC = () => {
             </div>
           </div>
           <div className="mt-3">
-            <span className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-              {summary ? `${summary.avgCsat}` : '4.8'}
-              <span className="text-sm font-normal text-slate-400">/5.0</span>
-            </span>
+            {summary && summary.ratedConversationsCount > 0 && summary.avgCsat > 0 ? (
+              <span className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                {summary.avgCsat}
+                <span className="text-sm font-normal text-slate-400">/5.0</span>
+              </span>
+            ) : (
+              <span className="text-lg font-bold text-slate-400 dark:text-slate-500">
+                No data yet
+              </span>
+            )}
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-              {summary?.ratedConversationsCount || 0} reviews rated
+              {summary?.ratedConversationsCount || 0} review{(summary?.ratedConversationsCount || 0) === 1 ? '' : 's'} rated
             </p>
           </div>
         </div>

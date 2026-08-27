@@ -5,6 +5,7 @@ import { useClickOutside } from '../../hooks/useClickOutside';
 import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle, Lock, Plus, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { SecurityService } from '../../services/securityService';
 import { MotionButton } from '../common/MotionButton';
+import { GEMINI_CONFIG } from '../../config/models';
 
 interface BotEditorModalProps {
   bot: Partial<Chatbot> | null;
@@ -302,8 +303,8 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                     onChange={e => setFormData({ ...formData, model: e.target.value as BotModel })}
                     className="w-full px-3.5 py-2 text-xs border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black focus:border-black focus:outline-hidden font-medium bg-white"
                   >
-                    <option value="gemini-3.7-flash">Gemini 3.7 Flash (Fast Grounded Support)</option>
-                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Deep Reasoning)</option>
+                    <option value={GEMINI_CONFIG.flash.id}>{GEMINI_CONFIG.flash.name} ({GEMINI_CONFIG.flash.description})</option>
+                    <option value={GEMINI_CONFIG.pro.id}>{GEMINI_CONFIG.pro.name} ({GEMINI_CONFIG.pro.description})</option>
                   </select>
                 </div>
               </div>

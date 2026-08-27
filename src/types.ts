@@ -1,11 +1,21 @@
+export type TenantPlan = 'Free' | 'Pro' | 'Ultra' | 'Enterprise';
+
+export interface ByokConfig {
+  hasCustomKey: boolean;
+  provider: 'gemini' | 'openai';
+  maskedKey?: string;
+  updatedAt?: string;
+}
+
 export interface Tenant {
   id: string;
   name: string;
   ownerEmail: string;
-  plan: 'Free' | 'Pro' | 'Enterprise';
+  plan: TenantPlan;
   createdAt: string;
   websiteUrl?: string;
   logoUrl?: string;
+  byokConfig?: ByokConfig;
 }
 
 export interface UserProfile {

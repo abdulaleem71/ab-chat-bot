@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Tenant, UserProfile } from '../types';
+import { Tenant, UserProfile, TenantPlan } from '../types';
 import { INITIAL_TENANT, INITIAL_USER } from '../lib/demoData';
 
 interface AuthContextType {
@@ -7,7 +7,7 @@ interface AuthContextType {
   user: UserProfile;
   setTenant: React.Dispatch<React.SetStateAction<Tenant>>;
   setUser: React.Dispatch<React.SetStateAction<UserProfile>>;
-  switchPlan: (plan: 'Free' | 'Pro' | 'Enterprise') => void;
+  switchPlan: (plan: TenantPlan) => Promise<void> | void;
   isAuthenticated: boolean;
   isLoading: boolean;
   logout: () => void;
@@ -17,6 +17,7 @@ interface AuthContextType {
   requestPasswordReset: (email: string) => Promise<any>;
   resetPassword: (email: string, newPassword: string, resetToken?: string) => Promise<any>;
   token: string | null;
+  refreshTenant: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -25,7 +26,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [tenant, setTenant] = useState<Tenant>(INITIAL_TENANT);
   const [user, setUser] = useState<UserProfile>(INITIAL_USER);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'));
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(localStorage.getItem('auth_token')));
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Restore user session on mount if token exists
@@ -55,6 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 name: data.tenant.name,
                 ownerEmail: data.tenant.ownerEmail,
                 plan: data.tenant.plan || prev.plan,
+                byokConfig: data.tenant.byokConfig,
               }));
             }
             setToken(savedToken);
@@ -77,14 +79,73 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  const switchPlan = (plan: 'Free' | 'Pro' | 'Enterprise') => {
+  const refreshTenant = async () => {
+    const savedToken = token || localStorage.getItem('auth_token');
+    if (!savedToken) return;
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${savedToken}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.tenant) {
+          setTenant(prev => ({
+            ...prev,
+            id: data.tenant.id,
+            name: data.tenant.name,
+            ownerEmail: data.tenant.ownerEmail,
+            plan: data.tenant.plan || prev.plan,
+            byokConfig: data.tenant.byokConfig,
+          }));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const switchPlan = async (plan: TenantPlan) => {
     setTenant(prev => ({ ...prev, plan }));
+    const savedToken = token || localStorage.getItem('auth_token');
+    if (savedToken) {
+      try {
+        await fetch('/api/tenant/plan', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${savedToken}`,
+          },
+          body: JSON.stringify({ plan }),
+        });
+      } catch (err) {
+        console.warn('Failed to sync plan switch to backend:', err);
+      }
+    }
   };
 
   const logout = () => {
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('active_tenant');
+    localStorage.removeItem('active_user');
     setToken(null);
     setIsAuthenticated(false);
+    setTenant({
+      id: '',
+      name: '',
+      ownerEmail: '',
+      plan: 'Free',
+      createdAt: '',
+      websiteUrl: '',
+    });
+    setUser({
+      uid: '',
+      id: '',
+      email: '',
+      displayName: '',
+      tenantId: '',
+      role: 'member',
+      createdAt: '',
+    } as any);
   };
 
   const loginWithOAuth = async (provider: 'google' | 'github'): Promise<any> => {

@@ -274,10 +274,10 @@ export const ConversationLogsView: React.FC = () => {
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-slate-900 dark:text-white">
-              {metrics ? `${metrics.avgCsat}/5.0` : '4.8/5.0'}
+              {metrics && metrics.csatRatedCount > 0 && metrics.avgCsat > 0 ? `${metrics.avgCsat}/5.0` : 'No data yet'}
             </span>
             <span className="text-xs text-slate-500 dark:text-slate-400">
-              {metrics?.csatRatedCount || 0} reviews
+              {metrics?.csatRatedCount || 0} review{(metrics?.csatRatedCount || 0) === 1 ? '' : 's'}
             </span>
           </div>
         </div>

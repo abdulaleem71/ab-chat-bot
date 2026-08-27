@@ -121,7 +121,7 @@ export class AdminConversationRepo {
       const totalConversations = Number(convRow?.total || 0);
       const activeConversations = Number(convRow?.active_cnt || 0);
       const closedConversations = Number(convRow?.closed_cnt || 0);
-      const avgCsat = convRow?.avg_csat ? Number(Number(convRow.avg_csat).toFixed(1)) : 4.8;
+      const avgCsat = convRow?.avg_csat ? Number(Number(convRow.avg_csat).toFixed(1)) : 0;
       const csatRatedCount = Number(convRow?.rated_cnt || 0);
 
       const msgCondition = tenantId ? 'WHERE tenant_id = ?' : '';
@@ -159,7 +159,7 @@ export class AdminConversationRepo {
         totalMessages: 0,
         avgMessagesPerConv: 0,
         totalLeadsCaptured: 0,
-        avgCsat: 4.8,
+        avgCsat: 0,
         csatRatedCount: 0,
       };
     }

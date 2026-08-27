@@ -254,7 +254,7 @@ export class AdminAnalyticsRepo {
         ratedCount++;
       }
     });
-    const avgCsat = ratedCount > 0 ? Number((ratedSum / ratedCount).toFixed(1)) : 4.8;
+    const avgCsat = ratedCount > 0 ? Number((ratedSum / ratedCount).toFixed(1)) : 0;
     const leadConversionRate = totalConversations > 0 ? Number(((totalLeadsCaptured / totalConversations) * 100).toFixed(1)) : 0;
     const avgMessagesPerConversation = totalConversations > 0 ? Number((totalMessages / totalConversations).toFixed(1)) : 0;
     const ragCitationRate = botMessagesCount > 0 ? Number(((ragCitationsCount / botMessagesCount) * 100).toFixed(1)) : 84.5;

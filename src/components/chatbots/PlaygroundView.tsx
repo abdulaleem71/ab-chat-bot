@@ -4,6 +4,7 @@ import { Chatbot, Message, GroundingSource } from '../../types';
 import { MarkdownContent } from '../../lib/markdown';
 import { Send, Bot, User, Sparkles, BookOpen, RotateCcw, ShieldCheck, CheckCircle2, ChevronRight, Loader2, ExternalLink, Layers, Code } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
+import { getModelDisplayName } from '../../config/models';
 
 interface PlaygroundViewProps {
   chatbots: Chatbot[];
@@ -201,7 +202,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
             >
               {chatbots.map(b => (
                 <option key={b.id} value={b.id}>
-                  {b.name} ({b.model})
+                  {b.name} ({getModelDisplayName(b.model)})
                 </option>
               ))}
             </select>
@@ -245,7 +246,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
               </div>
               <div>
                 <h3 className="text-xs font-extrabold font-heading">{selectedBot.name}</h3>
-                <p className="text-[10px] text-white/80 font-medium font-body">Model: {selectedBot.model} • Grounded RAG</p>
+                <p className="text-[10px] text-white/80 font-medium font-body">Model: {getModelDisplayName(selectedBot.model)} • Grounded RAG</p>
               </div>
             </div>
 
@@ -379,7 +380,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
             <div className="space-y-2 text-xs">
               <div className="bg-zinc-50 p-2.5 rounded-xl border border-zinc-200/60">
                 <span className="text-[10px] text-zinc-400 uppercase font-bold block">AI Engine</span>
-                <span className="text-zinc-900 font-bold">{selectedBot.model}</span>
+                <span className="text-zinc-900 font-bold">{getModelDisplayName(selectedBot.model)}</span>
               </div>
               <div className="bg-zinc-50 p-2.5 rounded-xl border border-zinc-200/60">
                 <span className="text-[10px] text-zinc-400 uppercase font-bold block">Tone of Voice</span>
@@ -388,7 +389,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
               <div className="bg-zinc-50 p-2.5 rounded-xl border border-zinc-200/60">
                 <span className="text-[10px] text-zinc-400 uppercase font-bold block">System Instruction</span>
                 <p className="text-[11px] text-zinc-600 font-normal mt-0.5 line-clamp-3">
-                  {selectedBot.systemPrompt}
+                  {selectedBot.systemInstruction || selectedBot.description || 'Ground answers using knowledge base citations.'}
                 </p>
               </div>
             </div>

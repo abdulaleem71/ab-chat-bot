@@ -93,7 +93,12 @@ export class AdminOverviewRepo {
     // 2. Chatbots Aggregations
     const [totalBotsRes, activeBotsRes] = await Promise.all([
       db.execute(`SELECT COUNT(*) as count FROM chatbots;`),
-      db.execute(`SELECT COUNT(*) as count FROM chatbots WHERE status = 'active';`),
+      db.execute(`
+        SELECT COUNT(DISTINCT c.id) as count 
+        FROM chatbots c 
+        LEFT JOIN conversations conv ON conv.chatbot_id = c.id 
+        WHERE (c.status = 'active' OR conv.id IS NOT NULL) AND c.status != 'archived';
+      `),
     ]);
     const totalChatbots = Number(totalBotsRes.rows[0]?.count || 0);
     const activeChatbots = Number(activeBotsRes.rows[0]?.count || 0);

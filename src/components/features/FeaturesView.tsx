@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Bot, BookOpen, Code, Inbox, Sparkles, BarChart3, Users, Zap, ShieldCheck, ArrowRight, CheckCircle2, Globe, FileText, Cpu, MessageSquare } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
+import { GEMINI_CONFIG } from '../../config/models';
 
 interface FeaturesViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -31,9 +32,9 @@ export const FeaturesView: React.FC<FeaturesViewProps> = ({ onNavigateToTab }) =
       id: 'gemini',
       category: 'ai',
       icon: Cpu,
-      title: 'Gemini 3.6 Flash & 3.1 Pro Models',
+      title: GEMINI_CONFIG.featuresTitle,
       badge: 'State-of-the-Art LLM',
-      description: 'Powered by Google’s ultra-fast Gemini 3.6 Flash and high-reasoning Gemini 3.1 Pro preview models.',
+      description: GEMINI_CONFIG.featuresDescription,
       details: [
         'Sub-second response latencies for web chat',
         'Strict system instruction compliance & custom tones',

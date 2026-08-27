@@ -403,7 +403,7 @@ export class AdminChatbotRepo {
       sql: `SELECT AVG(csat_rating) as avg_rating FROM conversations WHERE chatbot_id = ? AND csat_rating IS NOT NULL;`,
       args: [chatbotId],
     });
-    const avgCsat = csatRes.rows[0]?.avg_rating ? Math.round(Number(csatRes.rows[0].avg_rating) * 10) / 10 : 5.0;
+    const avgCsat = csatRes.rows[0]?.avg_rating ? Math.round(Number(csatRes.rows[0].avg_rating) * 10) / 10 : 0;
 
     // 6. Audit logs related to this bot
     const auditRes = await db.execute({

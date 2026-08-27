@@ -732,6 +732,16 @@ app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedReque
       ownerEmail: tenantRow.owner_email,
       plan: tenantRow.plan,
       createdAt: tenantRow.created_at,
+      byokConfig: {
+        hasCustomKey: Boolean(tenantRow.byok_api_key),
+        provider: tenantRow.byok_provider || 'gemini',
+        maskedKey: tenantRow.byok_api_key
+          ? (tenantRow.byok_api_key.length > 8
+              ? `${tenantRow.byok_api_key.slice(0, 4)}••••••••${tenantRow.byok_api_key.slice(-4)}`
+              : '••••••••••••')
+          : undefined,
+        updatedAt: tenantRow.byok_updated_at || undefined,
+      },
     } : null,
   });
 }));
@@ -2225,6 +2235,165 @@ app.post('/api/chatbots/:id/leads', asyncHandler(async (req, res) => {
   }
 
   res.json({ success: true, lead });
+}));
+
+// ==========================================
+// TENANT SETTINGS & BYOK (BRING YOUR OWN KEY) ENDPOINTS
+// ==========================================
+app.get('/api/tenant/byok', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const tenant = await UserRepo.findTenantById(req.user!.tenantId);
+  if (!tenant) {
+    return res.status(404).json({ success: false, error: 'Tenant workspace not found' });
+  }
+
+  const isSupported = tenant.plan === 'Ultra' || tenant.plan === 'Enterprise';
+  const hasCustomKey = Boolean(tenant.byok_api_key && tenant.byok_api_key.trim().length > 0);
+
+  const maskedKey = hasCustomKey && tenant.byok_api_key
+    ? (tenant.byok_api_key.length > 8
+        ? `${tenant.byok_api_key.slice(0, 4)}••••••••${tenant.byok_api_key.slice(-4)}`
+        : '••••••••••••')
+    : undefined;
+
+  res.json({
+    success: true,
+    supported: isSupported,
+    hasCustomKey,
+    provider: tenant.byok_provider || 'gemini',
+    maskedKey,
+    updatedAt: tenant.byok_updated_at || undefined,
+  });
+}));
+
+app.post('/api/tenant/byok', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { apiKey, provider = 'gemini' } = req.body || {};
+  const tenant = await UserRepo.findTenantById(req.user!.tenantId);
+  if (!tenant) {
+    return res.status(404).json({ success: false, error: 'Tenant workspace not found' });
+  }
+
+  const isSupported = tenant.plan === 'Ultra' || tenant.plan === 'Enterprise';
+  if (!isSupported) {
+    return res.status(403).json({
+      success: false,
+      error: 'Bring Your Own API Key (BYOK) is exclusively available on Enterprise Ultra and Enterprise tiers.',
+    });
+  }
+
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 8) {
+    return res.status(400).json({ success: false, error: 'A valid API key (minimum 8 characters) is required' });
+  }
+
+  const cleanKey = apiKey.trim();
+  const cleanProvider = provider === 'openai' ? 'openai' : 'gemini';
+
+  await UserRepo.updateTenantByok(req.user!.tenantId, cleanKey, cleanProvider);
+
+  const maskedKey = cleanKey.length > 8
+    ? `${cleanKey.slice(0, 4)}••••••••${cleanKey.slice(-4)}`
+    : '••••••••••••';
+
+  res.json({
+    success: true,
+    message: 'Custom API Key configured and stored securely on server.',
+    maskedKey,
+    provider: cleanProvider,
+    updatedAt: new Date().toISOString(),
+  });
+}));
+
+app.delete('/api/tenant/byok', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  await UserRepo.updateTenantByok(req.user!.tenantId, null, 'gemini');
+  res.json({
+    success: true,
+    message: 'Custom API key removed. Workspace reverted to platform quota.',
+  });
+}));
+
+app.post('/api/tenant/byok/test', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { apiKey, provider = 'gemini' } = req.body || {};
+  let keyToTest = apiKey;
+
+  if (!keyToTest) {
+    const tenant = await UserRepo.findTenantById(req.user!.tenantId);
+    keyToTest = tenant?.byok_api_key;
+  }
+
+  if (!keyToTest || typeof keyToTest !== 'string' || keyToTest.trim().length < 8) {
+    return res.status(400).json({ success: false, error: 'Please provide an API key to test.' });
+  }
+
+  const cleanKey = keyToTest.trim();
+  if (provider === 'openai') {
+    if (!cleanKey.startsWith('sk-') && !cleanKey.startsWith('sess-')) {
+      return res.status(400).json({ success: false, error: 'Invalid OpenAI API key format (expected sk-...)' });
+    }
+    return res.json({ success: true, message: 'OpenAI API key format verified successfully.' });
+  } else {
+    try {
+      const testAi = new (await import('@google/genai')).GoogleGenAI({ apiKey: cleanKey });
+      const testRes = await testAi.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{ role: 'user', parts: [{ text: 'Ping test' }] }],
+        config: { maxOutputTokens: 5 },
+      });
+      if (testRes) {
+        return res.json({ success: true, message: 'Google Gemini API key verified and working!' });
+      }
+    } catch (testErr: any) {
+      return res.status(400).json({
+        success: false,
+        error: `Gemini API validation failed: ${testErr.message || 'Invalid credentials'}`,
+      });
+    }
+  }
+
+  res.json({ success: true, message: 'API key verified successfully.' });
+}));
+
+app.post('/api/tenant/plan', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { plan } = req.body || {};
+  const validPlans = ['Free', 'Pro', 'Ultra', 'Enterprise'];
+  if (!plan || !validPlans.includes(plan)) {
+    return res.status(400).json({ success: false, error: 'Valid plan is required (Free, Pro, Ultra, Enterprise)' });
+  }
+
+  await UserRepo.updateTenantPlan(req.user!.tenantId, plan);
+  res.json({ success: true, plan, message: `Workspace plan updated to ${plan}` });
+}));
+
+// ==========================================
+// ENTERPRISE CONTACT SALES ENDPOINT
+// ==========================================
+app.post('/api/contact-sales', asyncHandler(async (req, res) => {
+  const { name, email, company, teamSize, messageVolume, requirements, notes } = req.body || {};
+
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ success: false, error: 'Valid corporate email is required.' });
+  }
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'Your name is required.' });
+  }
+
+  const referenceId = 'ENT-' + new Date().getFullYear() + '-' + Math.floor(10000 + Math.random() * 90000);
+
+  // In production, send notification to sales CRM / Slack webhook
+  console.log(`[ENTERPRISE INQUIRY ${referenceId}]:`, {
+    name,
+    email,
+    company: company || 'N/A',
+    teamSize: teamSize || 'N/A',
+    messageVolume: messageVolume || '100k+',
+    requirements: requirements || [],
+    notes: notes || '',
+    receivedAt: new Date().toISOString(),
+  });
+
+  res.json({
+    success: true,
+    referenceId,
+    message: 'Your enterprise inquiry has been received. Our solutions team will contact you within 2 hours with a custom quote.',
+  });
 }));
 
 // ==========================================

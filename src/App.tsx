@@ -13,6 +13,7 @@ import { InboxView } from './components/inbox/InboxView';
 import { EmbedChatWidget } from './components/embed/EmbedChatWidget';
 import { AuthModal } from './components/auth/AuthModal';
 import { PricingView } from './components/pricing/PricingView';
+import { BillingDashboardView } from './components/pricing/BillingDashboardView';
 import { FeaturesView } from './components/features/FeaturesView';
 import { FaqView } from './components/faq/FaqView';
 import { Footer } from './components/layout/Footer';
@@ -128,6 +129,15 @@ function DashboardContent() {
       })
       .catch(err => console.log('Error fetching analytics:', err));
   }, [token, isAuthenticated, activeTab]);
+
+  // Close open protected drawers/modals on logout
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setIsFloatingWidgetOpen(false);
+      setIsWidgetModalOpen(false);
+      setIsBotEditorOpen(false);
+    }
+  }, [isAuthenticated]);
 
   // Bot Handlers
   const handleCreateBot = () => {
@@ -425,13 +435,15 @@ function DashboardContent() {
           </div>
         )}
 
-        {/* Desktop Sidebar */}
-        <div className="hidden lg:block shrink-0">
-          <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} unreadCount={unreadCount} />
-        </div>
+        {/* Desktop Sidebar (Only for authenticated tenant session) */}
+        {isAuthenticated && (
+          <div className="hidden lg:block shrink-0">
+            <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} unreadCount={unreadCount} />
+          </div>
+        )}
 
         {/* Dynamic Main Workspace Container */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-7 overflow-y-auto max-w-7xl mx-auto w-full">
+        <main className={`flex-1 p-4 sm:p-6 lg:p-7 overflow-y-auto max-w-7xl mx-auto w-full ${!isAuthenticated ? 'min-h-[calc(100vh-14rem)]' : ''}`}>
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
@@ -445,6 +457,7 @@ function DashboardContent() {
                   analytics={defaultAnalytics}
                   chatbots={chatbots}
                   leads={leads}
+                  knowledgeCount={knowledgeSources.length}
                   onNavigate={setActiveTab}
                   onOpenCreateBotModal={handleCreateBot}
                   onOpenEmbedModal={handleOpenEmbedModal}
@@ -520,6 +533,7 @@ function DashboardContent() {
                   analytics={defaultAnalytics}
                   chatbots={chatbots}
                   leads={leads}
+                  knowledgeCount={knowledgeSources.length}
                   onNavigate={setActiveTab}
                   onOpenCreateBotModal={handleCreateBot}
                   onOpenEmbedModal={handleOpenEmbedModal}
@@ -530,6 +544,14 @@ function DashboardContent() {
                 <FeaturesView onNavigateToTab={setActiveTab} />
               )}
 
+              {activeTab === 'billing' && (
+                <BillingDashboardView
+                  onNavigateToPublicPricing={() => setActiveTab('pricing')}
+                  onNavigateToFaq={() => setActiveTab('faq')}
+                  chatbotsCount={chatbots.length}
+                />
+              )}
+
               {activeTab === 'pricing' && (
                 <PricingView
                   onOpenAuthModal={() => setIsAuthModalOpen(true)}
@@ -537,8 +559,14 @@ function DashboardContent() {
                 />
               )}
 
-              {activeTab === 'faq' && (
-                <FaqView onOpenTestChat={() => setIsFloatingWidgetOpen(true)} />
+              {(activeTab === 'faq' || activeTab === 'help') && (
+                <FaqView onOpenTestChat={() => {
+                  if (!isAuthenticated) {
+                    setIsAuthModalOpen(true);
+                    return;
+                  }
+                  setIsFloatingWidgetOpen(true);
+                }} />
               )}
             </motion.div>
           </AnimatePresence>
@@ -561,6 +589,10 @@ function DashboardContent() {
               whileTap={{ scale: 0.95 }}
               transition={{ type: 'spring', stiffness: 400, damping: 25 }}
               onClick={() => {
+                if (!isAuthenticated) {
+                  setIsAuthModalOpen(true);
+                  return;
+                }
                 if (activeBot) {
                   setIsFloatingWidgetOpen(true);
                 } else {
@@ -574,7 +606,7 @@ function DashboardContent() {
               <MessageSquare className="w-6 h-6" />
             </motion.button>
           ) : (
-            activeBot && (
+            activeBot && isAuthenticated && (
               <motion.div
                 key="floating-widget"
                 initial={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -609,7 +641,14 @@ function DashboardContent() {
         bot={embedModalBot || selectedBot || activeBot}
         isOpen={isWidgetModalOpen}
         onClose={() => setIsWidgetModalOpen(false)}
-        onTriggerFloatingWidget={() => setIsFloatingWidgetOpen(true)}
+        onTriggerFloatingWidget={() => {
+          if (!isAuthenticated) {
+            setIsWidgetModalOpen(false);
+            setIsAuthModalOpen(true);
+            return;
+          }
+          setIsFloatingWidgetOpen(true);
+        }}
       />
 
       <AuthModal

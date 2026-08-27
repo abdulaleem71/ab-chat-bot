@@ -500,7 +500,7 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
                       <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Customer CSAT</span>
                       <div className="text-2xl font-bold text-amber-400 mt-1 flex items-center gap-1">
                         <Star className="w-5 h-5 fill-amber-400" />
-                        {data.stats.avgCsat > 0 ? `${data.stats.avgCsat} / 5` : '5.0 / 5'}
+                        {data.stats.avgCsat > 0 ? `${data.stats.avgCsat} / 5.0` : <span className="text-sm font-semibold text-zinc-400">No data yet</span>}
                       </div>
                       <span className="text-[10px] text-zinc-500">Average visitor rating</span>
                     </div>

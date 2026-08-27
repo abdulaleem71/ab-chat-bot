@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Chatbot } from '../../types';
 import { Bot, Plus, Settings, MessageSquare, Code, ShieldCheck, Trash2, Globe, AlertTriangle, Search, BookOpen } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
+import { getModelDisplayName } from '../../config/models';
 
 interface BotListProps {
   chatbots: Chatbot[];
@@ -190,7 +191,7 @@ export const BotList: React.FC<BotListProps> = ({
                 <div className="grid grid-cols-2 gap-2 text-[11px] bg-zinc-50/80 p-3 rounded-xl border border-zinc-200/80">
                   <div>
                     <span className="text-zinc-400 block text-[10px] uppercase font-bold font-heading">Engine</span>
-                    <span className="text-zinc-800 font-semibold font-body">{bot.model}</span>
+                    <span className="text-zinc-800 font-semibold font-body">{getModelDisplayName(bot.model)}</span>
                   </div>
                   <div>
                     <span className="text-zinc-400 block text-[10px] uppercase font-bold font-heading">Tone</span>

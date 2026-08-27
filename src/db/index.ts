@@ -344,6 +344,23 @@ export async function initDb(): Promise<void> {
       // Column already exists
     }
 
+    // Column Migration for tenant BYOK (Bring Your Own Key)
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN byok_api_key TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN byok_provider TEXT DEFAULT 'gemini';`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN byok_updated_at TEXT;`);
+    } catch {
+      // Column already exists
+    }
+
     // Model migration for any legacy gemini-3.6-flash entries
     try {
       await client.execute(`UPDATE chatbots SET model = 'gemini-3.7-flash' WHERE model = 'gemini-3.6-flash' OR model IS NULL;`);

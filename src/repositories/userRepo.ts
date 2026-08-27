@@ -16,6 +16,9 @@ export interface TenantRow {
   owner_email: string;
   plan: string;
   created_at: string;
+  byok_api_key?: string | null;
+  byok_provider?: string | null;
+  byok_updated_at?: string | null;
 }
 
 export interface OAuthAccountRow {
@@ -146,14 +149,17 @@ export class UserRepo {
       owner_email: String(r.owner_email),
       plan: String(r.plan),
       created_at: String(r.created_at),
+      byok_api_key: r.byok_api_key ? String(r.byok_api_key) : null,
+      byok_provider: r.byok_provider ? String(r.byok_provider) : null,
+      byok_updated_at: r.byok_updated_at ? String(r.byok_updated_at) : null,
     };
   }
 
   static async createTenant(tenant: TenantRow): Promise<TenantRow> {
     const db = getDb();
     await db.execute({
-      sql: `INSERT INTO tenants (id, name, owner_email, plan, created_at) VALUES (?, ?, ?, ?, ?);`,
-      args: [tenant.id, tenant.name, tenant.owner_email.toLowerCase(), tenant.plan, tenant.created_at],
+      sql: `INSERT INTO tenants (id, name, owner_email, plan, created_at, byok_api_key, byok_provider, byok_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: [tenant.id, tenant.name, tenant.owner_email.toLowerCase(), tenant.plan, tenant.created_at, tenant.byok_api_key || null, tenant.byok_provider || 'gemini', tenant.byok_updated_at || null],
     });
     return tenant;
   }
@@ -163,6 +169,15 @@ export class UserRepo {
     await db.execute({
       sql: `UPDATE tenants SET plan = ? WHERE id = ?;`,
       args: [plan, tenantId],
+    });
+  }
+
+  static async updateTenantByok(tenantId: string, apiKey: string | null, provider: string = 'gemini'): Promise<void> {
+    const db = getDb();
+    const now = new Date().toISOString();
+    await db.execute({
+      sql: `UPDATE tenants SET byok_api_key = ?, byok_provider = ?, byok_updated_at = ? WHERE id = ?;`,
+      args: [apiKey, provider, now, tenantId],
     });
   }
 

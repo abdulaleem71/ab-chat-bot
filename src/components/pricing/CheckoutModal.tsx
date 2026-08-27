@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Receipt
 } from 'lucide-react';
+import { TenantPlan } from '../../types';
 import {
   VisaLogo,
   MastercardLogo,
@@ -29,7 +30,7 @@ import {
 interface CheckoutModalProps {
   isOpen: boolean;
   onClose: () => void;
-  planId: 'Free' | 'Pro' | 'Enterprise';
+  planId: TenantPlan;
   planName: string;
   monthlyPrice: number;
   annualPrice: number;
