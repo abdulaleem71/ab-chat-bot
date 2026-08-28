@@ -312,6 +312,38 @@ export async function initDb(): Promise<void> {
       );
     `);
 
+    // Create Integrations Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS integrations (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        integration_id TEXT NOT NULL,
+        is_connected INTEGER NOT NULL DEFAULT 0,
+        config_json TEXT,
+        connected_at TEXT,
+        updated_at TEXT,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        UNIQUE(tenant_id, integration_id)
+      );
+    `);
+
+    // Create Team Invitations Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS team_invitations (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'Agent',
+        token TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        invited_by TEXT,
+        invited_by_name TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
     // Create Performance Indexes
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_chatbots_tenant ON chatbots(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_ks_bot ON knowledge_sources(chatbot_id);`);
@@ -319,10 +351,48 @@ export async function initDb(): Promise<void> {
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_conv_bot ON conversations(chatbot_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_oauth_provider_user ON oauth_accounts(provider, provider_user_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_oauth_user_id ON oauth_accounts(user_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_integrations_tenant ON integrations(tenant_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_invites_tenant ON team_invitations(tenant_id);`);
 
     // Column Migration for website_url
     try {
       await client.execute(`ALTER TABLE chatbots ADD COLUMN website_url TEXT;`);
+    } catch {
+      // Column already exists
+    }
+
+    // Column Migration for chatbot channel type (Website Widget, WhatsApp, Instagram DM, Email)
+    try {
+      await client.execute(`ALTER TABLE chatbots ADD COLUMN channel TEXT DEFAULT 'Website Widget';`);
+    } catch {
+      // Column already exists
+    }
+
+    // Column Migration for conversation channel type and assignee
+    try {
+      await client.execute(`ALTER TABLE conversations ADD COLUMN channel TEXT DEFAULT 'Website Widget';`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE conversations ADD COLUMN assigned_to TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE conversations ADD COLUMN assigned_to_name TEXT;`);
+    } catch {
+      // Column already exists
+    }
+
+    // Column Migration for users avatar_url & last_active_at
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN avatar_url TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN last_active_at TEXT;`);
     } catch {
       // Column already exists
     }
@@ -357,6 +427,38 @@ export async function initDb(): Promise<void> {
     }
     try {
       await client.execute(`ALTER TABLE tenants ADD COLUMN byok_updated_at TEXT;`);
+    } catch {
+      // Column already exists
+    }
+
+    // Column Migration for tenant 3-day Growth Pro Trial & Payment Method On File
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN trial_started_at TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN trial_ends_at TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN payment_method_on_file INTEGER DEFAULT 0;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN payment_method_brand TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN payment_method_last4 TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN payment_method_exp TEXT;`);
     } catch {
       // Column already exists
     }
@@ -435,10 +537,35 @@ async function seedInitialData(db: Client) {
       args: [userId, 'alex@acmesaas.io', 'password', 'Alex Rivera', tenantId, 'owner', now],
     });
 
-    // Seed Org Member
+    // Seed Agent User
+    const agentUserId = 'usr_elena_agent';
+    await db.execute({
+      sql: `INSERT INTO users (id, email, password_hash, name, tenant_id, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?);`,
+      args: [agentUserId, 'elena@acmesaas.io', 'password', 'Elena Rostova', tenantId, 'agent', now],
+    });
+
+    // Seed Org Members
     await db.execute({
       sql: `INSERT INTO organization_members (id, tenant_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?);`,
       args: ['mem_1', tenantId, userId, 'owner', now],
+    });
+    await db.execute({
+      sql: `INSERT INTO organization_members (id, tenant_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?);`,
+      args: ['mem_2', tenantId, agentUserId, 'agent', now],
+    });
+
+    // Seed Sample Team Invite
+    await db.execute({
+      sql: `INSERT INTO team_invitations (id, tenant_id, email, role, token, status, invited_by, invited_by_name, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: ['inv_1', tenantId, 'marcus.chen@acmesaas.io', 'Agent', 'tok_inv_1', 'pending', userId, 'Alex Rivera', now, new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()],
+    });
+
+    // Seed Integrations
+    await db.execute({
+      sql: `INSERT INTO integrations (id, tenant_id, integration_id, is_connected, config_json, connected_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?);`,
+      args: ['int_slack_1', tenantId, 'slack', 1, JSON.stringify({ channel: '#support-live', webhookUrl: 'https://hooks.slack.com/services/T00/B00/XXXX' }), now, now],
     });
 
     // Seed Subscription

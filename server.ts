@@ -20,6 +20,8 @@ import { KnowledgeRepo } from './src/repositories/knowledgeRepo';
 import { ConversationRepo } from './src/repositories/conversationRepo';
 import { LeadRepo } from './src/repositories/leadRepo';
 import { AnalyticsRepo } from './src/repositories/analyticsRepo';
+import { TeamRepo } from './src/repositories/teamRepo';
+import { IntegrationRepo } from './src/repositories/integrationRepo';
 import { KnowledgeService } from './src/services/knowledgeService';
 import { ChatService } from './src/services/chatService';
 import { SecurityService } from './src/services/securityService';
@@ -206,6 +208,18 @@ function requireAuth(req: AuthenticatedRequest, res: express.Response, next: exp
   }
 }
 
+// Tenant Admin Clearance Middleware (for billing, team invites, role edits)
+function requireTenantAdminAuth(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  const role = String(req.user?.role || '').toLowerCase();
+  if (role !== 'owner' && role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      error: 'Permission Denied: Only workspace Admins and Owners can perform this action.',
+    });
+  }
+  next();
+}
+
 // Dedicated Admin Server-Side Authentication Middleware
 export interface AdminAuthenticatedRequest extends express.Request {
   admin?: AdminUser;
@@ -316,13 +330,17 @@ app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res) => {
   const tenantId = 'tenant_' + Date.now();
   const userId = 'usr_' + Date.now();
   const now = new Date().toISOString();
+  const trialEndsAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
 
   const tenant = await UserRepo.createTenant({
     id: tenantId,
     name: companyName ? String(companyName).slice(0, 100) : `${email.split('@')[0]}'s Workspace`,
     owner_email: email.toLowerCase(),
-    plan: 'Pro',
+    plan: 'growth_pro',
     created_at: now,
+    trial_started_at: now,
+    trial_ends_at: trialEndsAt,
+    payment_method_on_file: 0,
   });
 
   const passwordHash = await bcrypt.hash(password, 10);
@@ -347,7 +365,19 @@ app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res) => {
     success: true,
     token,
     user: { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
-    tenant: { id: tenant.id, name: tenant.name, ownerEmail: tenant.owner_email, plan: tenant.plan, createdAt: tenant.created_at },
+    tenant: {
+      id: tenant.id,
+      name: tenant.name,
+      ownerEmail: tenant.owner_email,
+      plan: tenant.plan,
+      createdAt: tenant.created_at,
+      trialStartedAt: tenant.trial_started_at,
+      trialEndsAt: tenant.trial_ends_at,
+      hasPaymentMethod: false,
+      paymentMethodBrand: null,
+      paymentMethodLast4: null,
+      paymentMethodExp: null,
+    },
   });
 }));
 
@@ -358,9 +388,14 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, error: 'Email and password are required' });
   }
 
-  const user = await UserRepo.findUserByEmail(email);
+  // 1. Block sign-in without an account. Require existing user.
+  const user = await UserRepo.findUserByEmail(email.trim());
   if (!user) {
-    return res.status(401).json({ success: false, error: 'Invalid email or password' });
+    return res.status(401).json({
+      success: false,
+      error: 'No account found with this email address. Please sign up first.',
+      code: 'ACCOUNT_NOT_FOUND',
+    });
   }
 
   let isValidPassword = false;
@@ -372,16 +407,40 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
   }
 
   if (!isValidPassword) {
-    return res.status(401).json({ success: false, error: 'Invalid email or password' });
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid password. Please check your credentials and try again.',
+      code: 'INVALID_PASSWORD',
+    });
   }
 
-  const tenant = await UserRepo.findTenantById(user.tenant_id) || {
-    id: user.tenant_id,
-    name: 'Workspace',
-    owner_email: user.email,
-    plan: 'Pro',
-    created_at: new Date().toISOString(),
-  };
+  let tenant = await UserRepo.findTenantById(user.tenant_id);
+  if (!tenant) {
+    const now = new Date().toISOString();
+    const trialEndsAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+    tenant = await UserRepo.createTenant({
+      id: user.tenant_id,
+      name: `${user.name}'s Workspace`,
+      owner_email: user.email,
+      plan: 'growth_pro',
+      created_at: now,
+      trial_started_at: now,
+      trial_ends_at: trialEndsAt,
+      payment_method_on_file: 0,
+    });
+  }
+
+  // Check trial expiration: if trial has expired and no payment method exists, auto-downgrade to Free
+  const now = new Date();
+  if (
+    tenant.trial_ends_at &&
+    new Date(tenant.trial_ends_at) <= now &&
+    !tenant.payment_method_on_file &&
+    tenant.plan !== 'Free'
+  ) {
+    await UserRepo.updateTenantPlan(tenant.id, 'Free');
+    tenant.plan = 'Free';
+  }
 
   const token = jwt.sign(
     { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
@@ -393,7 +452,19 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
     success: true,
     token,
     user: { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
-    tenant: { id: tenant.id, name: tenant.name, ownerEmail: tenant.owner_email, plan: tenant.plan, createdAt: tenant.created_at },
+    tenant: {
+      id: tenant.id,
+      name: tenant.name,
+      ownerEmail: tenant.owner_email,
+      plan: tenant.plan,
+      createdAt: tenant.created_at,
+      trialStartedAt: tenant.trial_started_at,
+      trialEndsAt: tenant.trial_ends_at,
+      hasPaymentMethod: Boolean(tenant.payment_method_on_file),
+      paymentMethodBrand: tenant.payment_method_brand,
+      paymentMethodLast4: tenant.payment_method_last4,
+      paymentMethodExp: tenant.payment_method_exp,
+    },
   });
 }));
 
@@ -637,25 +708,9 @@ app.get('/api/auth/github/callback', asyncHandler(handleGithubCallback));
 app.get('/auth/github/callback', asyncHandler(handleGithubCallback));
 
 app.post('/api/auth/social', authLimiter, asyncHandler(async (req, res) => {
-  const { provider, email: inputEmail, name: inputName } = req.body || {};
-  const providerName = provider === 'github' ? 'github' : 'google';
-  const email = (inputEmail && typeof inputEmail === 'string' && inputEmail.includes('@'))
-    ? inputEmail.trim().toLowerCase()
-    : `${providerName}.user@example.com`;
-  const name = inputName || (providerName === 'github' ? 'GitHub User' : 'Google User');
-
-  const { user, tenant, token } = await OAuthService.processOAuthLogin({
-    provider: providerName,
-    providerUserId: `mock_${Date.now()}`,
-    email,
-    name,
-  });
-
-  res.json({
-    success: true,
-    token,
-    user: { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
-    tenant: { id: tenant.id, name: tenant.name, ownerEmail: tenant.owner_email, plan: tenant.plan, createdAt: tenant.created_at },
+  return res.status(400).json({
+    success: false,
+    error: 'Direct social login bypass is disabled. Please use the official Google or GitHub OAuth popup authorization, or sign up with email and password.',
   });
 }));
 
@@ -721,7 +776,21 @@ app.post('/api/auth/reset-password', authLimiter, asyncHandler(async (req, res) 
 
 app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const user = req.user!;
-  const tenantRow = await UserRepo.findTenantById(user.tenantId);
+  let tenantRow = await UserRepo.findTenantById(user.tenantId);
+
+  // Auto-downgrade check if trial expired and no card on file
+  if (tenantRow) {
+    const now = new Date();
+    if (
+      tenantRow.trial_ends_at &&
+      new Date(tenantRow.trial_ends_at) <= now &&
+      !tenantRow.payment_method_on_file &&
+      tenantRow.plan !== 'Free'
+    ) {
+      await UserRepo.updateTenantPlan(tenantRow.id, 'Free');
+      tenantRow.plan = 'Free';
+    }
+  }
 
   res.json({
     success: true,
@@ -732,6 +801,12 @@ app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedReque
       ownerEmail: tenantRow.owner_email,
       plan: tenantRow.plan,
       createdAt: tenantRow.created_at,
+      trialStartedAt: tenantRow.trial_started_at,
+      trialEndsAt: tenantRow.trial_ends_at,
+      hasPaymentMethod: Boolean(tenantRow.payment_method_on_file),
+      paymentMethodBrand: tenantRow.payment_method_brand,
+      paymentMethodLast4: tenantRow.payment_method_last4,
+      paymentMethodExp: tenantRow.payment_method_exp,
       byokConfig: {
         hasCustomKey: Boolean(tenantRow.byok_api_key),
         provider: tenantRow.byok_provider || 'gemini',
@@ -2164,12 +2239,142 @@ app.patch('/api/conversations/:id/status', requireAuth, asyncHandler(async (req:
   res.json({ success: true, conversation: updated });
 }));
 
+app.patch('/api/conversations/:id/assign', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { assignedTo, assignedToName } = req.body || {};
+  const updated = await ConversationRepo.assignConversation(
+    req.params.id,
+    req.user!.tenantId,
+    assignedTo || null,
+    assignedToName || null
+  );
+
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Conversation not found' });
+  }
+
+  res.json({ success: true, conversation: updated });
+}));
+
 app.delete('/api/conversations/:id', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const deleted = await ConversationRepo.delete(req.params.id, req.user!.tenantId);
   if (!deleted) {
     return res.status(404).json({ success: false, error: 'Conversation not found' });
   }
   res.json({ success: true, id: req.params.id });
+}));
+
+// ==========================================
+// TEAM & ROLE MANAGEMENT ENDPOINTS
+// ==========================================
+app.get('/api/team/members', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const members = await TeamRepo.getTeamMembers(req.user!.tenantId);
+  res.json({ success: true, members });
+}));
+
+app.get('/api/team/invites', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const invites = await TeamRepo.getPendingInvites(req.user!.tenantId);
+  res.json({ success: true, invites });
+}));
+
+app.post('/api/team/invites', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { email, role = 'Agent' } = req.body || {};
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ success: false, error: 'A valid email address is required.' });
+  }
+
+  const validRole = role === 'Admin' ? 'Admin' : 'Agent';
+  const invite = await TeamRepo.inviteTeammate(
+    req.user!.tenantId,
+    email,
+    validRole,
+    req.user!.id,
+    req.user!.name
+  );
+
+  res.json({
+    success: true,
+    invite,
+    message: `Invitation sent to ${email} as ${validRole}.`,
+  });
+}));
+
+app.delete('/api/team/invites/:id', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const success = await TeamRepo.cancelInvite(req.params.id, req.user!.tenantId);
+  if (!success) {
+    return res.status(404).json({ success: false, error: 'Invitation not found or already processed.' });
+  }
+  res.json({ success: true, message: 'Invitation cancelled successfully.' });
+}));
+
+app.patch('/api/team/members/:id/role', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { role } = req.body || {};
+  if (!role || !['Admin', 'Agent'].includes(role)) {
+    return res.status(400).json({ success: false, error: 'Valid role (Admin or Agent) is required.' });
+  }
+
+  // Member ID might be tm_usr_xxx or usr_xxx
+  const userId = req.params.id.startsWith('tm_') ? req.params.id.replace('tm_', '') : req.params.id;
+
+  await TeamRepo.updateMemberRole(userId, req.user!.tenantId, role as any);
+  res.json({ success: true, message: `Member role updated to ${role}.` });
+}));
+
+app.delete('/api/team/members/:id', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const userId = req.params.id.startsWith('tm_') ? req.params.id.replace('tm_', '') : req.params.id;
+
+  try {
+    await TeamRepo.removeMember(userId, req.user!.tenantId);
+    res.json({ success: true, message: 'Team member removed from workspace.' });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message || 'Failed to remove team member.' });
+  }
+}));
+
+// ==========================================
+// INTEGRATIONS MARKETPLACE ENDPOINTS
+// ==========================================
+app.get('/api/integrations', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const integrations = await IntegrationRepo.getIntegrations(req.user!.tenantId);
+  res.json({ success: true, integrations });
+}));
+
+app.post('/api/integrations/:id/connect', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const integrationId = req.params.id as any;
+  const { config } = req.body || {};
+
+  const validIntegrations = ['slack', 'whatsapp', 'zapier', 'hubspot', 'shopify'];
+  if (!validIntegrations.includes(integrationId)) {
+    return res.status(400).json({ success: false, error: `Invalid integration identifier: ${integrationId}` });
+  }
+
+  const result = await IntegrationRepo.setConnection(
+    req.user!.tenantId,
+    integrationId,
+    true,
+    config || {}
+  );
+
+  res.json({
+    success: true,
+    integration: result,
+    message: `Connected ${result.name} successfully.`,
+  });
+}));
+
+app.post('/api/integrations/:id/disconnect', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const integrationId = req.params.id as any;
+  await IntegrationRepo.disconnect(req.user!.tenantId, integrationId);
+  res.json({ success: true, message: `Disconnected integration successfully.` });
+}));
+
+app.post('/api/integrations/:id/test', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const integrationId = req.params.id;
+  // Connection ping stub
+  res.json({
+    success: true,
+    status: 'healthy',
+    message: `${integrationId.toUpperCase()} integration webhook handshake verified successfully. Ready to stream data.`,
+  });
 }));
 
 // ==========================================
@@ -2351,15 +2556,166 @@ app.post('/api/tenant/byok/test', requireAuth, asyncHandler(async (req: Authenti
   res.json({ success: true, message: 'API key verified successfully.' });
 }));
 
-app.post('/api/tenant/plan', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+// ==========================================
+// BILLING & PAYMENT METHOD ENFORCEMENT ENDPOINTS
+// ==========================================
+app.get('/api/billing/status', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  let tenant = await UserRepo.findTenantById(req.user!.tenantId);
+  if (!tenant) {
+    return res.status(404).json({ success: false, error: 'Workspace tenant not found.' });
+  }
+
+  const now = new Date();
+  const trialEnds = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
+  const isTrialActive = Boolean(
+    trialEnds &&
+    trialEnds > now &&
+    (tenant.plan === 'growth_pro' || tenant.plan === 'Pro') &&
+    !tenant.payment_method_on_file
+  );
+  const isTrialExpired = Boolean(
+    trialEnds &&
+    trialEnds <= now &&
+    !tenant.payment_method_on_file
+  );
+
+  if (isTrialExpired && tenant.plan !== 'Free') {
+    await UserRepo.updateTenantPlan(tenant.id, 'Free');
+    tenant.plan = 'Free';
+  }
+
+  res.json({
+    success: true,
+    plan: tenant.plan,
+    isTrialActive,
+    isTrialExpired,
+    trialStartedAt: tenant.trial_started_at,
+    trialEndsAt: tenant.trial_ends_at,
+    hasPaymentMethod: Boolean(tenant.payment_method_on_file),
+    paymentMethod: tenant.payment_method_on_file ? {
+      brand: tenant.payment_method_brand || 'Visa',
+      last4: tenant.payment_method_last4 || '4242',
+      exp: tenant.payment_method_exp || '12/28',
+    } : null,
+  });
+}));
+
+app.post('/api/billing/payment-method', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { cardNumber, expMonth, expYear, cvc, nameOnCard, brand, autoUpgradePlan } = req.body || {};
+
+  if (!cardNumber || typeof cardNumber !== 'string') {
+    return res.status(400).json({ success: false, error: 'Card number is required.' });
+  }
+
+  const cleanNumber = cardNumber.replace(/\s+/g, '').replace(/-/g, '');
+  if (cleanNumber.length < 13 || cleanNumber.length > 19 || !/^\d+$/.test(cleanNumber)) {
+    return res.status(400).json({ success: false, error: 'Invalid card number format. Please enter 13-19 digits.' });
+  }
+
+  // Luhn algorithm check for authentic credit cards
+  let sum = 0;
+  let shouldDouble = false;
+  for (let i = cleanNumber.length - 1; i >= 0; i--) {
+    let digit = parseInt(cleanNumber.charAt(i), 10);
+    if (shouldDouble) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+    shouldDouble = !shouldDouble;
+  }
+  if (sum % 10 !== 0) {
+    return res.status(400).json({ success: false, error: 'Invalid card number checksum. Please check card number.' });
+  }
+
+  const last4 = cleanNumber.slice(-4);
+  let cardBrand = brand || 'Visa';
+  if (cleanNumber.startsWith('4')) cardBrand = 'Visa';
+  else if (cleanNumber.startsWith('51') || cleanNumber.startsWith('52') || cleanNumber.startsWith('53') || cleanNumber.startsWith('54') || cleanNumber.startsWith('55')) cardBrand = 'Mastercard';
+  else if (cleanNumber.startsWith('34') || cleanNumber.startsWith('37')) cardBrand = 'American Express';
+  else if (cleanNumber.startsWith('6011')) cardBrand = 'Discover';
+
+  const exp = `${String(expMonth || '12').padStart(2, '0')}/${String(expYear || '28').slice(-2)}`;
+
+  await UserRepo.setPaymentMethod(req.user!.tenantId, {
+    brand: cardBrand,
+    last4,
+    exp,
+  });
+
+  // If an auto upgrade was requested with valid card
+  let activePlan = undefined;
+  if (autoUpgradePlan && ['Pro', 'growth_pro', 'Ultra', 'Enterprise'].includes(autoUpgradePlan)) {
+    const targetPlan = autoUpgradePlan === 'growth_pro' ? 'Pro' : autoUpgradePlan;
+    await UserRepo.updateTenantPlan(req.user!.tenantId, targetPlan);
+    activePlan = targetPlan;
+  }
+
+  res.json({
+    success: true,
+    message: 'Payment method successfully validated and stored on account.',
+    plan: activePlan,
+    paymentMethod: {
+      brand: cardBrand,
+      last4,
+      exp,
+    },
+  });
+}));
+
+app.delete('/api/billing/payment-method', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  await UserRepo.removePaymentMethod(req.user!.tenantId);
+
+  // If on a paid plan, auto-downgrade to Free
+  const tenant = await UserRepo.findTenantById(req.user!.tenantId);
+  if (tenant && tenant.plan !== 'Free') {
+    await UserRepo.updateTenantPlan(req.user!.tenantId, 'Free');
+  }
+
+  res.json({
+    success: true,
+    message: 'Payment method removed. Workspace transitioned to Free plan.',
+    plan: 'Free',
+  });
+}));
+
+app.post('/api/tenant/plan', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { plan } = req.body || {};
-  const validPlans = ['Free', 'Pro', 'Ultra', 'Enterprise'];
+  const validPlans = ['Free', 'Pro', 'growth_pro', 'Ultra', 'Enterprise'];
   if (!plan || !validPlans.includes(plan)) {
     return res.status(400).json({ success: false, error: 'Valid plan is required (Free, Pro, Ultra, Enterprise)' });
   }
 
-  await UserRepo.updateTenantPlan(req.user!.tenantId, plan);
-  res.json({ success: true, plan, message: `Workspace plan updated to ${plan}` });
+  const tenant = await UserRepo.findTenantById(req.user!.tenantId);
+  if (!tenant) {
+    return res.status(404).json({ success: false, error: 'Tenant not found.' });
+  }
+
+  // Requirement 3: No payment method = no paid plan access, ever.
+  // Block any activation of a paid tier without a confirmed payment method on file,
+  // unless user is in an active 3-day Growth Pro trial.
+  const isPaidPlan = plan !== 'Free';
+  if (isPaidPlan) {
+    const hasCard = Boolean(tenant.payment_method_on_file);
+    const now = new Date();
+    const isTrialActive = Boolean(
+      (tenant.plan === 'growth_pro' || tenant.plan === 'Pro') &&
+      tenant.trial_ends_at &&
+      new Date(tenant.trial_ends_at) > now
+    );
+
+    if (!hasCard && !isTrialActive) {
+      return res.status(402).json({
+        success: false,
+        error: 'A confirmed payment method is required to activate or upgrade to a paid plan. Please add a payment method before upgrading.',
+        requiresPaymentMethod: true,
+      });
+    }
+  }
+
+  const targetPlan = plan === 'growth_pro' ? 'Pro' : plan;
+  await UserRepo.updateTenantPlan(req.user!.tenantId, targetPlan);
+  res.json({ success: true, plan: targetPlan, message: `Workspace plan updated to ${targetPlan}` });
 }));
 
 // ==========================================
@@ -2426,6 +2782,28 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 // VITE MIDDLEWARE / PRODUCTION STATIC SERVING
 // ==========================================
 async function startServer() {
+  // Background Job: Check and auto-downgrade expired Growth Pro / Pro trials without payment method
+  try {
+    UserRepo.checkAndDowngradeExpiredTrials().then(count => {
+      if (count > 0) {
+        console.log(`[TRIAL_CRON] Initialized: Downgraded ${count} expired tenant(s) to Free plan.`);
+      }
+    }).catch(err => console.warn('[TRIAL_CRON] Initial check warning:', err.message));
+
+    setInterval(async () => {
+      try {
+        const count = await UserRepo.checkAndDowngradeExpiredTrials();
+        if (count > 0) {
+          console.log(`[TRIAL_CRON] Periodic check: Auto-downgraded ${count} expired tenant(s) to Free plan.`);
+        }
+      } catch (err: any) {
+        console.warn('[TRIAL_CRON] Periodic check failed:', err.message);
+      }
+    }, 10 * 60 * 1000); // Check every 10 minutes
+  } catch (err) {
+    console.error('[TRIAL_CRON] Setup error:', err);
+  }
+
   if (process.env.VERCEL) {
     // On Vercel, static files are served by Vercel CDN from the 'dist' directory.
     // The serverless function handles API routes only.

@@ -156,6 +156,22 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
               </li>
               <li>
                 <button
+                  onClick={() => onNavigateTab?.('integrations')}
+                  className="hover:text-white transition cursor-pointer"
+                >
+                  Integrations Marketplace
+                </button>
+              </li>
+              <li>
+                <button
+                  onClick={() => onNavigateTab?.('team')}
+                  className="hover:text-white transition cursor-pointer"
+                >
+                  Team & Role Management
+                </button>
+              </li>
+              <li>
+                <button
                   onClick={() => onNavigateTab?.('embed')}
                   className="hover:text-white transition cursor-pointer"
                 >
@@ -203,7 +219,34 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
             <a href="https://nomadsarc.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition">NomadsArc Platform</a>
             <span className="hover:text-white cursor-pointer">Privacy Policy</span>
             <span className="hover:text-white cursor-pointer">Terms of Service</span>
-            <span className="hover:text-white cursor-pointer">Security Standards</span>
+            <a
+              href="#security"
+              onClick={(e) => {
+                e.preventDefault();
+                if (onNavigateTab) {
+                  onNavigateTab('security');
+                } else {
+                  window.location.hash = 'security';
+                }
+              }}
+              className="hover:text-white transition cursor-pointer"
+            >
+              Security Standards
+            </a>
+            <a
+              href="#status"
+              onClick={(e) => {
+                e.preventDefault();
+                if (onNavigateTab) {
+                  onNavigateTab('status');
+                } else {
+                  window.location.hash = 'status';
+                }
+              }}
+              className="hover:text-white transition cursor-pointer"
+            >
+              System Status
+            </a>
             <a
               href="#admin"
               onClick={(e) => {

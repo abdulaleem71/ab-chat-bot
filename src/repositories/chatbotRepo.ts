@@ -38,9 +38,9 @@ export class ChatbotRepo {
     await db.execute({
       sql: `INSERT INTO chatbots (
         id, tenant_id, user_id, name, description, website_url, allowed_domains_json, domain_lock_enabled, embed_secret_key,
-        system_instruction, tone, primary_color, text_color, avatar, greeting_message, suggested_questions_json,
+        channel, system_instruction, tone, primary_color, text_color, avatar, greeting_message, suggested_questions_json,
         model, fallback_message, collect_lead_email, lead_title, human_operator_online, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       args: [
         bot.id,
         bot.tenantId,
@@ -51,6 +51,7 @@ export class ChatbotRepo {
         allowedDomainsJson,
         bot.domainLockEnabled === false ? 0 : 1,
         secretKey,
+        bot.channel || 'Website Widget',
         bot.systemInstruction || '',
         bot.tone || 'Friendly',
         bot.primaryColor || '#4F46E5',
@@ -72,6 +73,7 @@ export class ChatbotRepo {
     bot.allowedDomains = bot.allowedDomains || [];
     bot.domainLockEnabled = bot.domainLockEnabled !== false;
     bot.embedSecretKey = secretKey;
+    bot.channel = bot.channel || 'Website Widget';
 
     return bot;
   }
@@ -97,7 +99,7 @@ export class ChatbotRepo {
     await db.execute({
       sql: `UPDATE chatbots SET
         name = ?, description = ?, website_url = ?, allowed_domains_json = ?, domain_lock_enabled = ?, embed_secret_key = ?,
-        system_instruction = ?, tone = ?, primary_color = ?, text_color = ?, avatar = ?, greeting_message = ?,
+        channel = ?, system_instruction = ?, tone = ?, primary_color = ?, text_color = ?, avatar = ?, greeting_message = ?,
         suggested_questions_json = ?, model = ?, fallback_message = ?, collect_lead_email = ?, lead_title = ?,
         human_operator_online = ?, status = ?, updated_at = ?
       WHERE id = ? AND tenant_id = ?;`,
@@ -108,6 +110,7 @@ export class ChatbotRepo {
         allowedDomainsJson,
         updated.domainLockEnabled === false ? 0 : 1,
         secretKey,
+        updated.channel || 'Website Widget',
         updated.systemInstruction,
         updated.tone,
         updated.primaryColor,
@@ -127,6 +130,8 @@ export class ChatbotRepo {
       ],
     });
 
+    updated.allowedDomains = updated.allowedDomains || [];
+    updated.domainLockEnabled = updated.domainLockEnabled !== false;
     updated.embedSecretKey = secretKey;
     return updated;
   }
@@ -166,6 +171,7 @@ export class ChatbotRepo {
       allowedDomains: Array.isArray(allowedDomains) ? allowedDomains : [],
       domainLockEnabled: r.domain_lock_enabled !== undefined && r.domain_lock_enabled !== null ? Number(r.domain_lock_enabled) === 1 : true,
       embedSecretKey: r.embed_secret_key ? String(r.embed_secret_key) : undefined,
+      channel: (r.channel || 'Website Widget') as any,
       systemInstruction: String(r.system_instruction || ''),
       tone: (r.tone || 'Friendly') as any,
       primaryColor: String(r.primary_color || '#4F46E5'),

@@ -19,6 +19,12 @@ export interface TenantRow {
   byok_api_key?: string | null;
   byok_provider?: string | null;
   byok_updated_at?: string | null;
+  trial_started_at?: string | null;
+  trial_ends_at?: string | null;
+  payment_method_on_file?: number | null;
+  payment_method_brand?: string | null;
+  payment_method_last4?: string | null;
+  payment_method_exp?: string | null;
 }
 
 export interface OAuthAccountRow {
@@ -152,14 +158,38 @@ export class UserRepo {
       byok_api_key: r.byok_api_key ? String(r.byok_api_key) : null,
       byok_provider: r.byok_provider ? String(r.byok_provider) : null,
       byok_updated_at: r.byok_updated_at ? String(r.byok_updated_at) : null,
+      trial_started_at: r.trial_started_at ? String(r.trial_started_at) : null,
+      trial_ends_at: r.trial_ends_at ? String(r.trial_ends_at) : null,
+      payment_method_on_file: r.payment_method_on_file ? Number(r.payment_method_on_file) : 0,
+      payment_method_brand: r.payment_method_brand ? String(r.payment_method_brand) : null,
+      payment_method_last4: r.payment_method_last4 ? String(r.payment_method_last4) : null,
+      payment_method_exp: r.payment_method_exp ? String(r.payment_method_exp) : null,
     };
   }
 
   static async createTenant(tenant: TenantRow): Promise<TenantRow> {
     const db = getDb();
     await db.execute({
-      sql: `INSERT INTO tenants (id, name, owner_email, plan, created_at, byok_api_key, byok_provider, byok_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
-      args: [tenant.id, tenant.name, tenant.owner_email.toLowerCase(), tenant.plan, tenant.created_at, tenant.byok_api_key || null, tenant.byok_provider || 'gemini', tenant.byok_updated_at || null],
+      sql: `INSERT INTO tenants (
+        id, name, owner_email, plan, created_at, byok_api_key, byok_provider, byok_updated_at,
+        trial_started_at, trial_ends_at, payment_method_on_file, payment_method_brand, payment_method_last4, payment_method_exp
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: [
+        tenant.id,
+        tenant.name,
+        tenant.owner_email.toLowerCase(),
+        tenant.plan,
+        tenant.created_at,
+        tenant.byok_api_key || null,
+        tenant.byok_provider || 'gemini',
+        tenant.byok_updated_at || null,
+        tenant.trial_started_at || null,
+        tenant.trial_ends_at || null,
+        tenant.payment_method_on_file || 0,
+        tenant.payment_method_brand || null,
+        tenant.payment_method_last4 || null,
+        tenant.payment_method_exp || null,
+      ],
     });
     return tenant;
   }
@@ -170,6 +200,64 @@ export class UserRepo {
       sql: `UPDATE tenants SET plan = ? WHERE id = ?;`,
       args: [plan, tenantId],
     });
+  }
+
+  static async setPaymentMethod(
+    tenantId: string,
+    details: { brand: string; last4: string; exp: string }
+  ): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE tenants SET 
+        payment_method_on_file = 1,
+        payment_method_brand = ?,
+        payment_method_last4 = ?,
+        payment_method_exp = ?
+      WHERE id = ?;`,
+      args: [details.brand, details.last4, details.exp, tenantId],
+    });
+  }
+
+  static async removePaymentMethod(tenantId: string): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE tenants SET 
+        payment_method_on_file = 0,
+        payment_method_brand = NULL,
+        payment_method_last4 = NULL,
+        payment_method_exp = NULL
+      WHERE id = ?;`,
+      args: [tenantId],
+    });
+  }
+
+  static async updateTenantTrial(tenantId: string, trialStartedAt: string, trialEndsAt: string): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE tenants SET trial_started_at = ?, trial_ends_at = ? WHERE id = ?;`,
+      args: [trialStartedAt, trialEndsAt, tenantId],
+    });
+  }
+
+  /**
+   * Evaluates all tenants with expired trials that have no payment method on file,
+   * and auto-downgrades them to the 'Free' tier.
+   */
+  static async checkAndDowngradeExpiredTrials(): Promise<number> {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const res = await db.execute({
+      sql: `
+        UPDATE tenants 
+        SET plan = 'Free' 
+        WHERE (plan = 'growth_pro' OR plan = 'Pro' OR plan = 'Ultra' OR plan = 'Enterprise')
+          AND (payment_method_on_file IS NULL OR payment_method_on_file = 0)
+          AND trial_ends_at IS NOT NULL 
+          AND trial_ends_at < ?;
+      `,
+      args: [now],
+    });
+    return Number(res.rowsAffected || 0);
   }
 
   static async updateTenantByok(tenantId: string, apiKey: string | null, provider: string = 'gemini'): Promise<void> {

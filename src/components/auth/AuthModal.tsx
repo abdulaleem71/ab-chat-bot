@@ -151,12 +151,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
               </div>
               <h2 className="text-xl font-extrabold tracking-tight font-heading">
                 {mode === 'signin' && 'Welcome back to NomadsChat'}
-                {mode === 'signup' && 'Start your 3-day free trial'}
+                {mode === 'signup' && 'Start your 3-day Growth Pro trial'}
                 {mode === 'forgot' && 'Reset Your Workspace Password'}
               </h2>
               <p className="text-xs text-zinc-300 font-medium mt-1 max-w-xs mx-auto font-body">
                 {mode === 'signin' && 'Sign in to access your AI Support Chatbots & Analytics'}
-                {mode === 'signup' && 'Deploy Gemini-powered AI chatbots in under 2 minutes'}
+                {mode === 'signup' && 'Full access to Growth Pro features for 3 days. No credit card required upfront.'}
                 {mode === 'forgot' && 'Enter your account email and new password to regain access'}
               </p>
             </div>
@@ -172,8 +172,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-4">
                   {errorMsg && (
-                    <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs font-medium rounded-xl">
-                      {errorMsg}
+                    <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 text-xs font-medium rounded-xl space-y-1.5">
+                      <p>{errorMsg}</p>
+                      {mode === 'signin' && errorMsg.toLowerCase().includes('sign up') && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setErrorMsg('');
+                            setMode('signup');
+                          }}
+                          className="inline-flex items-center gap-1 text-xs font-bold text-red-900 underline hover:text-black cursor-pointer pt-1"
+                        >
+                          Create an account & start 3-day Growth Pro trial →
+                        </button>
+                      )}
                     </div>
                   )}
 

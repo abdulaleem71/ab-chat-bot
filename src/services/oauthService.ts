@@ -324,14 +324,18 @@ export class OAuthService {
         const tenantId = 'tenant_' + Date.now();
         const userId = 'usr_' + Date.now();
         const now = new Date().toISOString();
+        const trialEndsAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
 
-        // Create tenant
+        // Create tenant with 3-day Growth Pro trial
         await UserRepo.createTenant({
           id: tenantId,
           name: `${cleanName}'s Workspace`,
           owner_email: cleanEmail,
-          plan: 'Pro',
+          plan: 'growth_pro',
           created_at: now,
+          trial_started_at: now,
+          trial_ends_at: trialEndsAt,
+          payment_method_on_file: 0,
         });
 
         // Generate strong random hash for social user

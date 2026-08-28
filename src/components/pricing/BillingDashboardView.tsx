@@ -193,6 +193,19 @@ export const BillingDashboardView: React.FC<BillingDashboardViewProps> = ({
       overagePolicy: 'Soft Cap: $10 / 1,000 extra messages • Zero downtime',
       overageType: 'soft-cap',
     },
+    growth_pro: {
+      name: 'Growth Pro (Trial)',
+      badge: 'Pro Trial',
+      monthlyPrice: 49,
+      annualPrice: 39,
+      messagesQuota: 10000,
+      botsQuota: 5,
+      knowledgeSourcesQuota: 'Unlimited',
+      seatsQuota: 3,
+      supportSla: 'Priority 24/7 Email & Chat',
+      overagePolicy: 'Soft Cap: $10 / 1,000 extra messages • Zero downtime',
+      overageType: 'soft-cap',
+    },
     Ultra: {
       name: 'Enterprise Ultra',
       badge: 'Ultra Tier',
@@ -316,28 +329,51 @@ VAT ID: US948271049 • receipts@nomadschat.com
   };
 
   // Handle saving new card
-  const handleSaveCard = (e: React.FormEvent) => {
+  const handleSaveCard = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsCardUpdating(true);
+    const cleanNum = cardForm.cardNumber.replace(/\s+/g, '');
 
-    setTimeout(() => {
-      const cleanNum = cardForm.cardNumber.replace(/\s+/g, '');
-      const lastFour = cleanNum.length >= 4 ? cleanNum.slice(-4) : '8839';
+    try {
+      const res = await fetch('/api/billing/payment-method', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(localStorage.getItem('auth_token') ? { Authorization: `Bearer ${localStorage.getItem('auth_token')}` } : {}),
+        },
+        body: JSON.stringify({
+          cardNumber: cleanNum,
+          expMonth: cardForm.expMonth || '12',
+          expYear: cardForm.expYear || '2029',
+          cvc: cardForm.cvc || '123',
+          nameOnCard: cardForm.holderName,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update payment method.');
+      }
+
       setPaymentMethod({
-        brand: 'Visa',
-        last4: lastFour,
-        expMonth: cardForm.expMonth || '12',
-        expYear: cardForm.expYear || '2029',
+        brand: data.paymentMethod?.brand || 'Visa',
+        last4: data.paymentMethod?.last4 || cleanNum.slice(-4),
+        expMonth: data.paymentMethod?.expMonth || cardForm.expMonth || '12',
+        expYear: data.paymentMethod?.expYear || cardForm.expYear || '2029',
         holderName: cardForm.holderName,
         billingEmail: paymentMethod.billingEmail,
         billingZip: cardForm.zip || '94107',
         country: cardForm.country || 'United States',
       });
-      setIsCardUpdating(false);
+      await refreshTenant();
       setIsUpdateCardModalOpen(false);
-      setCardSuccessMsg('Payment method updated successfully.');
+      setCardSuccessMsg('Payment method saved and verified successfully.');
       setTimeout(() => setCardSuccessMsg(''), 4000);
-    }, 600);
+    } catch (err: any) {
+      alert(err.message || 'Failed to update payment card.');
+    } finally {
+      setIsCardUpdating(false);
+    }
   };
 
   // Handle Saving BYOK

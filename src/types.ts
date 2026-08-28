@@ -1,4 +1,6 @@
-export type TenantPlan = 'Free' | 'Pro' | 'Ultra' | 'Enterprise';
+export type TenantPlan = 'Free' | 'Pro' | 'growth_pro' | 'Ultra' | 'Enterprise';
+export type ChannelType = 'Website Widget' | 'WhatsApp' | 'Instagram DM' | 'Email' | 'website_widget' | 'whatsapp' | 'instagram_dm' | 'email';
+export type TeamRole = 'Admin' | 'Agent' | 'Owner';
 
 export interface ByokConfig {
   hasCustomKey: boolean;
@@ -13,6 +15,12 @@ export interface Tenant {
   ownerEmail: string;
   plan: TenantPlan;
   createdAt: string;
+  trialStartedAt?: string | null;
+  trialEndsAt?: string | null;
+  hasPaymentMethod?: boolean;
+  paymentMethodBrand?: string | null;
+  paymentMethodLast4?: string | null;
+  paymentMethodExp?: string | null;
   websiteUrl?: string;
   logoUrl?: string;
   byokConfig?: ByokConfig;
@@ -23,9 +31,47 @@ export interface UserProfile {
   email: string;
   displayName: string;
   tenantId: string;
-  role: 'owner' | 'admin' | 'agent';
+  role: 'owner' | 'admin' | 'agent' | 'Admin' | 'Agent' | 'Owner';
   avatarUrl?: string;
   createdAt: string;
+}
+
+export interface TeamMember {
+  id: string;
+  tenantId: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: 'Admin' | 'Agent' | 'Owner';
+  avatarUrl?: string;
+  createdAt: string;
+  lastActiveAt?: string;
+}
+
+export interface TeamInvite {
+  id: string;
+  tenantId: string;
+  email: string;
+  role: 'Admin' | 'Agent';
+  invitedBy: string;
+  invitedByName?: string;
+  status: 'pending' | 'accepted' | 'revoked';
+  createdAt: string;
+  expiresAt: string;
+}
+
+export type IntegrationId = 'slack' | 'whatsapp' | 'zapier' | 'hubspot' | 'shopify';
+
+export interface IntegrationItem {
+  id: IntegrationId;
+  name: string;
+  category: string;
+  description: string;
+  logo: string;
+  isConnected: boolean;
+  connectedAt?: string;
+  lastSyncAt?: string;
+  config?: Record<string, any>;
 }
 
 export type BotTone = 'Friendly' | 'Professional' | 'Concise' | 'Technical' | 'Empathetic';
@@ -40,6 +86,7 @@ export interface Chatbot {
   allowedDomains?: string[];
   domainLockEnabled?: boolean;
   embedSecretKey?: string;
+  channel?: ChannelType;
   systemInstruction: string;
   tone: BotTone;
   primaryColor: string;
@@ -99,6 +146,9 @@ export interface Conversation {
   visitorLocation?: string;
   visitorBrowser?: string;
   pageUrl?: string;
+  channel?: ChannelType;
+  assignedTo?: string;
+  assignedToName?: string;
   status: 'active' | 'human_takeover' | 'resolved' | 'closed';
   lastMessage: string;
   lastMessageTime: string;

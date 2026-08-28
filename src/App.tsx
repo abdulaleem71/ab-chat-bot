@@ -16,13 +16,20 @@ import { PricingView } from './components/pricing/PricingView';
 import { BillingDashboardView } from './components/pricing/BillingDashboardView';
 import { FeaturesView } from './components/features/FeaturesView';
 import { FaqView } from './components/faq/FaqView';
+import { IntegrationsView } from './components/integrations/IntegrationsView';
+import { TeamView } from './components/team/TeamView';
+import { StatusPage } from './components/public/StatusPage';
+import { SecurityPage } from './components/public/SecurityPage';
 import { Footer } from './components/layout/Footer';
+import { TrialBanner } from './components/layout/TrialBanner';
+import { ExpiredTrialModal } from './components/pricing/ExpiredTrialModal';
+import { CheckoutModal } from './components/pricing/CheckoutModal';
 import { AdminApp } from './admin/AdminApp';
-import { Chatbot, KnowledgeSource, Conversation, Message, VisitorLead, GroundingSource, AnalyticsSummary } from './types';
+import { Chatbot, KnowledgeSource, Conversation, Message, VisitorLead, GroundingSource, AnalyticsSummary, TenantPlan } from './types';
 import { MessageSquare, X, AlertCircle, Loader2 } from 'lucide-react';
 
 function DashboardContent() {
-  const { token, isAuthenticated } = useAuth();
+  const { token, isAuthenticated, tenant, switchPlan } = useAuth();
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [chatbots, setChatbots] = useState<Chatbot[]>([]);
   const [selectedBot, setSelectedBot] = useState<Chatbot | null>(null);
@@ -43,6 +50,34 @@ function DashboardContent() {
   const [isFloatingWidgetOpen, setIsFloatingWidgetOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isExpiredTrialModalOpen, setIsExpiredTrialModalOpen] = useState(false);
+  const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+  const [checkoutTargetPlan, setCheckoutTargetPlan] = useState<{
+    id: TenantPlan;
+    name: string;
+    monthlyPrice: number;
+    annualPrice: number;
+  }>({
+    id: 'Pro',
+    name: 'Growth Pro',
+    monthlyPrice: 49,
+    annualPrice: 39,
+  });
+
+  // Check for expired trial on mount / tenant update
+  useEffect(() => {
+    if (!isAuthenticated || !tenant) return;
+    const now = new Date();
+    const trialEnds = tenant.trialEndsAt ? new Date(tenant.trialEndsAt) : null;
+    const isExpired = Boolean(
+      trialEnds &&
+      trialEnds <= now &&
+      !tenant.hasPaymentMethod
+    );
+    if (isExpired && !sessionStorage.getItem('dismissed_expired_trial_' + tenant.id)) {
+      setIsExpiredTrialModalOpen(true);
+    }
+  }, [isAuthenticated, tenant?.id, tenant?.trialEndsAt, tenant?.hasPaymentMethod]);
 
   const getAuthHeaders = () => {
     const currentToken = localStorage.getItem('auth_token') || token;
@@ -396,6 +431,19 @@ function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-dot-grid text-zinc-900 font-sans flex flex-col antialiased selection:bg-zinc-900 selection:text-white">
+      {/* Persistent 3-Day Growth Pro Trial Banner */}
+      <TrialBanner
+        onOpenUpgrade={() => {
+          setCheckoutTargetPlan({
+            id: 'Pro',
+            name: 'Growth Pro',
+            monthlyPrice: 49,
+            annualPrice: 39,
+          });
+          setIsCheckoutModalOpen(true);
+        }}
+      />
+
       {/* Top Navigation */}
       <Navbar
         onOpenWidgetModal={() => handleOpenEmbedModal()}
@@ -509,7 +557,38 @@ function DashboardContent() {
                   onSendMessage={handleInboxSendMessage}
                   onToggleTakeover={handleToggleTakeover}
                   onResolveConversation={handleResolveConversation}
+                  onAssignConversation={(id, memberId, memberName) => {
+                    setConversations(prev =>
+                      prev.map(c =>
+                        c.id === id
+                          ? { ...c, assignedTo: memberId, assignedToName: memberName }
+                          : c
+                      )
+                    );
+                  }}
                 />
+              )}
+
+              {activeTab === 'integrations' && (
+                <IntegrationsView
+                  onNavigateToInbox={() => setActiveTab('inbox')}
+                  onNavigateToKnowledge={() => setActiveTab('knowledge')}
+                />
+              )}
+
+              {activeTab === 'team' && (
+                <TeamView
+                  onNavigateToBilling={() => setActiveTab('billing')}
+                  onNavigateToInbox={() => setActiveTab('inbox')}
+                />
+              )}
+
+              {activeTab === 'status' && (
+                <StatusPage onReturnToApp={() => setActiveTab('overview')} />
+              )}
+
+              {activeTab === 'security' && (
+                <SecurityPage onReturnToApp={() => setActiveTab('overview')} />
               )}
 
               {activeTab === 'embed' && (
@@ -655,6 +734,45 @@ function DashboardContent() {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
       />
+
+      <ExpiredTrialModal
+        isOpen={isExpiredTrialModalOpen}
+        onClose={() => {
+          if (tenant?.id) {
+            sessionStorage.setItem('dismissed_expired_trial_' + tenant.id, 'true');
+          }
+          setIsExpiredTrialModalOpen(false);
+        }}
+        onStayOnFree={async () => {
+          if (tenant?.id) {
+            sessionStorage.setItem('dismissed_expired_trial_' + tenant.id, 'true');
+          }
+          await switchPlan('Free');
+          setIsExpiredTrialModalOpen(false);
+        }}
+        onSelectUpgradeToPro={() => {
+          if (tenant?.id) {
+            sessionStorage.setItem('dismissed_expired_trial_' + tenant.id, 'true');
+          }
+          setIsExpiredTrialModalOpen(false);
+          setCheckoutTargetPlan({
+            id: 'Pro',
+            name: 'Growth Pro',
+            monthlyPrice: 49,
+            annualPrice: 39,
+          });
+          setIsCheckoutModalOpen(true);
+        }}
+      />
+
+      <CheckoutModal
+        isOpen={isCheckoutModalOpen}
+        onClose={() => setIsCheckoutModalOpen(false)}
+        planId={checkoutTargetPlan.id}
+        planName={checkoutTargetPlan.name}
+        monthlyPrice={checkoutTargetPlan.monthlyPrice}
+        annualPrice={checkoutTargetPlan.annualPrice}
+      />
     </div>
   );
 }
@@ -763,10 +881,18 @@ export default function App() {
   const [isAdminMode, setIsAdminMode] = useState<boolean>(() => {
     return window.location.pathname.startsWith('/admin') || window.location.hash === '#admin';
   });
+  const [isStatusMode, setIsStatusMode] = useState<boolean>(() => {
+    return window.location.pathname.startsWith('/status') || window.location.hash === '#status';
+  });
+  const [isSecurityMode, setIsSecurityMode] = useState<boolean>(() => {
+    return window.location.pathname.startsWith('/security') || window.location.hash === '#security';
+  });
 
   useEffect(() => {
     const handlePopState = () => {
       setIsAdminMode(window.location.pathname.startsWith('/admin') || window.location.hash === '#admin');
+      setIsStatusMode(window.location.pathname.startsWith('/status') || window.location.hash === '#status');
+      setIsSecurityMode(window.location.pathname.startsWith('/security') || window.location.hash === '#security');
     };
     window.addEventListener('popstate', handlePopState);
     window.addEventListener('hashchange', handlePopState);
@@ -780,6 +906,38 @@ export default function App() {
   if (path.startsWith('/embed/')) {
     const botId = path.split('/embed/')[1];
     return <StandaloneEmbedView botId={botId} />;
+  }
+
+  if (isStatusMode) {
+    return (
+      <StatusPage
+        onReturnToApp={() => {
+          if (window.location.pathname.startsWith('/status')) {
+            window.history.pushState({}, '', '/');
+          }
+          if (window.location.hash === '#status') {
+            window.location.hash = '';
+          }
+          setIsStatusMode(false);
+        }}
+      />
+    );
+  }
+
+  if (isSecurityMode) {
+    return (
+      <SecurityPage
+        onReturnToApp={() => {
+          if (window.location.pathname.startsWith('/security')) {
+            window.history.pushState({}, '', '/');
+          }
+          if (window.location.hash === '#security') {
+            window.location.hash = '';
+          }
+          setIsSecurityMode(false);
+        }}
+      />
+    );
   }
 
   if (isAdminMode) {

@@ -39,8 +39,8 @@ export class ConversationRepo {
     await db.execute({
       sql: `INSERT INTO conversations (
         id, chatbot_id, tenant_id, visitor_id, visitor_name, visitor_email, visitor_location,
-        visitor_browser, page_url, status, last_message, last_message_time, unread_by_agent, csat_rating, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        visitor_browser, page_url, channel, assigned_to, assigned_to_name, status, last_message, last_message_time, unread_by_agent, csat_rating, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       args: [
         conv.id,
         conv.chatbotId,
@@ -51,6 +51,9 @@ export class ConversationRepo {
         conv.visitorLocation || 'Unknown',
         conv.visitorBrowser || 'Web Browser',
         conv.pageUrl || '',
+        conv.channel || 'Website Widget',
+        conv.assignedTo || null,
+        conv.assignedToName || null,
         conv.status || 'active',
         conv.lastMessage || '',
         conv.lastMessageTime || new Date().toISOString(),
@@ -188,6 +191,24 @@ export class ConversationRepo {
     });
   }
 
+  static async assignConversation(
+    id: string,
+    tenantId: string,
+    assignedTo: string | null,
+    assignedToName: string | null
+  ): Promise<Conversation | null> {
+    const existing = await this.findById(id, tenantId);
+    if (!existing) return null;
+
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE conversations SET assigned_to = ?, assigned_to_name = ? WHERE id = ? AND tenant_id = ?;`,
+      args: [assignedTo || null, assignedToName || null, id, tenantId],
+    });
+
+    return { ...existing, assignedTo: assignedTo || undefined, assignedToName: assignedToName || undefined };
+  }
+
   static async delete(id: string, tenantId: string): Promise<boolean> {
     const db = getDb();
     const res = await db.execute({
@@ -208,6 +229,9 @@ export class ConversationRepo {
       visitorLocation: r.visitor_location ? String(r.visitor_location) : undefined,
       visitorBrowser: r.visitor_browser ? String(r.visitor_browser) : undefined,
       pageUrl: r.page_url ? String(r.page_url) : undefined,
+      channel: (r.channel || 'Website Widget') as any,
+      assignedTo: r.assigned_to ? String(r.assigned_to) : undefined,
+      assignedToName: r.assigned_to_name ? String(r.assigned_to_name) : undefined,
       status: (r.status || 'active') as any,
       lastMessage: String(r.last_message || ''),
       lastMessageTime: String(r.last_message_time || ''),

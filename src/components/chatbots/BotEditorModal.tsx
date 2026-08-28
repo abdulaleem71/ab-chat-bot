@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Chatbot, BotTone, BotModel } from '../../types';
+import { Chatbot, BotTone, BotModel, ChannelType } from '../../types';
 import { useClickOutside } from '../../hooks/useClickOutside';
-import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle, Lock, Plus, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle, Lock, Plus, ShieldCheck, ShieldAlert, Smartphone, Instagram, Mail, Layout } from 'lucide-react';
 import { SecurityService } from '../../services/securityService';
 import { MotionButton } from '../common/MotionButton';
 import { GEMINI_CONFIG } from '../../config/models';
@@ -58,6 +58,7 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
         collectLeadEmail: bot?.collectLeadEmail ?? true,
         leadTitle: bot?.leadTitle || 'Leave your email to stay connected',
         humanOperatorOnline: bot?.humanOperatorOnline ?? true,
+        channel: bot?.channel || 'website_widget',
         status: bot?.status || 'active',
       });
       setActiveTab('general');
@@ -258,6 +259,43 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                 <p className="text-[11px] text-zinc-500 mt-1 font-medium">
                   The chatbot will fetch and use this website's actual content/data when generating responses.
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">
+                  Primary Deployment Channel
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: 'website_widget', label: 'Website Widget', icon: Layout, desc: 'Web chat bubble' },
+                    { id: 'whatsapp', label: 'WhatsApp', icon: Smartphone, desc: 'Meta Business API' },
+                    { id: 'instagram_dm', label: 'Instagram DM', icon: Instagram, desc: 'Direct Messages' },
+                    { id: 'email', label: 'Email Support', icon: Mail, desc: 'Inbound ticketing' },
+                  ].map(ch => {
+                    const IconComponent = ch.icon;
+                    const isSelected = (formData.channel || 'website_widget') === ch.id;
+                    return (
+                      <button
+                        key={ch.id}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, channel: ch.id as ChannelType })}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          isSelected
+                            ? 'border-zinc-950 bg-zinc-50 ring-1 ring-zinc-950 shadow-xs'
+                            : 'border-zinc-200 bg-white hover:bg-zinc-50/80 text-zinc-600'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <IconComponent className={`w-3.5 h-3.5 ${isSelected ? 'text-zinc-950' : 'text-zinc-500'}`} />
+                          <span className={`text-[11px] font-extrabold truncate ${isSelected ? 'text-zinc-950' : 'text-zinc-800'}`}>
+                            {ch.label}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-zinc-400 leading-tight truncate">{ch.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div>
