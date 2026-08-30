@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { NomadsLogo } from '../common/NomadsLogo';
+import { LegalModal } from '../public/LegalModal';
 import { Sparkles, ArrowRight, ShieldCheck, CheckCircle2, MessageSquare, Bot, HelpCircle, FileText, Lock, Globe, ExternalLink } from 'lucide-react';
 
 interface FooterProps {
@@ -10,6 +11,7 @@ interface FooterProps {
 export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }) => {
   const [email, setEmail] = useState('');
   const [subscribed, setSubscribed] = useState(false);
+  const [legalModalType, setLegalModalType] = useState<'privacy' | 'terms' | 'gdpr' | null>(null);
 
   const handleSubscribe = (e: React.FormEvent) => {
     e.preventDefault();
@@ -217,8 +219,24 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
           <p>© 2026 NomadsChat. Powered by <a href="https://nomadsarc.io" target="_blank" rel="noopener noreferrer" className="hover:underline font-extrabold text-white inline-flex items-center gap-1">NomadsArc <ExternalLink className="w-3 h-3" /></a>. All rights reserved.</p>
           <div className="flex items-center gap-6 text-zinc-400">
             <a href="https://nomadsarc.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition">NomadsArc Platform</a>
-            <span className="hover:text-white cursor-pointer">Privacy Policy</span>
-            <span className="hover:text-white cursor-pointer">Terms of Service</span>
+            <span
+              onClick={() => setLegalModalType('privacy')}
+              className="hover:text-white cursor-pointer"
+            >
+              Privacy Policy
+            </span>
+            <span
+              onClick={() => setLegalModalType('terms')}
+              className="hover:text-white cursor-pointer"
+            >
+              Terms of Service
+            </span>
+            <span
+              onClick={() => setLegalModalType('gdpr')}
+              className="hover:text-white cursor-pointer"
+            >
+              GDPR &amp; Deletion
+            </span>
             <a
               href="#security"
               onClick={(e) => {
@@ -262,6 +280,14 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
         </div>
 
       </div>
+
+      {legalModalType && (
+        <LegalModal
+          isOpen={!!legalModalType}
+          type={legalModalType}
+          onClose={() => setLegalModalType(null)}
+        />
+      )}
     </footer>
   );
 };

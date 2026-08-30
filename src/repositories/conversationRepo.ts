@@ -36,11 +36,13 @@ export class ConversationRepo {
 
   static async create(conv: Conversation): Promise<Conversation> {
     const db = getDb();
+    const toolsInvokedJson = JSON.stringify(conv.toolsInvoked || []);
     await db.execute({
       sql: `INSERT INTO conversations (
         id, chatbot_id, tenant_id, visitor_id, visitor_name, visitor_email, visitor_location,
-        visitor_browser, page_url, channel, assigned_to, assigned_to_name, status, last_message, last_message_time, unread_by_agent, csat_rating, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        visitor_browser, page_url, channel, assigned_to, assigned_to_name, status, last_message, last_message_time,
+        unread_by_agent, csat_rating, csat_feedback, resolved_by, tools_invoked_json, bot_type, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       args: [
         conv.id,
         conv.chatbotId,
@@ -59,10 +61,74 @@ export class ConversationRepo {
         conv.lastMessageTime || new Date().toISOString(),
         conv.unreadByAgent ? 1 : 0,
         conv.csatRating || null,
+        conv.csatFeedback || null,
+        conv.resolvedBy || 'ai',
+        toolsInvokedJson,
+        conv.botType || 'support',
         conv.createdAt || new Date().toISOString(),
       ],
     });
     return conv;
+  }
+
+  static async updateOutcome(
+    id: string,
+    outcome: {
+      resolvedBy?: 'ai' | 'human';
+      toolsInvoked?: string[];
+      botType?: 'support' | 'commerce';
+      csatRating?: number;
+      csatFeedback?: string;
+      status?: Conversation['status'];
+    }
+  ): Promise<void> {
+    const db = getDb();
+    const fields: string[] = [];
+    const args: any[] = [];
+
+    if (outcome.resolvedBy) {
+      fields.push('resolved_by = ?');
+      args.push(outcome.resolvedBy);
+    }
+    if (outcome.toolsInvoked) {
+      fields.push('tools_invoked_json = ?');
+      args.push(JSON.stringify(outcome.toolsInvoked));
+    }
+    if (outcome.botType) {
+      fields.push('bot_type = ?');
+      args.push(outcome.botType);
+    }
+    if (outcome.csatRating !== undefined) {
+      fields.push('csat_rating = ?');
+      args.push(outcome.csatRating);
+    }
+    if (outcome.csatFeedback !== undefined) {
+      fields.push('csat_feedback = ?');
+      args.push(outcome.csatFeedback);
+    }
+    if (outcome.status) {
+      fields.push('status = ?');
+      args.push(outcome.status);
+    }
+
+    if (fields.length === 0) return;
+    args.push(id);
+    await db.execute({
+      sql: `UPDATE conversations SET ${fields.join(', ')} WHERE id = ?;`,
+      args,
+    });
+  }
+
+  static async logCsat(conversationId: string, rating: number, feedback?: string): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE conversations SET csat_rating = ?, csat_feedback = ? WHERE id = ?;`,
+      args: [rating, feedback || null, conversationId],
+    });
+  }
+
+  static async updateCsat(conversationId: string, rating: number, feedback?: string): Promise<void> {
+    return this.logCsat(conversationId, rating, feedback);
   }
 
   static async updateLastMessage(id: string, lastMessage: string, timestamp: string, unreadByAgent: boolean = true): Promise<void> {
@@ -237,6 +303,16 @@ export class ConversationRepo {
       lastMessageTime: String(r.last_message_time || ''),
       unreadByAgent: Number(r.unread_by_agent) === 1,
       csatRating: r.csat_rating ? Number(r.csat_rating) : undefined,
+      csatFeedback: r.csat_feedback ? String(r.csat_feedback) : undefined,
+      resolvedBy: (r.resolved_by || 'ai') as any,
+      toolsInvoked: (() => {
+        try {
+          return r.tools_invoked_json ? JSON.parse(String(r.tools_invoked_json)) : [];
+        } catch {
+          return [];
+        }
+      })(),
+      botType: (r.bot_type || 'support') as any,
       createdAt: String(r.created_at),
     };
   }

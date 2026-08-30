@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Chatbot, BotTone, BotModel, ChannelType } from '../../types';
+import { Chatbot, BotTone, BotModel, ChannelType, BotType } from '../../types';
 import { useClickOutside } from '../../hooks/useClickOutside';
-import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle, Lock, Plus, ShieldCheck, ShieldAlert, Smartphone, Instagram, Mail, Layout } from 'lucide-react';
+import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle, Lock, Plus, ShieldCheck, ShieldAlert, Smartphone, Instagram, Mail, Layout, ShoppingBag, ExternalLink } from 'lucide-react';
 import { SecurityService } from '../../services/securityService';
 import { MotionButton } from '../common/MotionButton';
 import { GEMINI_CONFIG } from '../../config/models';
@@ -31,9 +31,30 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
   const [formData, setFormData] = useState<Partial<Chatbot>>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [newDomainInput, setNewDomainInput] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [storeIntegrations, setStoreIntegrations] = useState<{ shopify: boolean; woocommerce: boolean }>({
+    shopify: false,
+    woocommerce: false,
+  });
 
   useEffect(() => {
     if (isOpen) {
+      // Check store integrations
+      fetch('/api/integrations', {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('auth_token') || ''}`,
+        },
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && Array.isArray(data.integrations)) {
+            const hasShopify = data.integrations.some((i: any) => i.id === 'shopify' && i.isConnected);
+            const hasWoo = data.integrations.some((i: any) => i.id === 'woocommerce' && i.isConnected);
+            setStoreIntegrations({ shopify: hasShopify, woocommerce: hasWoo });
+          }
+        })
+        .catch(() => {});
+
       setErrorMessage(null);
       setNewDomainInput('');
       const defaultDomain = bot?.websiteUrl ? SecurityService.normalizeDomain(bot.websiteUrl) : '';
@@ -44,6 +65,7 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
       setFormData({
         name: bot?.name || 'New AI Support Assistant',
         description: bot?.description || 'Handles customer inquiries and troubleshooting.',
+        botType: bot?.botType || 'support',
         websiteUrl: bot?.websiteUrl || 'https://example.com',
         allowedDomains: initialAllowed,
         domainLockEnabled: bot?.domainLockEnabled ?? true,
@@ -64,6 +86,8 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
       setActiveTab('general');
     }
   }, [bot, isOpen]);
+
+  const hasStoreConnected = storeIntegrations.shopify || storeIntegrations.woocommerce;
 
   // Lock background scroll when modal is open
   useEffect(() => {
@@ -259,6 +283,94 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                 <p className="text-[11px] text-zinc-500 mt-1 font-medium">
                   The chatbot will fetch and use this website's actual content/data when generating responses.
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-800 mb-1.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Bot className="w-3.5 h-3.5 text-zinc-900" />
+                    Bot Type / Capability Focus
+                  </span>
+                  {!hasStoreConnected && (
+                    <span className="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 font-semibold flex items-center gap-1">
+                      <span>Store integration required for Commerce</span>
+                    </span>
+                  )}
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, botType: 'support' })}
+                    className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-start gap-3 ${
+                      (formData.botType || 'support') === 'support'
+                        ? 'border-zinc-950 bg-zinc-50 ring-1 ring-zinc-950 shadow-xs'
+                        : 'border-zinc-200 bg-white hover:bg-zinc-50/80 text-zinc-600'
+                    }`}
+                  >
+                    <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 shrink-0">
+                      <MessageSquare className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-zinc-950 flex items-center gap-1.5">
+                        Support Assistant
+                        {(formData.botType || 'support') === 'support' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-zinc-500 leading-tight mt-0.5">
+                        Knowledge base RAG, FAQ resolution, lead capture, and support ticketing.
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!hasStoreConnected}
+                    onClick={() => {
+                      if (hasStoreConnected) {
+                        setFormData({ ...formData, botType: 'commerce' });
+                      }
+                    }}
+                    className={`p-3 rounded-2xl border text-left transition-all relative flex items-start gap-3 ${
+                      formData.botType === 'commerce'
+                        ? 'border-zinc-950 bg-zinc-50 ring-1 ring-zinc-950 shadow-xs'
+                        : !hasStoreConnected
+                        ? 'border-zinc-200 bg-zinc-50/70 text-zinc-400 cursor-not-allowed opacity-80'
+                        : 'border-zinc-200 bg-white hover:bg-zinc-50/80 text-zinc-600 cursor-pointer'
+                    }`}
+                  >
+                    <div
+                      className={`p-2 rounded-xl shrink-0 ${
+                        formData.botType === 'commerce'
+                          ? 'bg-emerald-50 text-emerald-600'
+                          : hasStoreConnected
+                          ? 'bg-zinc-100 text-zinc-600'
+                          : 'bg-zinc-100 text-zinc-400'
+                      }`}
+                    >
+                      <ShoppingBag className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold flex items-center gap-1.5">
+                        <span className={formData.botType === 'commerce' ? 'text-zinc-950' : 'text-zinc-700'}>
+                          Commerce & Catalog
+                        </span>
+                        {formData.botType === 'commerce' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                        )}
+                        {!hasStoreConnected && <Lock className="w-3 h-3 text-amber-600 shrink-0" />}
+                      </div>
+                      <p className="text-[11px] text-zinc-500 leading-tight mt-0.5">
+                        Product carousels, live catalog sync, order lookup, and dynamic discount coupons.
+                      </p>
+                      {!hasStoreConnected && (
+                        <p className="text-[10px] text-amber-600 font-semibold mt-1">
+                          Connect Shopify or WooCommerce in Integrations tab to enable
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -632,19 +744,40 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
           <div className="pt-4 border-t border-zinc-100 flex items-center justify-between gap-3">
             <div>
               {bot?.id && onDelete && (
-                <MotionButton
-                  type="button"
-                  variant="danger"
-                  size="sm"
-                  shimmer
-                  leftIcon={<Trash2 className="w-3.5 h-3.5 text-white" />}
-                  onClick={() => {
-                    onDelete(bot.id!);
-                    onClose();
-                  }}
-                >
-                  Delete Chatbot
-                </MotionButton>
+                showDeleteConfirm ? (
+                  <div className="flex items-center gap-2 bg-red-50 p-1.5 rounded-xl border border-red-200">
+                    <span className="text-[11px] font-bold text-red-800 pl-1">Confirm delete?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDelete(bot.id!);
+                        setShowDeleteConfirm(false);
+                        onClose();
+                      }}
+                      className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                    >
+                      Yes, Delete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="px-2 py-1 bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 rounded-lg text-xs font-medium transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <MotionButton
+                    type="button"
+                    variant="danger"
+                    size="sm"
+                    shimmer
+                    leftIcon={<Trash2 className="w-3.5 h-3.5 text-white" />}
+                    onClick={() => setShowDeleteConfirm(true)}
+                  >
+                    Delete Chatbot
+                  </MotionButton>
+                )
               )}
             </div>
 

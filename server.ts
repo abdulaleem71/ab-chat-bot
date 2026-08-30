@@ -22,6 +22,7 @@ import { LeadRepo } from './src/repositories/leadRepo';
 import { AnalyticsRepo } from './src/repositories/analyticsRepo';
 import { TeamRepo } from './src/repositories/teamRepo';
 import { IntegrationRepo } from './src/repositories/integrationRepo';
+import { CommerceRepo } from './src/repositories/commerceRepo';
 import { KnowledgeService } from './src/services/knowledgeService';
 import { ChatService } from './src/services/chatService';
 import { SecurityService } from './src/services/securityService';
@@ -2538,7 +2539,7 @@ app.post('/api/tenant/byok/test', requireAuth, asyncHandler(async (req: Authenti
     try {
       const testAi = new (await import('@google/genai')).GoogleGenAI({ apiKey: cleanKey });
       const testRes = await testAi.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.7-flash',
         contents: [{ role: 'user', parts: [{ text: 'Ping test' }] }],
         config: { maxOutputTokens: 5 },
       });
@@ -2753,11 +2754,103 @@ app.post('/api/contact-sales', asyncHandler(async (req, res) => {
 }));
 
 // ==========================================
-// ANALYTICS ENDPOINT
+// COMMERCE CATALOG & INTEGRATION ENDPOINTS
+// ==========================================
+app.get('/api/commerce/products', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const query = req.query.q ? String(req.query.q) : undefined;
+  const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
+  const products = await CommerceRepo.getProducts(req.user!.tenantId, query, limit);
+  res.json({ success: true, products });
+}));
+
+app.post('/api/commerce/products', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { title, price, currency, imageUrl, variantTitle, productUrl, description, sku, inStock, storePlatform } = req.body;
+  if (!title || price === undefined) {
+    return res.status(400).json({ success: false, error: 'Product title and price are required.' });
+  }
+
+  const product = await CommerceRepo.upsertProduct(req.user!.tenantId, {
+    storePlatform: storePlatform || 'custom',
+    title,
+    price: Number(price),
+    currency: currency || 'USD',
+    imageUrl,
+    variantTitle,
+    productUrl,
+    description,
+    sku,
+    inStock: inStock !== false,
+  });
+
+  res.json({ success: true, product });
+}));
+
+app.post('/api/commerce/sync', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { storePlatform } = req.body;
+  const platform = storePlatform === 'woocommerce' ? 'woocommerce' : 'shopify';
+  const result = await CommerceRepo.syncCatalog(req.user!.tenantId, platform);
+  res.json({
+    success: true,
+    message: `Successfully synchronized ${result.syncedCount} products from ${platform === 'shopify' ? 'Shopify Storefront' : 'WooCommerce REST API'}.`,
+    ...result,
+  });
+}));
+
+app.get('/api/commerce/orders', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const orderNumber = req.query.orderNumber ? String(req.query.orderNumber) : undefined;
+  const email = req.query.email ? String(req.query.email) : undefined;
+
+  if (orderNumber) {
+    const order = await CommerceRepo.lookupOrder(req.user!.tenantId, orderNumber);
+    return res.json({ success: true, order });
+  }
+
+  if (email) {
+    const orders = await CommerceRepo.getCustomerOrders(req.user!.tenantId, email);
+    return res.json({ success: true, orders });
+  }
+
+  return res.status(400).json({ success: false, error: 'Please provide either orderNumber or email query parameter.' });
+}));
+
+// ==========================================
+// ESCALATION RULES CONFIG ENDPOINTS (Task 6)
+// ==========================================
+app.get('/api/escalation-rules', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const rules = await CommerceRepo.getEscalationRules(req.user!.tenantId);
+  res.json({ success: true, rules });
+}));
+
+app.put('/api/escalation-rules', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const rules = await CommerceRepo.updateEscalationRules(req.user!.tenantId, req.body);
+  res.json({ success: true, rules, message: 'Escalation rules updated successfully.' });
+}));
+
+// ==========================================
+// CSAT RATING SUBMISSION ENDPOINT (Task 7)
+// ==========================================
+app.post('/api/csat', asyncHandler(async (req, res) => {
+  const { conversationId, rating, feedback } = req.body;
+  if (!conversationId || typeof rating !== 'number' || rating < 1 || rating > 5) {
+    return res.status(400).json({ success: false, error: 'Valid conversationId and rating (1-5) are required.' });
+  }
+
+  const conv = await ConversationRepo.findById(conversationId);
+  if (!conv) {
+    return res.status(404).json({ success: false, error: 'Conversation not found' });
+  }
+
+  await ConversationRepo.updateCsat(conversationId, rating, feedback || '');
+  res.json({ success: true, message: 'Thank you for your rating and feedback!' });
+}));
+
+// ==========================================
+// ANALYTICS ENDPOINT (Filterable by botType)
 // ==========================================
 app.get('/api/analytics', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbotId = req.query.chatbotId ? String(req.query.chatbotId) : undefined;
-  const analytics = await AnalyticsRepo.getSummaryForTenant(req.user!.tenantId, chatbotId);
+  const botType = req.query.botType ? (String(req.query.botType) as any) : undefined;
+  const analytics = await AnalyticsRepo.getSummaryForTenant(req.user!.tenantId, chatbotId, botType);
   res.json({ success: true, analytics });
 }));
 
@@ -2812,7 +2905,7 @@ async function startServer() {
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false },
+      server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);

@@ -5,6 +5,7 @@ import { MarkdownContent } from '../../lib/markdown';
 import { Send, Bot, User, Sparkles, BookOpen, RotateCcw, ShieldCheck, CheckCircle2, ChevronRight, Loader2, ExternalLink, Layers, Code } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
 import { getModelDisplayName } from '../../config/models';
+import { telemetry } from '../../lib/telemetry';
 
 interface PlaygroundViewProps {
   chatbots: Chatbot[];
@@ -150,8 +151,13 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
       if (res.sourcesUsed && res.sourcesUsed.length > 0) {
         setActiveSources(res.sourcesUsed);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.log('Error querying playground bot:', err);
+      telemetry.logGeminiApiFailure(err, {
+        botId: selectedBot.id,
+        model: selectedBot.model,
+        promptSnippet: queryText,
+      });
       const errorMsg: Message = {
         id: 'err_' + Date.now(),
         conversationId: 'playground',

@@ -34,7 +34,7 @@ export const AuditDetailModal: React.FC<AuditDetailModalProps> = ({ log, onClose
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
                   log.status === 'success'
                     ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                    : log.status === 'blocked'
+                    : log.status === 'denied' || log.status === 'failed'
                     ? 'bg-rose-950 text-rose-400 border border-rose-800'
                     : 'bg-zinc-800 text-zinc-400'
                 }`}>

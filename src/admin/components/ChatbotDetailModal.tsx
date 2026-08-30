@@ -143,7 +143,7 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
     }
   };
 
-  const handleToggleStatus = async (newStatus: 'active' | 'inactive' | 'archived') => {
+  const handleToggleStatus = async (newStatus: 'active' | 'draft' | 'archived') => {
     if (!chatbotId || !adminToken) return;
     try {
       setIsUpdatingStatus(true);
@@ -583,15 +583,15 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
                       </button>
 
                       <button
-                        onClick={() => handleToggleStatus('inactive')}
-                        disabled={isUpdatingStatus || bot?.status === 'inactive'}
+                        onClick={() => handleToggleStatus('draft')}
+                        disabled={isUpdatingStatus || bot?.status === 'draft'}
                         className={`px-4 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                          bot?.status === 'inactive'
+                          bot?.status === 'draft'
                             ? 'bg-amber-950 text-amber-300 border border-amber-700 opacity-80 cursor-default'
                             : 'bg-zinc-800 hover:bg-amber-900 text-zinc-200 border border-zinc-700'
                         }`}
                       >
-                        Disable / Pause Bot
+                        Set as Draft / Pause Bot
                       </button>
 
                       <button
@@ -749,10 +749,8 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
                           onChange={(e) => setBotModel(e.target.value)}
                           className="w-full px-3.5 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-indigo-500 transition font-mono cursor-pointer"
                         >
-                          <option value="gemini-3.7-flash">gemini-3.7-flash (Default & Fast)</option>
-                          <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                          <option value="gemini-2.5-pro">gemini-2.5-pro (High Reasoning)</option>
-                          <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                          <option value="gemini-3.7-flash">gemini-3.7-flash (Gemini 3.7 Flash - Recommended & Fast)</option>
+                          <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Gemini 3.1 Pro - Deep Reasoning)</option>
                         </select>
                       </div>
 

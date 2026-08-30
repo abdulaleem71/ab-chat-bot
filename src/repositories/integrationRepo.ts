@@ -38,6 +38,13 @@ export const MARKETPLACE_CATALOG: Omit<IntegrationItem, 'isConnected' | 'connect
     description: 'Allow your AI chatbot to safely query live order status, inventory levels, tracking links, and catalog details for shoppers.',
     logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/shopify.svg',
   },
+  {
+    id: 'woocommerce',
+    name: 'WooCommerce',
+    category: 'E-Commerce',
+    description: 'Sync your WordPress / WooCommerce product catalog, check live inventory, and enable conversational AI commerce recommendations.',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/woocommerce.svg',
+  },
 ];
 
 export class IntegrationRepo {

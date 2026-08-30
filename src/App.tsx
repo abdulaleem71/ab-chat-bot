@@ -17,6 +17,8 @@ import { BillingDashboardView } from './components/pricing/BillingDashboardView'
 import { FeaturesView } from './components/features/FeaturesView';
 import { FaqView } from './components/faq/FaqView';
 import { IntegrationsView } from './components/integrations/IntegrationsView';
+import { CatalogSyncManager } from './components/commerce/CatalogSyncManager';
+import { EscalationRulesManager } from './components/commerce/EscalationRulesManager';
 import { TeamView } from './components/team/TeamView';
 import { StatusPage } from './components/public/StatusPage';
 import { SecurityPage } from './components/public/SecurityPage';
@@ -25,6 +27,7 @@ import { TrialBanner } from './components/layout/TrialBanner';
 import { ExpiredTrialModal } from './components/pricing/ExpiredTrialModal';
 import { CheckoutModal } from './components/pricing/CheckoutModal';
 import { AdminApp } from './admin/AdminApp';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { Chatbot, KnowledgeSource, Conversation, Message, VisitorLead, GroundingSource, AnalyticsSummary, TenantPlan } from './types';
 import { MessageSquare, X, AlertCircle, Loader2 } from 'lucide-react';
 
@@ -500,101 +503,20 @@ function DashboardContent() {
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
             >
-              {activeTab === 'overview' && (
-                <OverviewDashboard
-                  analytics={defaultAnalytics}
-                  chatbots={chatbots}
-                  leads={leads}
-                  knowledgeCount={knowledgeSources.length}
-                  onNavigate={setActiveTab}
-                  onOpenCreateBotModal={handleCreateBot}
-                  onOpenEmbedModal={handleOpenEmbedModal}
-                />
-              )}
+              <ErrorBoundary fallbackTitle="View Unavailable" fallbackMessage="This section encountered an issue rendering. You can switch to other views or reload.">
+                {activeTab === 'overview' && (
+                  <OverviewDashboard
+                    analytics={defaultAnalytics}
+                    chatbots={chatbots}
+                    leads={leads}
+                    knowledgeCount={knowledgeSources.length}
+                    onNavigate={setActiveTab}
+                    onOpenCreateBotModal={handleCreateBot}
+                    onOpenEmbedModal={handleOpenEmbedModal}
+                  />
+                )}
 
-              {activeTab === 'chatbots' && (
-                <BotList
-                  chatbots={chatbots}
-                  onOpenCreateModal={handleCreateBot}
-                  onEditBot={handleEditBot}
-                  onTestBot={handleTestBot}
-                  onOpenEmbedModal={handleOpenEmbedModal}
-                  onTrainBot={handleTrainBot}
-                  onDeleteBot={handleDeleteBot}
-                />
-              )}
-
-              {activeTab === 'knowledge' && (
-                <KnowledgeManager
-                  selectedBot={activeBot}
-                  allBots={chatbots}
-                  onSelectBot={setSelectedBot}
-                  onCreateBot={handleCreateBot}
-                  knowledgeSources={knowledgeSources}
-                  onAddSource={handleAddKnowledgeSource}
-                  onScrapeUrl={handleScrapeUrl}
-                  onIngestHtml={handleIngestHtml}
-                  onDeleteSource={handleDeleteKnowledgeSource}
-                />
-              )}
-
-              {activeTab === 'playground' && (
-                <PlaygroundView
-                  chatbots={chatbots}
-                  selectedBot={activeBot}
-                  onSelectBot={setSelectedBot}
-                  onCreateBot={handleCreateBot}
-                  onSendQuery={handleSendPlaygroundQuery}
-                  onOpenEmbedModal={handleOpenEmbedModal}
-                />
-              )}
-
-              {activeTab === 'inbox' && (
-                <InboxView
-                  conversations={conversations}
-                  messages={messages}
-                  chatbots={chatbots}
-                  onSendMessage={handleInboxSendMessage}
-                  onToggleTakeover={handleToggleTakeover}
-                  onResolveConversation={handleResolveConversation}
-                  onAssignConversation={(id, memberId, memberName) => {
-                    setConversations(prev =>
-                      prev.map(c =>
-                        c.id === id
-                          ? { ...c, assignedTo: memberId, assignedToName: memberName }
-                          : c
-                      )
-                    );
-                  }}
-                />
-              )}
-
-              {activeTab === 'integrations' && (
-                <IntegrationsView
-                  onNavigateToInbox={() => setActiveTab('inbox')}
-                  onNavigateToKnowledge={() => setActiveTab('knowledge')}
-                />
-              )}
-
-              {activeTab === 'team' && (
-                <TeamView
-                  onNavigateToBilling={() => setActiveTab('billing')}
-                  onNavigateToInbox={() => setActiveTab('inbox')}
-                />
-              )}
-
-              {activeTab === 'status' && (
-                <StatusPage onReturnToApp={() => setActiveTab('overview')} />
-              )}
-
-              {activeTab === 'security' && (
-                <SecurityPage onReturnToApp={() => setActiveTab('overview')} />
-              )}
-
-              {activeTab === 'embed' && (
-                <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs">
-                  <h2 className="text-lg font-bold text-slate-900 mb-2">Embed Code Generator</h2>
-                  <p className="text-xs text-slate-500 mb-6">Select a bot to retrieve script snippets and platform guides.</p>
+                {activeTab === 'chatbots' && (
                   <BotList
                     chatbots={chatbots}
                     onOpenCreateModal={handleCreateBot}
@@ -604,49 +526,140 @@ function DashboardContent() {
                     onTrainBot={handleTrainBot}
                     onDeleteBot={handleDeleteBot}
                   />
-                </div>
-              )}
+                )}
 
-              {activeTab === 'analytics' && (
-                <OverviewDashboard
-                  analytics={defaultAnalytics}
-                  chatbots={chatbots}
-                  leads={leads}
-                  knowledgeCount={knowledgeSources.length}
-                  onNavigate={setActiveTab}
-                  onOpenCreateBotModal={handleCreateBot}
-                  onOpenEmbedModal={handleOpenEmbedModal}
-                />
-              )}
+                {activeTab === 'knowledge' && (
+                  <KnowledgeManager
+                    selectedBot={activeBot}
+                    allBots={chatbots}
+                    onSelectBot={setSelectedBot}
+                    onCreateBot={handleCreateBot}
+                    knowledgeSources={knowledgeSources}
+                    onAddSource={handleAddKnowledgeSource}
+                    onScrapeUrl={handleScrapeUrl}
+                    onIngestHtml={handleIngestHtml}
+                    onDeleteSource={handleDeleteKnowledgeSource}
+                  />
+                )}
 
-              {activeTab === 'features' && (
-                <FeaturesView onNavigateToTab={setActiveTab} />
-              )}
+                {activeTab === 'playground' && (
+                  <PlaygroundView
+                    chatbots={chatbots}
+                    selectedBot={activeBot}
+                    onSelectBot={setSelectedBot}
+                    onCreateBot={handleCreateBot}
+                    onSendQuery={handleSendPlaygroundQuery}
+                    onOpenEmbedModal={handleOpenEmbedModal}
+                  />
+                )}
 
-              {activeTab === 'billing' && (
-                <BillingDashboardView
-                  onNavigateToPublicPricing={() => setActiveTab('pricing')}
-                  onNavigateToFaq={() => setActiveTab('faq')}
-                  chatbotsCount={chatbots.length}
-                />
-              )}
+                {activeTab === 'inbox' && (
+                  <InboxView
+                    conversations={conversations}
+                    messages={messages}
+                    chatbots={chatbots}
+                    onSendMessage={handleInboxSendMessage}
+                    onToggleTakeover={handleToggleTakeover}
+                    onResolveConversation={handleResolveConversation}
+                    onAssignConversation={(id, memberId, memberName) => {
+                      setConversations(prev =>
+                        prev.map(c =>
+                          c.id === id
+                            ? { ...c, assignedTo: memberId, assignedToName: memberName }
+                            : c
+                        )
+                      );
+                    }}
+                  />
+                )}
 
-              {activeTab === 'pricing' && (
-                <PricingView
-                  onOpenAuthModal={() => setIsAuthModalOpen(true)}
-                  onNavigateToFaq={() => setActiveTab('faq')}
-                />
-              )}
+                {activeTab === 'commerce' && (
+                  <CatalogSyncManager onNavigateToIntegrations={() => setActiveTab('integrations')} />
+                )}
 
-              {(activeTab === 'faq' || activeTab === 'help') && (
-                <FaqView onOpenTestChat={() => {
-                  if (!isAuthenticated) {
-                    setIsAuthModalOpen(true);
-                    return;
-                  }
-                  setIsFloatingWidgetOpen(true);
-                }} />
-              )}
+                {activeTab === 'guardrails' && (
+                  <EscalationRulesManager />
+                )}
+
+                {activeTab === 'integrations' && (
+                  <IntegrationsView
+                    onNavigateToInbox={() => setActiveTab('inbox')}
+                    onNavigateToKnowledge={() => setActiveTab('knowledge')}
+                  />
+                )}
+
+                {activeTab === 'team' && (
+                  <TeamView
+                    onNavigateToBilling={() => setActiveTab('billing')}
+                    onNavigateToInbox={() => setActiveTab('inbox')}
+                  />
+                )}
+
+                {activeTab === 'status' && (
+                  <StatusPage onReturnToApp={() => setActiveTab('overview')} />
+                )}
+
+                {activeTab === 'security' && (
+                  <SecurityPage onReturnToApp={() => setActiveTab('overview')} />
+                )}
+
+                {activeTab === 'embed' && (
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs">
+                    <h2 className="text-lg font-bold text-slate-900 mb-2">Embed Code Generator</h2>
+                    <p className="text-xs text-slate-500 mb-6">Select a bot to retrieve script snippets and platform guides.</p>
+                    <BotList
+                      chatbots={chatbots}
+                      onOpenCreateModal={handleCreateBot}
+                      onEditBot={handleEditBot}
+                      onTestBot={handleTestBot}
+                      onOpenEmbedModal={handleOpenEmbedModal}
+                      onTrainBot={handleTrainBot}
+                      onDeleteBot={handleDeleteBot}
+                    />
+                  </div>
+                )}
+
+                {activeTab === 'analytics' && (
+                  <OverviewDashboard
+                    analytics={defaultAnalytics}
+                    chatbots={chatbots}
+                    leads={leads}
+                    knowledgeCount={knowledgeSources.length}
+                    onNavigate={setActiveTab}
+                    onOpenCreateBotModal={handleCreateBot}
+                    onOpenEmbedModal={handleOpenEmbedModal}
+                  />
+                )}
+
+                {activeTab === 'features' && (
+                  <FeaturesView onNavigateToTab={setActiveTab} />
+                )}
+
+                {activeTab === 'billing' && (
+                  <BillingDashboardView
+                    onNavigateToPublicPricing={() => setActiveTab('pricing')}
+                    onNavigateToFaq={() => setActiveTab('faq')}
+                    chatbotsCount={chatbots.length}
+                  />
+                )}
+
+                {activeTab === 'pricing' && (
+                  <PricingView
+                    onOpenAuthModal={() => setIsAuthModalOpen(true)}
+                    onNavigateToFaq={() => setActiveTab('faq')}
+                  />
+                )}
+
+                {(activeTab === 'faq' || activeTab === 'help') && (
+                  <FaqView onOpenTestChat={() => {
+                    if (!isAuthenticated) {
+                      setIsAuthModalOpen(true);
+                      return;
+                    }
+                    setIsFloatingWidgetOpen(true);
+                  }} />
+                )}
+              </ErrorBoundary>
             </motion.div>
           </AnimatePresence>
         </main>

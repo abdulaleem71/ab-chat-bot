@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { LayoutDashboard, Bot, BookOpen, PlaySquare, Inbox, Code, BarChart3, Sparkles, CreditCard, HelpCircle, ChevronDown, Plug, Users } from 'lucide-react';
+import { LayoutDashboard, Bot, BookOpen, PlaySquare, Inbox, Code, BarChart3, Sparkles, CreditCard, HelpCircle, ChevronDown, Plug, Users, ShoppingBag, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { GEMINI_CONFIG } from '../../config/models';
 
@@ -19,6 +19,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, unrea
   const productNavItems = [
     { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'chatbots', label: 'AI Chatbots', icon: Bot },
+    { id: 'commerce', label: 'E-Commerce Catalog', icon: ShoppingBag },
+    { id: 'guardrails', label: 'Escalation Rules', icon: ShieldAlert },
     { id: 'knowledge', label: 'Knowledge Base', icon: BookOpen },
     { id: 'playground', label: 'Live Test Playground', icon: PlaySquare },
     { id: 'inbox', label: 'Inbox & Live Chat', icon: Inbox, badge: unreadCount },

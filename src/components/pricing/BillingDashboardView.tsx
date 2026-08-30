@@ -1069,7 +1069,7 @@ VAT ID: US948271049 • receipts@nomadschat.com
                   variant="dark"
                   size="sm"
                   type="submit"
-                  loading={isSavingByok}
+                  isLoading={isSavingByok}
                   disabled={!byokApiKey.trim()}
                 >
                   Save API Key
@@ -1465,7 +1465,7 @@ VAT ID: US948271049 • receipts@nomadschat.com
                   <MotionButton
                     variant="dark"
                     size="sm"
-                    loading={isCardUpdating}
+                    isLoading={isCardUpdating}
                     type="submit"
                   >
                     Save Payment Card

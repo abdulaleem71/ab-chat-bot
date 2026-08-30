@@ -43,7 +43,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .then(data => {
           if (data.success && data.user) {
             setUser({
-              id: data.user.id,
+              uid: data.user.id || data.user.uid,
+              id: data.user.id || data.user.uid,
               displayName: data.user.name || data.user.email.split('@')[0],
               email: data.user.email,
               role: data.user.role || 'Admin',
@@ -204,7 +205,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
           if (receivedUser) {
             setUser({
-              id: receivedUser.id,
+              uid: receivedUser.id || receivedUser.uid,
+              id: receivedUser.id || receivedUser.uid,
               displayName: receivedUser.name || receivedUser.email.split('@')[0],
               email: receivedUser.email,
               role: receivedUser.role || 'Admin',
@@ -264,7 +266,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('auth_token', data.token);
     setToken(data.token);
     setUser({
-      id: data.user.id,
+      uid: data.user.id || data.user.uid,
+      id: data.user.id || data.user.uid,
       displayName: data.user.name || data.user.email.split('@')[0],
       email: data.user.email,
       role: data.user.role || 'Admin',
@@ -296,7 +299,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('auth_token', data.token);
     setToken(data.token);
     setUser({
-      id: data.user.id,
+      uid: data.user.id || data.user.uid,
+      id: data.user.id || data.user.uid,
       displayName: data.user.name || data.user.email.split('@')[0],
       email: data.user.email,
       role: data.user.role || 'Admin',
@@ -358,6 +362,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         requestPasswordReset,
         resetPassword,
         token,
+        refreshTenant,
       }}
     >
       {children}

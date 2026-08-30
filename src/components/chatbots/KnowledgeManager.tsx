@@ -37,6 +37,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   const [docTitle, setDocTitle] = useState('');
   const [docContent, setDocContent] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   if (!selectedBot) {
@@ -537,15 +538,38 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                   </div>
                 </div>
 
-                <motion.button
-                  whileHover={{ scale: 1.15 }}
-                  whileTap={{ scale: 0.9 }}
-                  onClick={() => onDeleteSource(source.id)}
-                  className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition cursor-pointer shrink-0"
-                  title="Remove Source"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </motion.button>
+                {deleteConfirmId === source.id ? (
+                  <div className="flex items-center gap-1.5 bg-red-50 p-1.5 rounded-xl border border-red-200 shrink-0">
+                    <span className="text-[10px] font-bold text-red-800 pl-1">Delete source?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDeleteSource(source.id);
+                        setDeleteConfirmId(null);
+                      }}
+                      className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded-md text-[11px] font-bold transition cursor-pointer"
+                    >
+                      Delete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteConfirmId(null)}
+                      className="px-1.5 py-0.5 bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 rounded-md text-[11px] font-medium transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <motion.button
+                    whileHover={{ scale: 1.15 }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => setDeleteConfirmId(source.id)}
+                    className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition cursor-pointer shrink-0"
+                    title="Remove Source"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </motion.button>
+                )}
               </div>
             ))}
           </div>

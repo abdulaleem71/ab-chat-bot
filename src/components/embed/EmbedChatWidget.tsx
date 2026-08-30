@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Chatbot, Message, GroundingSource } from '../../types';
-import { Send, Bot, Loader2, Sparkles, X, Minimize2, RotateCcw, ChevronDown, ChevronUp, ExternalLink, Check, AlertCircle } from 'lucide-react';
+import { Chatbot, Message, GroundingSource, ProductCard } from '../../types';
+import { Send, Bot, Loader2, Sparkles, X, Minimize2, RotateCcw, ChevronDown, ChevronUp, ExternalLink, Check, AlertCircle, Image as ImageIcon, Paperclip, Wrench, ShieldAlert } from 'lucide-react';
 import { MarkdownContent } from '../../lib/markdown';
+import { ProductCarousel } from '../commerce/ProductCarousel';
 
 interface EmbedChatWidgetProps {
   bot: Chatbot;
@@ -31,6 +32,8 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
+  const [attachedImageBase64, setAttachedImageBase64] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Lead capture state
   const [hasSubmittedLead, setHasSubmittedLead] = useState(false);
@@ -198,17 +201,35 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
     }
   };
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      setErrorMessage('Image file must be under 4MB');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAttachedImageBase64(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || input).trim();
-    if (!text || isLoading) return;
+    if ((!text && !attachedImageBase64) || isLoading) return;
 
     setErrorMessage(null);
+    const imgToSend = attachedImageBase64;
+    setAttachedImageBase64(null);
+
     const userMsg: Message = {
       id: 'usr_' + Date.now(),
       conversationId: conversationId || 'pending',
       chatbotId: bot.id,
       sender: 'visitor',
-      content: text,
+      content: text || (imgToSend ? 'Attached a screenshot / image.' : ''),
+      screenshotUrl: imgToSend || undefined,
       timestamp: new Date().toISOString(),
     };
 
@@ -222,7 +243,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: text,
+          message: text || 'Please review the attached screenshot.',
           conversationId: conversationId || undefined,
           conversationHistory: [...messages, userMsg],
           visitorInfo: {
@@ -231,6 +252,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
             location: meta.location,
             browser: meta.browser,
             pageUrl: meta.pageUrl,
+            screenshotBase64: imgToSend || undefined,
           },
         }),
       });
@@ -257,6 +279,8 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
         sender: 'bot',
         content: data.reply || bot.fallbackMessage || "I'm not sure how to answer that yet.",
         sourcesUsed: data.sourcesUsed || [],
+        productCards: data.productCards || [],
+        toolsInvoked: data.toolsInvoked || [],
         timestamp: new Date().toISOString(),
       };
 
@@ -370,10 +394,45 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
                       : 'bg-white text-zinc-900 border border-zinc-200/90 rounded-bl-xs'
                   }`}
                 >
+                  {/* User Attached Screenshot */}
+                  {msg.screenshotUrl && msg.screenshotUrl.startsWith('data:image') && (
+                    <div className="mb-2 rounded-xl overflow-hidden border border-white/20 max-w-[200px]">
+                      <img
+                        src={msg.screenshotUrl}
+                        alt="Attached Screenshot"
+                        className="w-full h-auto object-cover max-h-36"
+                      />
+                    </div>
+                  )}
+
                   {isUser ? (
                     <p className="whitespace-pre-wrap">{msg.content}</p>
                   ) : (
                     <MarkdownContent content={msg.content} />
+                  )}
+
+                  {/* Actions / Tools Invoked Badges */}
+                  {!isUser && msg.toolsInvoked && msg.toolsInvoked.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-zinc-100 flex flex-wrap gap-1">
+                      {msg.toolsInvoked.map((t, tIdx) => (
+                        <span
+                          key={tIdx}
+                          className="inline-flex items-center gap-1 bg-zinc-100 text-zinc-700 text-[10px] font-semibold px-2 py-0.5 rounded-md border border-zinc-200"
+                        >
+                          <Wrench className="w-2.5 h-2.5 text-zinc-500" />
+                          <span>{t.replace(/_/g, ' ')}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Product Card Carousel (Task 3) */}
+                  {!isUser && msg.productCards && msg.productCards.length > 0 && (
+                    <ProductCarousel
+                      products={msg.productCards}
+                      primaryColor={primaryColor}
+                      onSelectProduct={p => handleSendMessage(`Can you give me more details about "${p.title}"?`)}
+                    />
                   )}
 
                   {/* Grounding Source Citations */}
@@ -512,27 +571,64 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
 
       {/* Input Bar */}
       <div className="p-3 bg-white border-t border-zinc-200 shrink-0">
+        {/* Attached image preview banner */}
+        {attachedImageBase64 && (
+          <div className="mb-2 p-1.5 bg-zinc-100 rounded-xl flex items-center justify-between gap-2 border border-zinc-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <img
+                src={attachedImageBase64}
+                alt="Upload preview"
+                className="w-8 h-8 rounded-lg object-cover border border-zinc-300 shrink-0"
+              />
+              <span className="text-[11px] font-medium text-zinc-700 truncate">Screenshot attached</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAttachedImageBase64(null)}
+              className="p-1 text-zinc-400 hover:text-zinc-600 rounded-md cursor-pointer"
+              title="Remove attachment"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         <form
           onSubmit={e => {
             e.preventDefault();
             handleSendMessage();
           }}
-          className="flex items-center gap-2"
+          className="flex items-center gap-1.5"
         >
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleImageSelect}
+            accept="image/*"
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="p-2 text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 rounded-xl transition cursor-pointer shrink-0"
+            title="Attach screenshot or photo"
+          >
+            <ImageIcon className="w-4 h-4" />
+          </button>
           <input
             ref={inputRef}
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder="Type your question..."
+            placeholder={bot.botType === 'commerce' ? 'Ask about products, orders, discounts...' : 'Type your question...'}
             disabled={isLoading}
-            className="flex-1 text-xs sm:text-sm px-3.5 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:bg-white transition text-zinc-900 placeholder:text-zinc-400"
+            className="flex-1 text-xs sm:text-sm px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:bg-white transition text-zinc-900 placeholder:text-zinc-400"
           />
           <motion.button
             type="submit"
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.92 }}
-            disabled={!input.trim() || isLoading}
+            disabled={(!input.trim() && !attachedImageBase64) || isLoading}
             style={{ backgroundColor: primaryColor }}
             className="text-white p-2 sm:p-2.5 rounded-xl transition hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
             title="Send Message"
@@ -541,7 +637,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
           </motion.button>
         </form>
         <div className="flex items-center justify-between text-[10px] text-zinc-400 mt-2 px-1">
-          <span>Powered by NomadsChat RAG</span>
+          <span>{bot.botType === 'commerce' ? 'NomadsChat Commerce AI' : 'Powered by NomadsChat RAG'}</span>
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
             Active

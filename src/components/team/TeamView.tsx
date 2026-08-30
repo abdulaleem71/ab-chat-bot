@@ -41,8 +41,10 @@ export const TeamView: React.FC<TeamViewProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Edit role modal state
+  // Modals state
   const [editingMember, setEditingMember] = useState<TeamMember | null>(null);
+  const [memberToDelete, setMemberToDelete] = useState<TeamMember | null>(null);
+  const [inviteToCancel, setInviteToCancel] = useState<string | null>(null);
   const [newRole, setNewRole] = useState<TeamRole>('Agent');
 
   const currentUserRole = (user?.role || 'Admin').toLowerCase();
@@ -117,25 +119,34 @@ export const TeamView: React.FC<TeamViewProps> = ({
     }
   };
 
-  const handleCancelInvite = async (inviteId: string) => {
-    if (!confirm('Cancel this pending invitation?')) return;
+  const handleConfirmCancelInvite = async () => {
+    if (!inviteToCancel) return;
+    setIsSubmitting(true);
     try {
-      const res = await fetch(`/api/team/invites/${inviteId}`, {
+      const res = await fetch(`/api/team/invites/${inviteToCancel}`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
       });
       const data = await res.json();
       if (data.success) {
+        setInviteToCancel(null);
         await fetchTeamData();
+        setFeedback({ type: 'success', message: 'Invitation revoked successfully.' });
+      } else {
+        setFeedback({ type: 'error', message: data.error || 'Failed to cancel invitation.' });
       }
     } catch (err) {
       console.error('Error canceling invite:', err);
+      setFeedback({ type: 'error', message: 'Error canceling invite.' });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleUpdateRole = async () => {
     if (!editingMember) return;
     setIsSubmitting(true);
+    setFeedback(null);
     try {
       const res = await fetch(`/api/team/members/${editingMember.id}/role`, {
         method: 'PATCH',
@@ -146,31 +157,37 @@ export const TeamView: React.FC<TeamViewProps> = ({
       if (data.success) {
         setEditingMember(null);
         await fetchTeamData();
+        setFeedback({ type: 'success', message: 'Role updated successfully.' });
       } else {
-        alert(data.error || 'Failed to update role');
+        setFeedback({ type: 'error', message: data.error || 'Failed to update role.' });
       }
     } catch (err: any) {
-      alert('Error updating role: ' + err.message);
+      setFeedback({ type: 'error', message: 'Error updating role: ' + err.message });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleRemoveMember = async (member: TeamMember) => {
-    if (!confirm(`Remove ${member.name} (${member.email}) from the workspace?`)) return;
+  const handleConfirmRemoveMember = async () => {
+    if (!memberToDelete) return;
+    setIsSubmitting(true);
     try {
-      const res = await fetch(`/api/team/members/${member.id}`, {
+      const res = await fetch(`/api/team/members/${memberToDelete.id}`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
       });
       const data = await res.json();
       if (data.success) {
+        setMemberToDelete(null);
         await fetchTeamData();
+        setFeedback({ type: 'success', message: 'Team member removed from workspace.' });
       } else {
-        alert(data.error || 'Failed to remove member.');
+        setFeedback({ type: 'error', message: data.error || 'Failed to remove member.' });
       }
     } catch (err: any) {
-      alert('Error removing member: ' + err.message);
+      setFeedback({ type: 'error', message: 'Error removing member: ' + err.message });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -338,7 +355,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => handleRemoveMember(member)}
+                          onClick={() => setMemberToDelete(member)}
                           title="Remove Member"
                           className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
                         >
@@ -396,7 +413,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
 
                   {isAdminOrOwner && (
                     <button
-                      onClick={() => handleCancelInvite(invite.id)}
+                      onClick={() => setInviteToCancel(invite.id)}
                       className="text-xs font-bold text-zinc-500 hover:text-red-600 hover:bg-red-50 px-2.5 py-1 rounded-lg transition cursor-pointer"
                     >
                       Revoke
@@ -599,6 +616,114 @@ export const TeamView: React.FC<TeamViewProps> = ({
                   className="px-4 py-1.5 text-xs font-extrabold text-white bg-zinc-950 hover:bg-zinc-800 rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50"
                 >
                   Save Role
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Teammate Confirmation Modal */}
+      <AnimatePresence>
+        {memberToDelete && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-zinc-200"
+            >
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-zinc-950 font-heading">Remove Teammate?</h3>
+                  <p className="text-xs text-zinc-500 font-medium">Revoke access immediately</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-zinc-600 leading-relaxed mb-5">
+                Are you sure you want to remove <strong className="text-zinc-950 font-bold">{memberToDelete.name}</strong> ({memberToDelete.email}) from this workspace? They will lose access to all chatbots and live chats.
+              </p>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMemberToDelete(null)}
+                  disabled={isSubmitting}
+                  className="px-3.5 py-1.5 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmRemoveMember}
+                  disabled={isSubmitting}
+                  className="px-4 py-1.5 text-xs font-extrabold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Removing...</span>
+                    </>
+                  ) : (
+                    <span>Remove Member</span>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Revoke Invite Confirmation Modal */}
+      <AnimatePresence>
+        {inviteToCancel && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-zinc-200"
+            >
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
+                  <Mail className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-zinc-950 font-heading">Revoke Invitation?</h3>
+                  <p className="text-xs text-zinc-500 font-medium">Cancel pending invite</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-zinc-600 leading-relaxed mb-5">
+                The invitation link will become invalid immediately and the recipient will not be able to join using it.
+              </p>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setInviteToCancel(null)}
+                  disabled={isSubmitting}
+                  className="px-3.5 py-1.5 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-xl cursor-pointer"
+                >
+                  Keep Invite
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmCancelInvite}
+                  disabled={isSubmitting}
+                  className="px-4 py-1.5 text-xs font-extrabold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Revoking...</span>
+                    </>
+                  ) : (
+                    <span>Revoke Invite</span>
+                  )}
                 </button>
               </div>
             </motion.div>

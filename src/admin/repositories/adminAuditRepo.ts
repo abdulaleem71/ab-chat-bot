@@ -75,7 +75,7 @@ export class AdminAuditRepo {
           target_id: 'bot_acme_support',
           ip_address: '172.56.21.90',
           user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/127.0',
-          details_json: JSON.stringify({ botName: 'Acme Support AI', temperature: 0.3, model: 'gemini-2.5-flash' }),
+          details_json: JSON.stringify({ botName: 'Acme Support AI', temperature: 0.3, model: 'gemini-3.7-flash' }),
           status: 'success',
           created_at: new Date(now - 80 * 60 * 1000).toISOString(),
         },

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { IntegrationItem, IntegrationId } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { telemetry } from '../../lib/telemetry';
 
 interface IntegrationsViewProps {
   onNavigateToInbox?: () => void;
@@ -134,6 +135,12 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
         headers: getAuthHeaders(),
       });
       const data = await res.json();
+      if (!data.success) {
+        telemetry.logWebhookFailure(data.message || `Webhook test failed for integration ${item.name}`, {
+          eventName: `${item.id}_test_ping`,
+          url: configInputs.webhookUrl,
+        });
+      }
       setTestStatus({
         id: item.id,
         loading: false,
@@ -141,6 +148,10 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
         message: data.message || 'Webhook handshake verified successfully.',
       });
     } catch (err: any) {
+      telemetry.logWebhookFailure(err, {
+        eventName: `${item.id}_test_ping`,
+        url: configInputs.webhookUrl,
+      });
       setTestStatus({
         id: item.id,
         loading: false,

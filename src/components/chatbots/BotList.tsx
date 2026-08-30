@@ -51,7 +51,7 @@ export const BotList: React.FC<BotListProps> = ({
     visible: {
       opacity: 1,
       y: 0,
-      transition: { duration: 0.25, ease: 'easeOut' },
+      transition: { duration: 0.25 },
     },
   };
 

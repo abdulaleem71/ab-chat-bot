@@ -225,7 +225,7 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
                 <p className="text-[11px] text-zinc-500 font-medium font-body">Includes HMAC-SHA256 signature verified server-side on every request</p>
               </div>
               <MotionButton
-                variant={copied ? 'secondary' : 'light'}
+                variant={copied ? 'secondary' : 'dark'}
                 size="sm"
                 shimmer={!copied}
                 onClick={handleCopy}

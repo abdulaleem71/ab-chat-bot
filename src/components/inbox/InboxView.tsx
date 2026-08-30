@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Conversation, Message, Chatbot, ChannelType, TeamMember } from '../../types';
 import { MarkdownContent } from '../../lib/markdown';
+import { ProductCarousel } from '../commerce/ProductCarousel';
 import {
   Inbox,
   User,
@@ -23,7 +24,10 @@ import {
   Instagram,
   Layout,
   Users,
-  ChevronDown
+  ChevronDown,
+  Wrench,
+  ShoppingBag,
+  Star
 } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
 import { useAuth } from '../../context/AuthContext';
@@ -176,7 +180,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
         (c.visitorName && c.visitorName.toLowerCase().includes(q)) ||
         (c.visitorEmail && c.visitorEmail.toLowerCase().includes(q)) ||
         (c.assignedToName && c.assignedToName.toLowerCase().includes(q)) ||
-        c.lastMessage.toLowerCase().includes(q)
+        (c.lastMessage && c.lastMessage.toLowerCase().includes(q))
       );
     }
     return true;
@@ -389,9 +393,39 @@ export const InboxView: React.FC<InboxViewProps> = ({
                         {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
+
+                    {/* Screenshot attachment thumbnail */}
+                    {msg.screenshotUrl && msg.screenshotUrl.startsWith('data:image') && (
+                      <div className="mb-2 rounded-xl overflow-hidden border border-zinc-200 max-w-[200px]">
+                        <img src={msg.screenshotUrl} alt="Attached screenshot" className="w-full h-auto object-cover max-h-36" />
+                      </div>
+                    )}
+
                     <div className={msg.sender === 'visitor' ? 'text-zinc-900 font-body' : 'text-white font-body'}>
                       <MarkdownContent content={msg.content} />
                     </div>
+
+                    {/* Tools Invoked Badges */}
+                    {msg.toolsInvoked && msg.toolsInvoked.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-white/10 flex flex-wrap gap-1">
+                        {msg.toolsInvoked.map((t, tIdx) => (
+                          <span
+                            key={tIdx}
+                            className="inline-flex items-center gap-1 bg-white/10 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded-md"
+                          >
+                            <Wrench className="w-2.5 h-2.5 opacity-70" />
+                            <span>{t.replace(/_/g, ' ')}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Product Cards Carousel */}
+                    {msg.productCards && msg.productCards.length > 0 && (
+                      <div className="mt-2">
+                        <ProductCarousel products={msg.productCards} primaryColor={activeBot?.primaryColor} />
+                      </div>
+                    )}
                   </div>
 
                   {(msg.sender === 'bot' || msg.sender === 'agent') && (
@@ -507,21 +541,61 @@ export const InboxView: React.FC<InboxViewProps> = ({
               </div>
             </div>
 
+            {/* Conversation Outcome & AI Telemetry */}
+            <div className="bg-white border border-zinc-200/90 rounded-2xl p-4 shadow-xs space-y-2.5">
+              <h4 className="text-xs font-extrabold text-zinc-900 font-heading flex items-center justify-between">
+                <span>Outcome & Telemetry</span>
+                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-700">
+                  {activeConv.botType === 'commerce' ? 'Commerce Bot' : 'Support Bot'}
+                </span>
+              </h4>
+
+              <div className="space-y-1.5 text-xs">
+                <div className="flex items-center justify-between text-zinc-600">
+                  <span>Resolved By:</span>
+                  <span className={`font-bold font-mono px-2 py-0.5 rounded text-[10px] ${
+                    activeConv.resolvedBy === 'human'
+                      ? 'bg-amber-100 text-amber-900'
+                      : 'bg-emerald-100 text-emerald-900'
+                  }`}>
+                    {activeConv.resolvedBy === 'human' ? '👤 Human Specialist' : '🤖 AI Automated'}
+                  </span>
+                </div>
+
+                {activeConv.toolsInvoked && activeConv.toolsInvoked.length > 0 && (
+                  <div className="pt-1.5 border-t border-zinc-100">
+                    <span className="text-[10px] text-zinc-400 block mb-1">Tools Executed:</span>
+                    <div className="flex flex-wrap gap-1">
+                      {activeConv.toolsInvoked.map((t, idx) => (
+                        <span key={idx} className="bg-zinc-100 text-zinc-700 text-[10px] font-mono px-1.5 py-0.5 rounded">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {activeConv.csatRating && (
+                  <div className="pt-1.5 border-t border-zinc-100">
+                    <span className="text-[10px] text-zinc-400 block mb-1">CSAT Rating:</span>
+                    <div className="flex items-center gap-1 text-amber-500 font-bold text-xs">
+                      <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                      <span>{activeConv.csatRating} / 5.0</span>
+                    </div>
+                    {activeConv.csatFeedback && (
+                      <p className="text-[10px] text-zinc-600 italic mt-0.5">"{activeConv.csatFeedback}"</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Conversation Metadata */}
             <div className="pt-3 border-t border-zinc-200 space-y-2.5 text-[11px] text-zinc-600">
               <span className="font-bold text-zinc-900 uppercase text-[10px] block font-heading">Referral URL</span>
               <p className="text-zinc-800 font-mono text-[10px] bg-white p-2 rounded-xl border border-zinc-200 truncate select-all">
                 {activeConv.pageUrl || 'Direct / Embedded Session'}
               </p>
-
-              {activeConv.csatRating && (
-                <div className="pt-2">
-                  <span className="font-bold text-zinc-900 uppercase text-[10px] block mb-1 font-heading">Customer CSAT Feedback</span>
-                  <span className="bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-md inline-block font-mono">
-                    ⭐ {activeConv.csatRating} / 5.0 Rating
-                  </span>
-                </div>
-              )}
             </div>
 
             <div className="space-y-2 pt-3 border-t border-zinc-200">

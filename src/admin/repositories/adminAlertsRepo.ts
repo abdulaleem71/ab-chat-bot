@@ -77,12 +77,12 @@ export class AdminAlertsRepo {
         {
           id: 'alt_002',
           title: 'Gemini LLM Inference Latency Spike (>2200ms)',
-          message: 'Average response time for Gemini 2.5 Flash rose to 2,340ms over a 10-minute window during high token usage.',
+          message: 'Average response time for Gemini 3.7 Flash rose to 2,340ms over a 10-minute window during high token usage.',
           severity: 'warning',
           category: 'performance',
           source: 'LLMGateway:GeminiAPI',
           status: 'active',
-          metadata_json: JSON.stringify({ p95LatencyMs: 2340, thresholdMs: 1800, model: 'gemini-2.5-flash' }),
+          metadata_json: JSON.stringify({ p95LatencyMs: 2340, thresholdMs: 1800, model: 'gemini-3.7-flash' }),
           created_at: new Date(now - 45 * 60 * 1000).toISOString(),
         },
         {

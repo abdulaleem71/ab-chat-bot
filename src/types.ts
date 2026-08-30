@@ -28,12 +28,13 @@ export interface Tenant {
 
 export interface UserProfile {
   uid: string;
+  id?: string;
   email: string;
   displayName: string;
   tenantId: string;
   role: 'owner' | 'admin' | 'agent' | 'Admin' | 'Agent' | 'Owner';
   avatarUrl?: string;
-  createdAt: string;
+  createdAt?: string;
 }
 
 export interface TeamMember {
@@ -60,7 +61,7 @@ export interface TeamInvite {
   expiresAt: string;
 }
 
-export type IntegrationId = 'slack' | 'whatsapp' | 'zapier' | 'hubspot' | 'shopify';
+export type IntegrationId = 'slack' | 'whatsapp' | 'zapier' | 'hubspot' | 'shopify' | 'woocommerce';
 
 export interface IntegrationItem {
   id: IntegrationId;
@@ -71,17 +72,128 @@ export interface IntegrationItem {
   isConnected: boolean;
   connectedAt?: string;
   lastSyncAt?: string;
+  features?: string[];
   config?: Record<string, any>;
 }
 
 export type BotTone = 'Friendly' | 'Professional' | 'Concise' | 'Technical' | 'Empathetic';
 export type BotModel = 'gemini-3.7-flash' | 'gemini-3.1-pro-preview';
+export type BotType = 'support' | 'commerce';
+
+export interface ProductCard {
+  id: string;
+  title: string;
+  price: number;
+  currency?: string;
+  imageUrl?: string;
+  variantTitle?: string;
+  productUrl?: string;
+  inStock?: boolean;
+  description?: string;
+}
+
+export interface CommerceProduct {
+  id: string;
+  tenantId: string;
+  storePlatform: 'shopify' | 'woocommerce' | 'custom';
+  productId: string;
+  title: string;
+  description?: string;
+  price: number;
+  currency: string;
+  imageUrl?: string;
+  variantTitle?: string;
+  productUrl?: string;
+  inStock: boolean;
+  sku?: string;
+  metadata?: Record<string, any>;
+  syncedAt: string;
+}
+
+export interface OrderItem {
+  name: string;
+  quantity: number;
+  price: number;
+  variant?: string;
+  sku?: string;
+}
+
+export interface CommerceOrder {
+  id: string;
+  tenantId: string;
+  orderNumber: string;
+  customerEmail: string;
+  customerName?: string;
+  status: 'placed' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded';
+  totalAmount: number;
+  currency: string;
+  trackingUrl?: string;
+  trackingNumber?: string;
+  carrier?: string;
+  items: OrderItem[];
+  createdAt: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  tenantId: string;
+  conversationId?: string;
+  ticketNumber: string;
+  subject: string;
+  description: string;
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+  customerEmail?: string;
+  notes?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DiscountCode {
+  id: string;
+  tenantId: string;
+  code: string;
+  percentage: number;
+  reason?: string;
+  customerEmail?: string;
+  createdAt: string;
+  expiresAt?: string;
+}
+
+export interface EscalationRulesConfig {
+  enabled: boolean;
+  refundThreshold: number; // e.g. 50 ($50)
+  escalateOnRefundsOverThreshold: boolean;
+  escalateOnAccountDeletion: boolean;
+  escalateOnLegalThreats: boolean;
+  escalateOnChargeback: boolean;
+  customSensitiveKeywords: string[];
+}
+
+export type EscalationRules = EscalationRulesConfig & {
+  sensitiveTopics?: string[];
+  customKeywords?: string[];
+  autoEscalateVip?: boolean;
+  forceHumanOnNegativeSentiment?: boolean;
+};
+
+export interface CustomerProfile {
+  email: string;
+  name?: string;
+  tags?: string[];
+  totalOrders?: number;
+  totalSpent?: number;
+  currency?: string;
+  loyaltyTier?: 'Standard' | 'Silver' | 'Gold' | 'VIP';
+  recentOrders?: CommerceOrder[];
+}
 
 export interface Chatbot {
   id: string;
   tenantId: string;
   name: string;
   description: string;
+  botType?: BotType; // 'support' | 'commerce'
   websiteUrl?: string;
   allowedDomains?: string[];
   domainLockEnabled?: boolean;
@@ -100,6 +212,7 @@ export interface Chatbot {
   leadTitle?: string;
   humanOperatorOnline: boolean;
   status: 'active' | 'draft' | 'archived';
+  knowledgeSourceIds?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -123,6 +236,7 @@ export interface GroundingSource {
   title: string;
   snippet: string;
   sourceType?: string;
+  url?: string;
 }
 
 export interface Message {
@@ -133,6 +247,9 @@ export interface Message {
   agentName?: string;
   content: string;
   sourcesUsed?: GroundingSource[];
+  productCards?: ProductCard[];
+  toolsInvoked?: string[];
+  screenshotUrl?: string;
   timestamp: string;
 }
 
@@ -154,6 +271,10 @@ export interface Conversation {
   lastMessageTime: string;
   unreadByAgent: boolean;
   csatRating?: number; // 1 to 5
+  csatFeedback?: string;
+  resolvedBy?: 'ai' | 'human';
+  toolsInvoked?: string[];
+  botType?: BotType;
   createdAt: string;
 }
 
@@ -167,6 +288,11 @@ export interface AnalyticsSummary {
   humanTakeovers: number;
   topTopics: { topic: string; count: number }[];
   dailyTrends: { date: string; conversations: number; leads: number }[];
+  toolsUsage?: { tool: string; count: number }[];
+  byBotType?: {
+    support: { total: number; resolvedByAi: number; humanHandoffs: number; avgCsat: number };
+    commerce: { total: number; resolvedByAi: number; humanHandoffs: number; avgCsat: number };
+  };
 }
 
 export interface VisitorLead {
