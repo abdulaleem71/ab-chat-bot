@@ -11,14 +11,14 @@ import {
   Trash2,
   Zap,
   MessageSquare,
-  ShoppingBag,
   Database,
   ArrowRight,
   ShieldCheck,
   Check,
   X,
   Radio,
-  Sliders
+  Sliders,
+  Globe,
 } from 'lucide-react';
 import { IntegrationItem, IntegrationId } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -43,7 +43,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   const [testStatus, setTestStatus] = useState<{ id: string; loading: boolean; message?: string; success?: boolean } | null>(null);
   const [configInputs, setConfigInputs] = useState<Record<string, string>>({});
 
-  const categories = ['All', 'Messaging', 'Automation', 'CRM', 'E-commerce'];
+  const categories = ['All', 'Messaging', 'Automation', 'CRM'];
 
   const getAuthHeaders = () => {
     const currentToken = localStorage.getItem('auth_token') || token;
@@ -133,24 +133,25 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
       const res = await fetch(`/api/integrations/${item.id}/test`, {
         method: 'POST',
         headers: getAuthHeaders(),
+        body: JSON.stringify({ config: configInputs }),
       });
       const data = await res.json();
       if (!data.success) {
-        telemetry.logWebhookFailure(data.message || `Webhook test failed for integration ${item.name}`, {
+        telemetry.logWebhookFailure(data.message || `Test ping failed for integration ${item.name}`, {
           eventName: `${item.id}_test_ping`,
-          url: configInputs.webhookUrl,
+          url: configInputs.storeUrl || configInputs.webhookUrl,
         });
       }
       setTestStatus({
         id: item.id,
         loading: false,
         success: data.success,
-        message: data.message || 'Webhook handshake verified successfully.',
+        message: data.message || 'Connection handshake verified successfully.',
       });
     } catch (err: any) {
       telemetry.logWebhookFailure(err, {
         eventName: `${item.id}_test_ping`,
-        url: configInputs.webhookUrl,
+        url: configInputs.storeUrl || configInputs.webhookUrl,
       });
       setTestStatus({
         id: item.id,
@@ -180,8 +181,6 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
         return <div className="w-10 h-10 rounded-xl bg-orange-50 text-orange-600 border border-orange-200 flex items-center justify-center font-bold text-base"><Zap className="w-5 h-5" /></div>;
       case 'hubspot':
         return <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center font-bold text-base"><Database className="w-5 h-5" /></div>;
-      case 'shopify':
-        return <div className="w-10 h-10 rounded-xl bg-lime-50 text-lime-600 border border-lime-200 flex items-center justify-center font-bold text-base"><ShoppingBag className="w-5 h-5" /></div>;
       default:
         return <div className="w-10 h-10 rounded-xl bg-zinc-100 text-zinc-700 border border-zinc-200 flex items-center justify-center font-bold text-base"><Plug className="w-5 h-5" /></div>;
     }
@@ -202,7 +201,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
             </span>
           </div>
           <p className="text-xs text-zinc-500 font-medium">
-            Connect NomadsChat with your favorite messaging apps, CRMs, automation tools, and e-commerce platforms.
+            Connect NomadsChat with your favorite messaging apps, CRMs, and automation tools.
           </p>
         </div>
 
@@ -216,6 +215,30 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Sync Notification Banner */}
+      {syncNotification && (
+        <div className={`p-4 rounded-2xl border flex items-start justify-between gap-3 text-xs font-medium ${
+          syncNotification.success
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+            : 'bg-red-50 border-red-200 text-red-900'
+        }`}>
+          <div className="flex items-start gap-2.5">
+            {syncNotification.success ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            )}
+            <div>
+              <p className="font-bold">{syncNotification.success ? 'Catalog Sync Complete' : 'Catalog Sync Failed'}</p>
+              <p className="mt-0.5 opacity-90">{syncNotification.message}</p>
+            </div>
+          </div>
+          <button onClick={() => setSyncNotification(null)} className="p-1 hover:bg-black/5 rounded-lg cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -474,35 +497,6 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                       <input
                         type="password"
                         placeholder="pat-na1-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                        value={configInputs.apiKey || ''}
-                        onChange={e => setConfigInputs(prev => ({ ...prev, apiKey: e.target.value }))}
-                        className="w-full px-3 py-2 bg-white border border-zinc-300 rounded-xl text-xs text-zinc-900 font-mono placeholder-zinc-400 focus:outline-hidden focus:border-zinc-950"
-                      />
-                    </div>
-                  </>
-                )}
-
-                {activeModalItem.id === 'shopify' && (
-                  <>
-                    <div>
-                      <label className="block text-xs font-bold text-zinc-800 mb-1 font-heading">
-                        Shopify Store URL
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="your-store-name.myshopify.com"
-                        value={configInputs.storeUrl || ''}
-                        onChange={e => setConfigInputs(prev => ({ ...prev, storeUrl: e.target.value }))}
-                        className="w-full px-3 py-2 bg-white border border-zinc-300 rounded-xl text-xs text-zinc-900 placeholder-zinc-400 focus:outline-hidden focus:border-zinc-950"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-zinc-800 mb-1 font-heading">
-                        Storefront Access Token
-                      </label>
-                      <input
-                        type="password"
-                        placeholder="shpat_xxxxxxxxxxxxxxxxxxxx"
                         value={configInputs.apiKey || ''}
                         onChange={e => setConfigInputs(prev => ({ ...prev, apiKey: e.target.value }))}
                         className="w-full px-3 py-2 bg-white border border-zinc-300 rounded-xl text-xs text-zinc-900 font-mono placeholder-zinc-400 focus:outline-hidden focus:border-zinc-950"

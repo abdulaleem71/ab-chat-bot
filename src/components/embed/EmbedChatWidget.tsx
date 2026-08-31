@@ -1,9 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Chatbot, Message, GroundingSource, ProductCard } from '../../types';
+import { Chatbot, Message, GroundingSource } from '../../types';
 import { Send, Bot, Loader2, Sparkles, X, Minimize2, RotateCcw, ChevronDown, ChevronUp, ExternalLink, Check, AlertCircle, Image as ImageIcon, Paperclip, Wrench, ShieldAlert } from 'lucide-react';
 import { MarkdownContent } from '../../lib/markdown';
-import { ProductCarousel } from '../commerce/ProductCarousel';
 
 interface EmbedChatWidgetProps {
   bot: Chatbot;
@@ -279,7 +278,6 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
         sender: 'bot',
         content: data.reply || bot.fallbackMessage || "I'm not sure how to answer that yet.",
         sourcesUsed: data.sourcesUsed || [],
-        productCards: data.productCards || [],
         toolsInvoked: data.toolsInvoked || [],
         timestamp: new Date().toISOString(),
       };
@@ -424,15 +422,6 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
                         </span>
                       ))}
                     </div>
-                  )}
-
-                  {/* Product Card Carousel (Task 3) */}
-                  {!isUser && msg.productCards && msg.productCards.length > 0 && (
-                    <ProductCarousel
-                      products={msg.productCards}
-                      primaryColor={primaryColor}
-                      onSelectProduct={p => handleSendMessage(`Can you give me more details about "${p.title}"?`)}
-                    />
                   )}
 
                   {/* Grounding Source Citations */}
@@ -620,7 +609,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder={bot.botType === 'commerce' ? 'Ask about products, orders, discounts...' : 'Type your question...'}
+            placeholder="Type your question..."
             disabled={isLoading}
             className="flex-1 text-xs sm:text-sm px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:bg-white transition text-zinc-900 placeholder:text-zinc-400"
           />
@@ -637,7 +626,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
           </motion.button>
         </form>
         <div className="flex items-center justify-between text-[10px] text-zinc-400 mt-2 px-1">
-          <span>{bot.botType === 'commerce' ? 'NomadsChat Commerce AI' : 'Powered by NomadsChat RAG'}</span>
+          <span>Powered by NomadsChat RAG</span>
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
             Active

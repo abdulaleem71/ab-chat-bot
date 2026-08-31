@@ -1,5 +1,4 @@
 import { getDb } from '../db/index';
-import { newId } from '../lib/ids';
 import { IntegrationId, IntegrationItem } from '../types';
 
 export const MARKETPLACE_CATALOG: Omit<IntegrationItem, 'isConnected' | 'connectedAt' | 'lastSyncAt' | 'config'>[] = [
@@ -9,6 +8,7 @@ export const MARKETPLACE_CATALOG: Omit<IntegrationItem, 'isConnected' | 'connect
     category: 'Team Collaboration',
     description: 'Stream incoming live customer conversations into dedicated Slack channels and allow agents to reply seamlessly.',
     logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/slack.svg',
+    features: ['Real-time channel alerts', 'Direct agent handoff', 'Transcript streaming'],
   },
   {
     id: 'whatsapp',
@@ -16,6 +16,7 @@ export const MARKETPLACE_CATALOG: Omit<IntegrationItem, 'isConnected' | 'connect
     category: 'Omnichannel Messaging',
     description: 'Connect your official Meta WhatsApp Business account (WABA) to automate customer support and lead qualification.',
     logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/whatsapp.svg',
+    features: ['Official Cloud API', 'Template messages', '24/7 autonomous support'],
   },
   {
     id: 'zapier',
@@ -23,6 +24,7 @@ export const MARKETPLACE_CATALOG: Omit<IntegrationItem, 'isConnected' | 'connect
     category: 'Automation & Workflows',
     description: 'Trigger multi-step automations and sync visitor inquiries, captured leads, and chat transcripts to 5,000+ cloud apps.',
     logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/zapier.svg',
+    features: ['Catch-hook triggers', 'Multi-app workflows', 'Auto CRM export'],
   },
   {
     id: 'hubspot',
@@ -30,20 +32,7 @@ export const MARKETPLACE_CATALOG: Omit<IntegrationItem, 'isConnected' | 'connect
     category: 'CRM & Sales',
     description: 'Instantly create or update CRM contact records and attach chat transcripts when qualified leads are captured by your bot.',
     logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/hubspot.svg',
-  },
-  {
-    id: 'shopify',
-    name: 'Shopify',
-    category: 'E-Commerce',
-    description: 'Allow your AI chatbot to safely query live order status, inventory levels, tracking links, and catalog details for shoppers.',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/shopify.svg',
-  },
-  {
-    id: 'woocommerce',
-    name: 'WooCommerce',
-    category: 'E-Commerce',
-    description: 'Sync your WordPress / WooCommerce product catalog, check live inventory, and enable conversational AI commerce recommendations.',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/woocommerce.svg',
+    features: ['Bi-directional contact sync', 'Deal pipeline creation', 'Chat timeline logging'],
   },
 ];
 

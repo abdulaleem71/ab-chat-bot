@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Conversation, Message, Chatbot, ChannelType, TeamMember } from '../../types';
 import { MarkdownContent } from '../../lib/markdown';
-import { ProductCarousel } from '../commerce/ProductCarousel';
 import {
   Inbox,
   User,
@@ -26,7 +25,6 @@ import {
   Users,
   ChevronDown,
   Wrench,
-  ShoppingBag,
   Star
 } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
@@ -419,13 +417,6 @@ export const InboxView: React.FC<InboxViewProps> = ({
                         ))}
                       </div>
                     )}
-
-                    {/* Product Cards Carousel */}
-                    {msg.productCards && msg.productCards.length > 0 && (
-                      <div className="mt-2">
-                        <ProductCarousel products={msg.productCards} primaryColor={activeBot?.primaryColor} />
-                      </div>
-                    )}
                   </div>
 
                   {(msg.sender === 'bot' || msg.sender === 'agent') && (
@@ -543,11 +534,8 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
             {/* Conversation Outcome & AI Telemetry */}
             <div className="bg-white border border-zinc-200/90 rounded-2xl p-4 shadow-xs space-y-2.5">
-              <h4 className="text-xs font-extrabold text-zinc-900 font-heading flex items-center justify-between">
-                <span>Outcome & Telemetry</span>
-                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-700">
-                  {activeConv.botType === 'commerce' ? 'Commerce Bot' : 'Support Bot'}
-                </span>
+              <h4 className="text-xs font-extrabold text-zinc-900 font-heading">
+                Outcome & Telemetry
               </h4>
 
               <div className="space-y-1.5 text-xs">

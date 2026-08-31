@@ -17,8 +17,6 @@ import { BillingDashboardView } from './components/pricing/BillingDashboardView'
 import { FeaturesView } from './components/features/FeaturesView';
 import { FaqView } from './components/faq/FaqView';
 import { IntegrationsView } from './components/integrations/IntegrationsView';
-import { CatalogSyncManager } from './components/commerce/CatalogSyncManager';
-import { EscalationRulesManager } from './components/commerce/EscalationRulesManager';
 import { TeamView } from './components/team/TeamView';
 import { StatusPage } from './components/public/StatusPage';
 import { SecurityPage } from './components/public/SecurityPage';
@@ -571,14 +569,6 @@ function DashboardContent() {
                       );
                     }}
                   />
-                )}
-
-                {activeTab === 'commerce' && (
-                  <CatalogSyncManager onNavigateToIntegrations={() => setActiveTab('integrations')} />
-                )}
-
-                {activeTab === 'guardrails' && (
-                  <EscalationRulesManager />
                 )}
 
                 {activeTab === 'integrations' && (

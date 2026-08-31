@@ -2343,7 +2343,7 @@ app.post('/api/integrations/:id/connect', requireAuth, asyncHandler(async (req: 
   const integrationId = req.params.id as any;
   const { config } = req.body || {};
 
-  const validIntegrations = ['slack', 'whatsapp', 'zapier', 'hubspot', 'shopify'];
+  const validIntegrations = ['slack', 'whatsapp', 'zapier', 'hubspot', 'shopify', 'woocommerce'];
   if (!validIntegrations.includes(integrationId)) {
     return res.status(400).json({ success: false, error: `Invalid integration identifier: ${integrationId}` });
   }
@@ -2370,7 +2370,149 @@ app.post('/api/integrations/:id/disconnect', requireAuth, asyncHandler(async (re
 
 app.post('/api/integrations/:id/test', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const integrationId = req.params.id;
-  // Connection ping stub
+  let config = req.body?.config;
+  
+  if (!config || Object.keys(config).length === 0) {
+    const integrations = await IntegrationRepo.getIntegrations(req.user!.tenantId);
+    const found = integrations.find(i => i.id === integrationId);
+    config = found?.config || {};
+  }
+
+  if (integrationId === 'shopify') {
+    const rawStoreUrl = (config.storeUrl || '').trim();
+    const token = (config.apiKey || config.accessToken || '').trim();
+
+    if (!rawStoreUrl || !token) {
+      return res.status(400).json({
+        success: false,
+        status: 'error',
+        error: 'Shopify Store URL and API Access Token are required to test connection.',
+        message: 'Shopify Store URL and API Access Token are required to test connection.',
+      });
+    }
+
+    let domain = rawStoreUrl.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (!domain.includes('.')) {
+      domain += '.myshopify.com';
+    }
+
+    try {
+      const pingUrl = `https://${domain}/admin/api/2024-01/shop.json`;
+      const testRes = await fetch(pingUrl, {
+        method: 'GET',
+        headers: {
+          'X-Shopify-Access-Token': token,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'NomadsChat-TestPing/1.0',
+        },
+      });
+
+      if (testRes.ok) {
+        const json = await testRes.json();
+        const shopName = json.shop?.name || domain;
+        return res.json({
+          success: true,
+          status: 'healthy',
+          message: `Successfully connected to Shopify store "${shopName}" (${domain}). Live API credentials verified!`,
+        });
+      } else {
+        let errDetail = `HTTP ${testRes.status} (${testRes.statusText})`;
+        try {
+          const errJson = await testRes.json();
+          if (errJson.errors) {
+            errDetail += `: ${typeof errJson.errors === 'string' ? errJson.errors : JSON.stringify(errJson.errors)}`;
+          }
+        } catch {}
+        return res.status(400).json({
+          success: false,
+          status: 'error',
+          error: `Shopify authentication failed: ${errDetail}. Check your store domain and Admin Access Token.`,
+          message: `Shopify authentication failed: ${errDetail}. Check your store domain and Admin Access Token.`,
+        });
+      }
+    } catch (fetchErr: any) {
+      return res.status(400).json({
+        success: false,
+        status: 'error',
+        error: `Could not reach Shopify store at ${domain}: ${fetchErr.message}`,
+        message: `Could not reach Shopify store at ${domain}: ${fetchErr.message}`,
+      });
+    }
+  }
+
+  if (integrationId === 'woocommerce') {
+    const rawStoreUrl = (config.storeUrl || '').trim();
+    const consumerKey = (config.consumerKey || config.apiKey || '').trim();
+    const consumerSecret = (config.consumerSecret || config.apiSecret || '').trim();
+
+    if (!rawStoreUrl || !consumerKey) {
+      return res.status(400).json({
+        success: false,
+        status: 'error',
+        error: 'WooCommerce Store URL and Consumer Key are required to test connection.',
+        message: 'WooCommerce Store URL and Consumer Key are required to test connection.',
+      });
+    }
+
+    let cleanUrl = rawStoreUrl.replace(/\/+$/, '');
+    if (!/^https?:\/\//i.test(cleanUrl)) {
+      cleanUrl = 'https://' + cleanUrl;
+    }
+
+    try {
+      const pingUrl = new URL(`${cleanUrl}/wp-json/wc/v3/products`);
+      pingUrl.searchParams.set('per_page', '1');
+
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        'User-Agent': 'NomadsChat-TestPing/1.0',
+      };
+
+      if (consumerSecret) {
+        const basicAuth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
+        headers['Authorization'] = `Basic ${basicAuth}`;
+      } else {
+        pingUrl.searchParams.set('consumer_key', consumerKey);
+      }
+
+      const testRes = await fetch(pingUrl.toString(), {
+        method: 'GET',
+        headers,
+      });
+
+      if (testRes.ok) {
+        return res.json({
+          success: true,
+          status: 'healthy',
+          message: `Successfully connected to WooCommerce store (${cleanUrl}). Live REST API credentials verified!`,
+        });
+      } else {
+        let errDetail = `HTTP ${testRes.status} (${testRes.statusText})`;
+        try {
+          const errJson = await testRes.json();
+          if (errJson.message) {
+            errDetail += `: ${errJson.message}`;
+          }
+        } catch {}
+        return res.status(400).json({
+          success: false,
+          status: 'error',
+          error: `WooCommerce authentication failed: ${errDetail}. Verify WordPress URL and Consumer Key/Secret.`,
+          message: `WooCommerce authentication failed: ${errDetail}. Verify WordPress URL and Consumer Key/Secret.`,
+        });
+      }
+    } catch (fetchErr: any) {
+      return res.status(400).json({
+        success: false,
+        status: 'error',
+        error: `Could not reach WooCommerce site at ${cleanUrl}: ${fetchErr.message}`,
+        message: `Could not reach WooCommerce site at ${cleanUrl}: ${fetchErr.message}`,
+      });
+    }
+  }
+
+  // Webhook / other integration handshake
   res.json({
     success: true,
     status: 'healthy',
@@ -2786,14 +2928,21 @@ app.post('/api/commerce/products', requireAuth, asyncHandler(async (req: Authent
 }));
 
 app.post('/api/commerce/sync', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const { storePlatform } = req.body;
+  const { storePlatform } = req.body || {};
   const platform = storePlatform === 'woocommerce' ? 'woocommerce' : 'shopify';
-  const result = await CommerceRepo.syncCatalog(req.user!.tenantId, platform);
-  res.json({
-    success: true,
-    message: `Successfully synchronized ${result.syncedCount} products from ${platform === 'shopify' ? 'Shopify Storefront' : 'WooCommerce REST API'}.`,
-    ...result,
-  });
+  try {
+    const result = await CommerceRepo.syncCatalog(req.user!.tenantId, platform);
+    res.json({
+      success: true,
+      message: result.message,
+      ...result,
+    });
+  } catch (err: any) {
+    res.status(400).json({
+      success: false,
+      error: err.message || `Failed to sync catalog from ${platform}.`,
+    });
+  }
 }));
 
 app.get('/api/commerce/orders', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {

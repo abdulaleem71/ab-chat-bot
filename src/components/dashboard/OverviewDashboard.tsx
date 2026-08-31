@@ -20,11 +20,7 @@ import {
   PlaySquare,
   Bot,
   Zap,
-  ShoppingBag,
-  Wrench,
-  Headphones,
-  Sliders,
-  ShieldAlert
+  Wrench
 } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
 import { Tooltip } from '../common/Tooltip';
@@ -50,13 +46,11 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   onOpenEmbedModal,
 }) => {
   const [copiedEmbedStep, setCopiedEmbedStep] = useState(false);
-  const [botTypeFilter, setBotTypeFilter] = useState<'all' | 'support' | 'commerce'>('all');
 
   // Count active bots: bots with status === 'active' or bots that have linked conversations
-  const filteredBots = chatbots.filter(b => botTypeFilter === 'all' || (b.botType || 'support') === botTypeFilter);
-  const activeBots = filteredBots.filter(b => b.status === 'active' || (analytics?.totalConversations && analytics.totalConversations > 0));
-  const activeBotsCount = activeBots.length > 0 ? activeBots.length : (filteredBots.length > 0 ? filteredBots.length : ((analytics?.totalConversations || 0) > 0 ? 1 : 0));
-  const totalBotsCount = Math.max(filteredBots.length, activeBotsCount);
+  const activeBots = chatbots.filter(b => b.status === 'active' || (analytics?.totalConversations && analytics.totalConversations > 0));
+  const activeBotsCount = activeBots.length > 0 ? activeBots.length : (chatbots.length > 0 ? chatbots.length : ((analytics?.totalConversations || 0) > 0 ? 1 : 0));
+  const totalBotsCount = Math.max(chatbots.length, activeBotsCount);
 
   // Onboarding steps data
   const hasFirstBot = chatbots.length > 0;
@@ -348,120 +342,6 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
       ) : (
         /* Regular Dashboard Stat Cards & Charts (when chatbots exist) */
         <>
-          {/* Bot Type Filter & Quick Switcher */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white border border-zinc-200/90 rounded-2xl p-3 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-zinc-500 font-heading">Analytics Scope:</span>
-              <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => setBotTypeFilter('all')}
-                  className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                    botTypeFilter === 'all'
-                      ? 'bg-white text-zinc-950 shadow-xs'
-                      : 'text-zinc-600 hover:text-zinc-950'
-                  }`}
-                >
-                  All Bots ({chatbots.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBotTypeFilter('support')}
-                  className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
-                    botTypeFilter === 'support'
-                      ? 'bg-white text-zinc-950 shadow-xs'
-                      : 'text-zinc-600 hover:text-zinc-950'
-                  }`}
-                >
-                  <Headphones className="w-3 h-3" />
-                  <span>Support Bots ({chatbots.filter(b => b.botType !== 'commerce').length})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBotTypeFilter('commerce')}
-                  className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
-                    botTypeFilter === 'commerce'
-                      ? 'bg-white text-zinc-950 shadow-xs'
-                      : 'text-zinc-600 hover:text-zinc-950'
-                  }`}
-                >
-                  <ShoppingBag className="w-3 h-3" />
-                  <span>Commerce Bots ({chatbots.filter(b => b.botType === 'commerce').length})</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onNavigate('commerce')}
-                className="text-xs font-bold text-zinc-700 hover:text-zinc-950 px-2.5 py-1 rounded-lg hover:bg-zinc-100 transition flex items-center gap-1 cursor-pointer"
-              >
-                <ShoppingBag className="w-3.5 h-3.5" />
-                <span>Manage Catalog</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onNavigate('guardrails')}
-                className="text-xs font-bold text-zinc-700 hover:text-zinc-950 px-2.5 py-1 rounded-lg hover:bg-zinc-100 transition flex items-center gap-1 cursor-pointer"
-              >
-                <ShieldAlert className="w-3.5 h-3.5" />
-                <span>Escalation Rules</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Comparative Bot Type Breakdown Banner */}
-          {analytics.byBotType && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-              {/* Support Bot Metric Box */}
-              <div className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                    <Headphones className="w-4.5 h-4.5" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-extrabold text-zinc-950 font-heading">Support Bot Resolution</h4>
-                    <p className="text-[11px] text-zinc-500 font-medium font-body">Knowledge RAG & Ticket Escalation</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-extrabold text-zinc-950 font-heading">
-                    {analytics.byBotType.support.total > 0
-                      ? `${Math.round(((analytics.byBotType.support.total - analytics.byBotType.support.humanHandoffs) / analytics.byBotType.support.total) * 100)}% Auto-Resolved`
-                      : '94% Auto-Resolved'}
-                  </div>
-                  <div className="text-[10px] text-zinc-500 font-mono">
-                    CSAT: ⭐ {analytics.byBotType.support.avgCsat || 4.9} / 5.0
-                  </div>
-                </div>
-              </div>
-
-              {/* Commerce Bot Metric Box */}
-              <div className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                    <ShoppingBag className="w-4.5 h-4.5" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-extrabold text-zinc-950 font-heading">Commerce Bot Conversion</h4>
-                    <p className="text-[11px] text-zinc-500 font-medium font-body">Catalog Carousel & Order Lookup</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-extrabold text-zinc-950 font-heading">
-                    {analytics.byBotType.commerce.total > 0
-                      ? `${Math.round(((analytics.byBotType.commerce.total - analytics.byBotType.commerce.humanHandoffs) / analytics.byBotType.commerce.total) * 100)}% Auto-Resolved`
-                      : '91% Auto-Resolved'}
-                  </div>
-                  <div className="text-[10px] text-zinc-500 font-mono">
-                    CSAT: ⭐ {analytics.byBotType.commerce.avgCsat || 4.8} / 5.0
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* 5 KPI Metric Cards */}
           <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
             {/* Metric 1: Total Chats */}
