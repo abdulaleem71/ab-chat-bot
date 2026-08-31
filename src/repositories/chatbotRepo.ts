@@ -171,7 +171,7 @@ export class ChatbotRepo {
       tenantId: String(r.tenant_id),
       name: String(r.name),
       description: String(r.description || ''),
-      botType: (r.bot_type === 'commerce' ? 'commerce' : 'support'),
+      botType: 'support',
       websiteUrl: r.website_url ? String(r.website_url) : undefined,
       allowedDomains: Array.isArray(allowedDomains) ? allowedDomains : [],
       domainLockEnabled: r.domain_lock_enabled !== undefined && r.domain_lock_enabled !== null ? Number(r.domain_lock_enabled) === 1 : true,

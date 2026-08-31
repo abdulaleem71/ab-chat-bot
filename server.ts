@@ -22,7 +22,6 @@ import { LeadRepo } from './src/repositories/leadRepo';
 import { AnalyticsRepo } from './src/repositories/analyticsRepo';
 import { TeamRepo } from './src/repositories/teamRepo';
 import { IntegrationRepo } from './src/repositories/integrationRepo';
-import { CommerceRepo } from './src/repositories/commerceRepo';
 import { KnowledgeService } from './src/services/knowledgeService';
 import { ChatService } from './src/services/chatService';
 import { SecurityService } from './src/services/securityService';
@@ -2343,7 +2342,7 @@ app.post('/api/integrations/:id/connect', requireAuth, asyncHandler(async (req: 
   const integrationId = req.params.id as any;
   const { config } = req.body || {};
 
-  const validIntegrations = ['slack', 'whatsapp', 'zapier', 'hubspot', 'shopify', 'woocommerce'];
+  const validIntegrations = ['slack', 'whatsapp', 'zapier', 'hubspot'];
   if (!validIntegrations.includes(integrationId)) {
     return res.status(400).json({ success: false, error: `Invalid integration identifier: ${integrationId}` });
   }
@@ -2370,147 +2369,6 @@ app.post('/api/integrations/:id/disconnect', requireAuth, asyncHandler(async (re
 
 app.post('/api/integrations/:id/test', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const integrationId = req.params.id;
-  let config = req.body?.config;
-  
-  if (!config || Object.keys(config).length === 0) {
-    const integrations = await IntegrationRepo.getIntegrations(req.user!.tenantId);
-    const found = integrations.find(i => i.id === integrationId);
-    config = found?.config || {};
-  }
-
-  if (integrationId === 'shopify') {
-    const rawStoreUrl = (config.storeUrl || '').trim();
-    const token = (config.apiKey || config.accessToken || '').trim();
-
-    if (!rawStoreUrl || !token) {
-      return res.status(400).json({
-        success: false,
-        status: 'error',
-        error: 'Shopify Store URL and API Access Token are required to test connection.',
-        message: 'Shopify Store URL and API Access Token are required to test connection.',
-      });
-    }
-
-    let domain = rawStoreUrl.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
-    if (!domain.includes('.')) {
-      domain += '.myshopify.com';
-    }
-
-    try {
-      const pingUrl = `https://${domain}/admin/api/2024-01/shop.json`;
-      const testRes = await fetch(pingUrl, {
-        method: 'GET',
-        headers: {
-          'X-Shopify-Access-Token': token,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'User-Agent': 'NomadsChat-TestPing/1.0',
-        },
-      });
-
-      if (testRes.ok) {
-        const json = await testRes.json();
-        const shopName = json.shop?.name || domain;
-        return res.json({
-          success: true,
-          status: 'healthy',
-          message: `Successfully connected to Shopify store "${shopName}" (${domain}). Live API credentials verified!`,
-        });
-      } else {
-        let errDetail = `HTTP ${testRes.status} (${testRes.statusText})`;
-        try {
-          const errJson = await testRes.json();
-          if (errJson.errors) {
-            errDetail += `: ${typeof errJson.errors === 'string' ? errJson.errors : JSON.stringify(errJson.errors)}`;
-          }
-        } catch {}
-        return res.status(400).json({
-          success: false,
-          status: 'error',
-          error: `Shopify authentication failed: ${errDetail}. Check your store domain and Admin Access Token.`,
-          message: `Shopify authentication failed: ${errDetail}. Check your store domain and Admin Access Token.`,
-        });
-      }
-    } catch (fetchErr: any) {
-      return res.status(400).json({
-        success: false,
-        status: 'error',
-        error: `Could not reach Shopify store at ${domain}: ${fetchErr.message}`,
-        message: `Could not reach Shopify store at ${domain}: ${fetchErr.message}`,
-      });
-    }
-  }
-
-  if (integrationId === 'woocommerce') {
-    const rawStoreUrl = (config.storeUrl || '').trim();
-    const consumerKey = (config.consumerKey || config.apiKey || '').trim();
-    const consumerSecret = (config.consumerSecret || config.apiSecret || '').trim();
-
-    if (!rawStoreUrl || !consumerKey) {
-      return res.status(400).json({
-        success: false,
-        status: 'error',
-        error: 'WooCommerce Store URL and Consumer Key are required to test connection.',
-        message: 'WooCommerce Store URL and Consumer Key are required to test connection.',
-      });
-    }
-
-    let cleanUrl = rawStoreUrl.replace(/\/+$/, '');
-    if (!/^https?:\/\//i.test(cleanUrl)) {
-      cleanUrl = 'https://' + cleanUrl;
-    }
-
-    try {
-      const pingUrl = new URL(`${cleanUrl}/wp-json/wc/v3/products`);
-      pingUrl.searchParams.set('per_page', '1');
-
-      const headers: Record<string, string> = {
-        'Accept': 'application/json',
-        'User-Agent': 'NomadsChat-TestPing/1.0',
-      };
-
-      if (consumerSecret) {
-        const basicAuth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
-        headers['Authorization'] = `Basic ${basicAuth}`;
-      } else {
-        pingUrl.searchParams.set('consumer_key', consumerKey);
-      }
-
-      const testRes = await fetch(pingUrl.toString(), {
-        method: 'GET',
-        headers,
-      });
-
-      if (testRes.ok) {
-        return res.json({
-          success: true,
-          status: 'healthy',
-          message: `Successfully connected to WooCommerce store (${cleanUrl}). Live REST API credentials verified!`,
-        });
-      } else {
-        let errDetail = `HTTP ${testRes.status} (${testRes.statusText})`;
-        try {
-          const errJson = await testRes.json();
-          if (errJson.message) {
-            errDetail += `: ${errJson.message}`;
-          }
-        } catch {}
-        return res.status(400).json({
-          success: false,
-          status: 'error',
-          error: `WooCommerce authentication failed: ${errDetail}. Verify WordPress URL and Consumer Key/Secret.`,
-          message: `WooCommerce authentication failed: ${errDetail}. Verify WordPress URL and Consumer Key/Secret.`,
-        });
-      }
-    } catch (fetchErr: any) {
-      return res.status(400).json({
-        success: false,
-        status: 'error',
-        error: `Could not reach WooCommerce site at ${cleanUrl}: ${fetchErr.message}`,
-        message: `Could not reach WooCommerce site at ${cleanUrl}: ${fetchErr.message}`,
-      });
-    }
-  }
 
   // Webhook / other integration handshake
   res.json({
@@ -2896,87 +2754,7 @@ app.post('/api/contact-sales', asyncHandler(async (req, res) => {
 }));
 
 // ==========================================
-// COMMERCE CATALOG & INTEGRATION ENDPOINTS
-// ==========================================
-app.get('/api/commerce/products', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const query = req.query.q ? String(req.query.q) : undefined;
-  const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
-  const products = await CommerceRepo.getProducts(req.user!.tenantId, query, limit);
-  res.json({ success: true, products });
-}));
-
-app.post('/api/commerce/products', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const { title, price, currency, imageUrl, variantTitle, productUrl, description, sku, inStock, storePlatform } = req.body;
-  if (!title || price === undefined) {
-    return res.status(400).json({ success: false, error: 'Product title and price are required.' });
-  }
-
-  const product = await CommerceRepo.upsertProduct(req.user!.tenantId, {
-    storePlatform: storePlatform || 'custom',
-    title,
-    price: Number(price),
-    currency: currency || 'USD',
-    imageUrl,
-    variantTitle,
-    productUrl,
-    description,
-    sku,
-    inStock: inStock !== false,
-  });
-
-  res.json({ success: true, product });
-}));
-
-app.post('/api/commerce/sync', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const { storePlatform } = req.body || {};
-  const platform = storePlatform === 'woocommerce' ? 'woocommerce' : 'shopify';
-  try {
-    const result = await CommerceRepo.syncCatalog(req.user!.tenantId, platform);
-    res.json({
-      success: true,
-      message: result.message,
-      ...result,
-    });
-  } catch (err: any) {
-    res.status(400).json({
-      success: false,
-      error: err.message || `Failed to sync catalog from ${platform}.`,
-    });
-  }
-}));
-
-app.get('/api/commerce/orders', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const orderNumber = req.query.orderNumber ? String(req.query.orderNumber) : undefined;
-  const email = req.query.email ? String(req.query.email) : undefined;
-
-  if (orderNumber) {
-    const order = await CommerceRepo.lookupOrder(req.user!.tenantId, orderNumber);
-    return res.json({ success: true, order });
-  }
-
-  if (email) {
-    const orders = await CommerceRepo.getCustomerOrders(req.user!.tenantId, email);
-    return res.json({ success: true, orders });
-  }
-
-  return res.status(400).json({ success: false, error: 'Please provide either orderNumber or email query parameter.' });
-}));
-
-// ==========================================
-// ESCALATION RULES CONFIG ENDPOINTS (Task 6)
-// ==========================================
-app.get('/api/escalation-rules', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const rules = await CommerceRepo.getEscalationRules(req.user!.tenantId);
-  res.json({ success: true, rules });
-}));
-
-app.put('/api/escalation-rules', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const rules = await CommerceRepo.updateEscalationRules(req.user!.tenantId, req.body);
-  res.json({ success: true, rules, message: 'Escalation rules updated successfully.' });
-}));
-
-// ==========================================
-// CSAT RATING SUBMISSION ENDPOINT (Task 7)
+// CSAT RATING SUBMISSION ENDPOINT
 // ==========================================
 app.post('/api/csat', asyncHandler(async (req, res) => {
   const { conversationId, rating, feedback } = req.body;
@@ -2994,12 +2772,11 @@ app.post('/api/csat', asyncHandler(async (req, res) => {
 }));
 
 // ==========================================
-// ANALYTICS ENDPOINT (Filterable by botType)
+// ANALYTICS ENDPOINT
 // ==========================================
 app.get('/api/analytics', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbotId = req.query.chatbotId ? String(req.query.chatbotId) : undefined;
-  const botType = req.query.botType ? (String(req.query.botType) as any) : undefined;
-  const analytics = await AnalyticsRepo.getSummaryForTenant(req.user!.tenantId, chatbotId, botType);
+  const analytics = await AnalyticsRepo.getSummaryForTenant(req.user!.tenantId, chatbotId);
   res.json({ success: true, analytics });
 }));
 

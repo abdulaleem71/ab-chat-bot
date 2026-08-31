@@ -312,48 +312,6 @@ export async function initDb(): Promise<void> {
       );
     `);
 
-    // Create Commerce Products Table
-    await client.execute(`
-      CREATE TABLE IF NOT EXISTS commerce_products (
-        id TEXT PRIMARY KEY,
-        tenant_id TEXT NOT NULL,
-        store_platform TEXT NOT NULL DEFAULT 'shopify',
-        product_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT,
-        price REAL NOT NULL DEFAULT 0.0,
-        currency TEXT NOT NULL DEFAULT 'USD',
-        image_url TEXT,
-        variant_title TEXT,
-        product_url TEXT,
-        in_stock INTEGER NOT NULL DEFAULT 1,
-        sku TEXT,
-        metadata_json TEXT,
-        synced_at TEXT NOT NULL,
-        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
-      );
-    `);
-
-    // Create Commerce Orders Table
-    await client.execute(`
-      CREATE TABLE IF NOT EXISTS commerce_orders (
-        id TEXT PRIMARY KEY,
-        tenant_id TEXT NOT NULL,
-        order_number TEXT NOT NULL,
-        customer_email TEXT NOT NULL,
-        customer_name TEXT,
-        status TEXT NOT NULL DEFAULT 'processing',
-        total_amount REAL NOT NULL DEFAULT 0.0,
-        currency TEXT NOT NULL DEFAULT 'USD',
-        tracking_url TEXT,
-        tracking_number TEXT,
-        carrier TEXT,
-        items_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
-      );
-    `);
-
     // Create Support Tickets Table (for Agent Tool Execution)
     await client.execute(`
       CREATE TABLE IF NOT EXISTS support_tickets (
@@ -429,9 +387,6 @@ export async function initDb(): Promise<void> {
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_oauth_user_id ON oauth_accounts(user_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_integrations_tenant ON integrations(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_invites_tenant ON team_invitations(tenant_id);`);
-    await client.execute(`CREATE INDEX IF NOT EXISTS idx_commerce_prod_tenant ON commerce_products(tenant_id);`);
-    await client.execute(`CREATE INDEX IF NOT EXISTS idx_commerce_orders_email ON commerce_orders(tenant_id, customer_email);`);
-    await client.execute(`CREATE INDEX IF NOT EXISTS idx_commerce_orders_num ON commerce_orders(tenant_id, order_number);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_support_tickets_tenant ON support_tickets(tenant_id);`);
 
     // Column Migration for website_url
@@ -543,13 +498,6 @@ export async function initDb(): Promise<void> {
       // Column already exists
     }
 
-    // Column Migration for bot_type on chatbots (support | commerce)
-    try {
-      await client.execute(`ALTER TABLE chatbots ADD COLUMN bot_type TEXT DEFAULT 'support';`);
-    } catch {
-      // Column already exists
-    }
-
     // Column Migration for conversation outcome logging
     try {
       await client.execute(`ALTER TABLE conversations ADD COLUMN resolved_by TEXT DEFAULT 'ai';`);
@@ -558,11 +506,6 @@ export async function initDb(): Promise<void> {
     }
     try {
       await client.execute(`ALTER TABLE conversations ADD COLUMN tools_invoked_json TEXT DEFAULT '[]';`);
-    } catch {
-      // Column already exists
-    }
-    try {
-      await client.execute(`ALTER TABLE conversations ADD COLUMN bot_type TEXT DEFAULT 'support';`);
     } catch {
       // Column already exists
     }
@@ -788,90 +731,6 @@ async function seedInitialData(db: Client) {
       sql: `INSERT INTO leads (id, chatbot_id, tenant_id, conversation_id, name, email, phone, company, first_question, captured_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       args: ['lead_1', botId, tenantId, conv1Id, 'Sarah Jenkins', 'sarah.j@enterprise.com', '+1 415 555 0199', 'Enterprise Corp', 'How do I configure SAML SSO for Okta?', now],
-    });
-
-    // Seed Sample Commerce Products for Acme
-    const sampleProducts = [
-      {
-        id: 'prod_1',
-        title: 'Acme Cloud Gateway Pro',
-        description: 'High-throughput enterprise API gateway with zero-latency load balancing and automatic SSL certificate rotation.',
-        price: 299.0,
-        currency: 'USD',
-        imageUrl: 'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=600&q=80',
-        variantTitle: 'Enterprise 100k Req/sec',
-        productUrl: 'https://acmesaas.io/products/cloud-gateway-pro',
-        sku: 'ACM-GW-01',
-        inStock: 1,
-      },
-      {
-        id: 'prod_2',
-        title: 'AI Vector Search Booster Kit',
-        description: 'Semantic vector search accelerator module with sub-10ms similarity ranking and multilingual token embeddings.',
-        price: 149.0,
-        currency: 'USD',
-        imageUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=600&q=80',
-        variantTitle: 'Dedicated Index Node',
-        productUrl: 'https://acmesaas.io/products/ai-vector-booster',
-        sku: 'ACM-AI-VEC',
-        inStock: 1,
-      },
-      {
-        id: 'prod_3',
-        title: 'Developer Security Token Key (FIDO2 / U2F)',
-        description: 'Hardware cryptographic security key for zero-trust developer workspace access and biometric MFA signing.',
-        price: 55.0,
-        currency: 'USD',
-        imageUrl: 'https://images.unsplash.com/photo-1563770660941-20978e870e26?auto=format&fit=crop&w=600&q=80',
-        variantTitle: 'USB-C + NFC Dual Port',
-        productUrl: 'https://acmesaas.io/products/security-key-fido2',
-        sku: 'ACM-KEY-F2',
-        inStock: 1,
-      },
-      {
-        id: 'prod_4',
-        title: 'Nomad Real-Time Analytics Add-On',
-        description: 'Live telemetry ingestion pipeline supporting up to 50 million monthly active events with custom anomaly alert triggers.',
-        price: 89.0,
-        currency: 'USD',
-        imageUrl: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=600&q=80',
-        variantTitle: 'Monthly Retention Extension',
-        productUrl: 'https://acmesaas.io/products/analytics-addon',
-        sku: 'ACM-ANL-50M',
-        inStock: 1,
-      },
-    ];
-
-    for (const p of sampleProducts) {
-      await db.execute({
-        sql: `INSERT INTO commerce_products (id, tenant_id, store_platform, product_id, title, description, price, currency, image_url, variant_title, product_url, in_stock, sku, metadata_json, synced_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-        args: [p.id, tenantId, 'shopify', p.id, p.title, p.description, p.price, p.currency, p.imageUrl, p.variantTitle, p.productUrl, p.inStock, p.sku, '{}', now],
-      });
-    }
-
-    // Seed Sample Commerce Order
-    await db.execute({
-      sql: `INSERT INTO commerce_orders (id, tenant_id, order_number, customer_email, customer_name, status, total_amount, currency, tracking_url, tracking_number, carrier, items_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      args: [
-        'ord_1',
-        tenantId,
-        'ORD-8492',
-        'sarah.j@enterprise.com',
-        'Sarah Jenkins',
-        'shipped',
-        354.0,
-        'USD',
-        'https://track.carrier.com/ACM8492X',
-        'ACM8492X1099',
-        'FedEx Priority',
-        JSON.stringify([
-          { name: 'Acme Cloud Gateway Pro', quantity: 1, price: 299.0, variant: 'Enterprise 100k Req/sec' },
-          { name: 'Developer Security Token Key', quantity: 1, price: 55.0, variant: 'USB-C + NFC' }
-        ]),
-        new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString(),
-      ],
     });
 
     // Seed Sample Support Ticket

@@ -216,30 +216,6 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
         </div>
       </div>
 
-      {/* Sync Notification Banner */}
-      {syncNotification && (
-        <div className={`p-4 rounded-2xl border flex items-start justify-between gap-3 text-xs font-medium ${
-          syncNotification.success
-            ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-            : 'bg-red-50 border-red-200 text-red-900'
-        }`}>
-          <div className="flex items-start gap-2.5">
-            {syncNotification.success ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-            )}
-            <div>
-              <p className="font-bold">{syncNotification.success ? 'Catalog Sync Complete' : 'Catalog Sync Failed'}</p>
-              <p className="mt-0.5 opacity-90">{syncNotification.message}</p>
-            </div>
-          </div>
-          <button onClick={() => setSyncNotification(null)} className="p-1 hover:bg-black/5 rounded-lg cursor-pointer">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
         {/* Category Pills */}

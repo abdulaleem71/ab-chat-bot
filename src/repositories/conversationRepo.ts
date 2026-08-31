@@ -76,7 +76,7 @@ export class ConversationRepo {
     outcome: {
       resolvedBy?: 'ai' | 'human';
       toolsInvoked?: string[];
-      botType?: 'support' | 'commerce';
+      botType?: 'support';
       csatRating?: number;
       csatFeedback?: string;
       status?: Conversation['status'];
