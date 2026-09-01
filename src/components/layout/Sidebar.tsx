@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { LayoutDashboard, Bot, BookOpen, PlaySquare, Inbox, Code, BarChart3, Sparkles, CreditCard, HelpCircle, ChevronDown, Plug, Users } from 'lucide-react';
+import { LayoutDashboard, Bot, BookOpen, PlaySquare, Inbox, Code, BarChart3, Sparkles, CreditCard, HelpCircle, ChevronDown, Plug, Users, Settings, User } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { GEMINI_CONFIG } from '../../config/models';
 
@@ -22,6 +22,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, unrea
     { id: 'knowledge', label: 'Knowledge Base', icon: BookOpen },
     { id: 'playground', label: 'Live Test Playground', icon: PlaySquare },
     { id: 'inbox', label: 'Inbox & Live Chat', icon: Inbox, badge: unreadCount },
+    { id: 'account', label: 'My Account', icon: User },
+    { id: 'settings', label: 'Settings', icon: Settings },
     { id: 'integrations', label: 'Integrations', icon: Plug },
     { id: 'team', label: 'Team', icon: Users },
     { id: 'embed', label: 'Widget & Embed Code', icon: Code },

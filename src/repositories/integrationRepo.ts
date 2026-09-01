@@ -1,5 +1,6 @@
 import { getDb } from '../db/index';
 import { IntegrationId, IntegrationItem } from '../types';
+import { encryptConfig, decryptConfig, maskConfig } from '../services/encryptionService';
 
 export const MARKETPLACE_CATALOG: Omit<IntegrationItem, 'isConnected' | 'connectedAt' | 'lastSyncAt' | 'config'>[] = [
   {
@@ -54,7 +55,8 @@ export class IntegrationRepo {
       let config: Record<string, any> = {};
       if (dbRow?.config_json) {
         try {
-          config = JSON.parse(String(dbRow.config_json));
+          const parsed = JSON.parse(String(dbRow.config_json));
+          config = decryptConfig(parsed) || {};
         } catch {
           config = {};
         }
@@ -67,9 +69,24 @@ export class IntegrationRepo {
         isConnected,
         connectedAt: dbRow?.connected_at ? String(dbRow.connected_at) : undefined,
         lastSyncAt: dbRow?.updated_at ? String(dbRow.updated_at) : undefined,
-        config: isConnected ? config : undefined,
+        config: isConnected ? maskConfig(config) : undefined,
       };
     });
+  }
+
+  static async getConfigDecrypted(tenantId: string, integrationId: IntegrationId): Promise<Record<string, any>> {
+    const db = getDb();
+    const res = await db.execute({
+      sql: `SELECT config_json FROM integrations WHERE tenant_id = ? AND integration_id = ? AND is_connected = 1;`,
+      args: [tenantId, integrationId],
+    });
+    if (res.rows.length === 0 || !res.rows[0].config_json) return {};
+    try {
+      const parsed = JSON.parse(String(res.rows[0].config_json));
+      return decryptConfig(parsed) || {};
+    } catch {
+      return {};
+    }
   }
 
   static async setConnection(
@@ -80,7 +97,34 @@ export class IntegrationRepo {
   ): Promise<IntegrationItem> {
     const db = getDb();
     const now = new Date().toISOString();
-    const configJson = config ? JSON.stringify(config) : null;
+
+    // Fetch existing integration config to preserve secrets if masked values (e.g. ****) are submitted
+    const existingRes = await db.execute({
+      sql: `SELECT config_json, connected_at FROM integrations WHERE tenant_id = ? AND integration_id = ?;`,
+      args: [tenantId, integrationId],
+    });
+
+    let existingConfig: Record<string, any> = {};
+    if (existingRes.rows.length > 0 && existingRes.rows[0].config_json) {
+      try {
+        const parsed = JSON.parse(String(existingRes.rows[0].config_json));
+        existingConfig = decryptConfig(parsed) || {};
+      } catch {}
+    }
+
+    const mergedConfig = { ...existingConfig };
+    if (config) {
+      for (const [k, v] of Object.entries(config)) {
+        if (typeof v === 'string' && v.includes('****')) {
+          mergedConfig[k] = existingConfig[k] || v;
+        } else {
+          mergedConfig[k] = v;
+        }
+      }
+    }
+
+    const encryptedConfig = encryptConfig(mergedConfig);
+    const configJson = encryptedConfig ? JSON.stringify(encryptedConfig) : null;
     const id = `int_${integrationId}_${tenantId}`;
 
     await db.execute({
@@ -97,12 +141,13 @@ export class IntegrationRepo {
     });
 
     const catalogItem = MARKETPLACE_CATALOG.find(x => x.id === integrationId)!;
+    const existingConnectedAt = existingRes.rows[0]?.connected_at ? String(existingRes.rows[0].connected_at) : undefined;
     return {
       ...catalogItem,
       isConnected,
-      connectedAt: isConnected ? now : undefined,
+      connectedAt: isConnected ? (existingConnectedAt || now) : undefined,
       lastSyncAt: now,
-      config: isConnected ? (config || {}) : undefined,
+      config: isConnected ? maskConfig(mergedConfig) || {} : undefined,
     };
   }
 

@@ -18,6 +18,8 @@ export interface AdminChatbotListItem {
   avatar: string;
   greetingMessage?: string;
   collectLeadEmail: boolean;
+  isDisabled: boolean;
+  disabledReason?: string | null;
   tenantId: string;
   tenantName: string;
   ownerEmail: string;
@@ -197,7 +199,11 @@ export class AdminChatbotRepo {
             args: [...chatbotIds],
           }),
           db.execute({
-            sql: `SELECT chatbot_id, COUNT(*) as count FROM knowledge_sources WHERE chatbot_id IN (${placeholders}) GROUP BY chatbot_id;`,
+            sql: `SELECT cks.chatbot_id, COUNT(DISTINCT ks.id) as count 
+                  FROM knowledge_sources ks 
+                  JOIN chatbot_knowledge_sources cks ON ks.id = cks.knowledge_source_id 
+                  WHERE cks.chatbot_id IN (${placeholders}) 
+                  GROUP BY cks.chatbot_id;`,
             args: [...chatbotIds],
           }),
           db.execute({
@@ -252,6 +258,8 @@ export class AdminChatbotRepo {
         avatar: String(r.avatar || '🤖'),
         greetingMessage: r.greeting_message ? String(r.greeting_message) : undefined,
         collectLeadEmail: r.collect_lead_email === 1 || r.collect_lead_email === true,
+        isDisabled: Number(r.is_disabled) === 1,
+        disabledReason: r.disabled_reason ? String(r.disabled_reason) : null,
         tenantId: String(r.tenant_id),
         tenantName: String(r.tenant_name || 'Workspace'),
         ownerEmail: String(r.owner_email || r.user_email || 'unknown@example.com'),
@@ -346,7 +354,11 @@ export class AdminChatbotRepo {
 
     // 2. Fetch Knowledge Sources
     const kbRes = await db.execute({
-      sql: `SELECT id, type, title, status, chunk_count, updated_at FROM knowledge_sources WHERE chatbot_id = ? ORDER BY updated_at DESC;`,
+      sql: `SELECT ks.id, ks.type, ks.title, ks.status, ks.chunk_count, ks.updated_at 
+            FROM knowledge_sources ks
+            JOIN chatbot_knowledge_sources cks ON ks.id = cks.knowledge_source_id
+            WHERE cks.chatbot_id = ? 
+            ORDER BY ks.updated_at DESC;`,
       args: [chatbotId],
     });
     const knowledgeSources = kbRes.rows.map((kr: any) => ({

@@ -30,7 +30,7 @@ import { ProductAnalyticsReport } from '../repositories/adminAnalyticsRepo';
 import { useAdminAuth } from '../context/AdminAuthContext';
 
 export const ProductAnalyticsView: React.FC = () => {
-  const { adminToken } = useAdminAuth();
+  useAdminAuth();
   const [report, setReport] = useState<ProductAnalyticsReport | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,17 +46,7 @@ export const ProductAnalyticsView: React.FC = () => {
   const [tenantsList, setTenantsList] = useState<{ id: string; name: string }[]>([]);
   const [chatbotsList, setChatbotsList] = useState<{ id: string; name: string }[]>([]);
 
-  const getEffectiveToken = useCallback(() => {
-    return adminToken || localStorage.getItem('nomads_admin_token') || localStorage.getItem('nomadschat_admin_token') || '';
-  }, [adminToken]);
-
   const fetchAnalytics = useCallback(async () => {
-    const token = getEffectiveToken();
-    if (!token) {
-      setIsLoading(false);
-      return;
-    }
-
     setIsLoading(true);
     setError(null);
     try {
@@ -67,9 +57,7 @@ export const ProductAnalyticsView: React.FC = () => {
       });
 
       const res = await fetch(`/api/admin/analytics?${params.toString()}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        credentials: 'include',
       });
 
       const contentType = res.headers.get('content-type');
@@ -103,12 +91,9 @@ export const ProductAnalyticsView: React.FC = () => {
   }, [fetchAnalytics]);
 
   const handleExport = (format: 'csv' | 'json') => {
-    const token = localStorage.getItem('nomadschat_admin_token');
     const url = `/api/admin/analytics/export?range=${timeRange}&tenantId=${selectedTenantId}&chatbotId=${selectedChatbotId}&format=${format}`;
     fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
+      credentials: 'include',
     })
       .then(async (res) => {
         if (!res.ok) throw new Error('Export failed');

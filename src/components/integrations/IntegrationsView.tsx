@@ -33,7 +33,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   onNavigateToInbox,
   onNavigateToKnowledge,
 }) => {
-  const { token } = useAuth();
+  useAuth();
   const [integrations, setIntegrations] = useState<IntegrationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,17 +46,15 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   const categories = ['All', 'Messaging', 'Automation', 'CRM'];
 
   const getAuthHeaders = () => {
-    const currentToken = localStorage.getItem('auth_token') || token;
     return {
       'Content-Type': 'application/json',
-      ...(currentToken ? { Authorization: `Bearer ${currentToken}` } : {}),
     };
   };
 
   const fetchIntegrations = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/integrations', { headers: getAuthHeaders() });
+      const res = await fetch('/api/integrations', { credentials: 'include', headers: getAuthHeaders() });
       const data = await res.json();
       if (data.success && Array.isArray(data.integrations)) {
         setIntegrations(data.integrations);
@@ -70,7 +68,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
 
   useEffect(() => {
     fetchIntegrations();
-  }, [token]);
+  }, []);
 
   const handleOpenConfig = (item: IntegrationItem) => {
     setActiveModalItem(item);
@@ -89,6 +87,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
     try {
       const res = await fetch(`/api/integrations/${item.id}/connect`, {
         method: 'POST',
+        credentials: 'include',
         headers: getAuthHeaders(),
         body: JSON.stringify({ config: configInputs }),
       });
@@ -113,6 +112,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
     try {
       const res = await fetch(`/api/integrations/${item.id}/disconnect`, {
         method: 'POST',
+        credentials: 'include',
         headers: getAuthHeaders(),
       });
       const data = await res.json();
@@ -132,6 +132,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
     try {
       const res = await fetch(`/api/integrations/${item.id}/test`, {
         method: 'POST',
+        credentials: 'include',
         headers: getAuthHeaders(),
         body: JSON.stringify({ config: configInputs }),
       });

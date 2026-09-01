@@ -1,8 +1,13 @@
 import { GoogleGenAI } from '@google/genai';
 import { ChatbotRepo } from '../repositories/chatbotRepo';
 import { ConversationRepo } from '../repositories/conversationRepo';
+import { ContactRepo } from '../repositories/contactRepo';
+import { HubspotSyncService } from './crmSyncService';
 import { TicketRepo } from '../repositories/ticketRepo';
+import { PolicyRepo, TenantAuditRepo } from '../repositories/policyRepo';
 import { RagService } from './ragService';
+import { getDb } from '../db/index';
+import { decryptConfig } from './encryptionService';
 import { newId } from '../lib/ids';
 import { telemetry } from '../lib/telemetry';
 import {
@@ -116,7 +121,9 @@ export class ChatService {
       browser?: string;
       pageUrl?: string;
       screenshotBase64?: string;
-    }
+      isTest?: boolean;
+    },
+    isTest = false
   ): Promise<{
     reply: string;
     conversationId: string;
@@ -132,7 +139,27 @@ export class ChatService {
 
     const now = new Date().toISOString();
 
-    // 2. Resolve or Create Persistent Conversation in DB
+    const visitorId = visitorInfo?.visitorId || 'vis_' + Date.now();
+    const visitorEmail = visitorInfo?.email?.trim() || '';
+    const visitorName = visitorInfo?.name?.trim() || 'Website Visitor';
+
+    // 2. Look up or create contact using available identifying info (email if collected, otherwise external_id)
+    const { contactId } = await ContactRepo.findOrCreateContact(bot.tenantId, {
+      externalId: visitorId,
+      name: visitorName !== 'Website Visitor' ? visitorName : undefined,
+      email: visitorEmail || undefined,
+    });
+
+    // If HubSpot integration is connected, sync contact identity (mapping repeat visitors to one CRM contact)
+    if (visitorEmail) {
+      await HubspotSyncService.syncContact(bot.tenantId, {
+        name: visitorName,
+        email: visitorEmail,
+        externalId: visitorId,
+      });
+    }
+
+    // 3. Resolve or Create Persistent Conversation in DB
     let conversation: Conversation | null = null;
     if (existingConversationId) {
       conversation = await ConversationRepo.findById(existingConversationId);
@@ -146,9 +173,10 @@ export class ChatService {
         id: newId('conv'),
         chatbotId: bot.id,
         tenantId: bot.tenantId,
-        visitorId: visitorInfo?.visitorId || 'vis_' + Date.now(),
-        visitorName: visitorInfo?.name?.trim() || 'Website Visitor',
-        visitorEmail: visitorInfo?.email?.trim() || '',
+        visitorId,
+        contactId,
+        visitorName: visitorName,
+        visitorEmail: visitorEmail,
         visitorLocation: visitorInfo?.location?.trim() || 'Direct Web Session',
         visitorBrowser: visitorInfo?.browser?.trim() || 'Web Browser',
         pageUrl: visitorInfo?.pageUrl?.trim() || '',
@@ -159,16 +187,22 @@ export class ChatService {
         botType: 'support',
         resolvedBy: 'ai',
         toolsInvoked: [],
+        isTest: visitorInfo?.isTest || isTest,
         createdAt: now,
       });
-    } else if (visitorInfo) {
-      await ConversationRepo.updateVisitorInfo(conversation.id, {
-        visitorName: visitorInfo.name,
-        visitorEmail: visitorInfo.email,
-        visitorLocation: visitorInfo.location,
-        visitorBrowser: visitorInfo.browser,
-        pageUrl: visitorInfo.pageUrl,
-      });
+    } else {
+      if (!conversation.contactId) {
+        await ConversationRepo.updateContactId(conversation.id, contactId);
+      }
+      if (visitorInfo) {
+        await ConversationRepo.updateVisitorInfo(conversation.id, {
+          visitorName: visitorInfo.name,
+          visitorEmail: visitorInfo.email,
+          visitorLocation: visitorInfo.location,
+          visitorBrowser: visitorInfo.browser,
+          pageUrl: visitorInfo.pageUrl,
+        });
+      }
     }
 
     // 3. Save Visitor Message in DB
@@ -184,7 +218,7 @@ export class ChatService {
     await ConversationRepo.addMessage(userMsgRecord, bot.tenantId);
 
     // 4. Context Gathering Layer
-    const visitorEmail = visitorInfo?.email?.trim() || conversation.visitorEmail || '';
+    const resolvedVisitorEmail = visitorInfo?.email?.trim() || conversation.visitorEmail || '';
     const currentPageUrl = visitorInfo?.pageUrl?.trim() || conversation.pageUrl || bot.websiteUrl || '';
 
     const toolsInvokedList: string[] = [];
@@ -351,6 +385,7 @@ You have full tool-calling capabilities to execute real actions:
                   subject: args.subject || 'Support Ticket',
                   description: args.description || userMessage,
                   priority: args.priority || 'medium',
+                  status: args.status || 'open',
                   customerEmail: visitorEmail,
                 });
                 replyText = `I have created support ticket **#${ticket.ticketNumber}** for you regarding "${ticket.subject}". Our support team has received the details and will follow up with you.`;
@@ -363,38 +398,119 @@ You have full tool-calling capabilities to execute real actions:
                   replyText = `Ticket **#${updated.ticketNumber}** status updated to **${updated.status}**.`;
                 }
               } else if (fnName === 'issue_discount_code') {
-                const disc = await TicketRepo.issueDiscountCode(bot.tenantId, {
-                  percentage: args.percentage || 10,
-                  reason: args.reason || 'Customer retention voucher',
-                  customerEmail: visitorEmail,
-                });
-                replyText = `Here is a special **${disc.percentage}% OFF** promo code for your account: **\`${disc.code}\`**! You can enter this at checkout or billing to apply your discount.`;
+                const policy = await PolicyRepo.getPolicy(bot.tenantId);
+                let requestedPct = Number(args.percentage || 10);
+                const reason = args.reason || 'Customer retention voucher';
+
+                // 1. Max percent check (clamp)
+                let percentage = requestedPct;
+                if (percentage > policy.maxPercent) {
+                  const clamped = policy.maxPercent;
+                  await TenantAuditRepo.log({
+                    tenantId: bot.tenantId,
+                    action: 'DISCOUNT_CODE_CLAMPED',
+                    targetResource: 'DISCOUNT_CODE',
+                    targetId: conversation.id,
+                    details: { requestedPercentage: requestedPct, clampedPercentage: clamped, reason },
+                    status: 'success',
+                  });
+                  percentage = clamped;
+                }
+
+                // 2. Max per conversation check
+                const issuedCount = await TicketRepo.countDiscountCodesForConversation(bot.tenantId, conversation.id);
+                if (issuedCount >= policy.maxPerConversation) {
+                  await TenantAuditRepo.log({
+                    tenantId: bot.tenantId,
+                    action: 'DISCOUNT_CODE_BLOCKED_LIMIT',
+                    targetResource: 'DISCOUNT_CODE',
+                    targetId: conversation.id,
+                    details: { requestedPercentage: percentage, issuedCount, maxAllowed: policy.maxPerConversation, reason },
+                    status: 'blocked',
+                  });
+                  replyText = `I'm sorry, but a discount code has already been issued for this conversation in accordance with our store policy.`;
+                } else if (percentage > policy.requiresApprovalAbove) {
+                  // 3. Requires approval above threshold -> create pending approval request ticket in Inbox
+                  const ticket = await TicketRepo.createTicket(bot.tenantId, {
+                    conversationId: conversation.id,
+                    subject: `Discount Approval Request (${percentage}% OFF)`,
+                    description: `AI requested a discount code of ${percentage}% for conversation ${conversation.id} (${visitorEmail || 'visitor'}). Reason: ${reason}. This exceeds the auto-approval policy threshold of ${policy.requiresApprovalAbove}%. Please review and approve or reject.`,
+                    priority: 'high',
+                    status: 'pending',
+                    customerEmail: visitorEmail,
+                  });
+
+                  await TenantAuditRepo.log({
+                    tenantId: bot.tenantId,
+                    action: 'DISCOUNT_CODE_PENDING_APPROVAL',
+                    targetResource: 'SUPPORT_TICKET',
+                    targetId: ticket.id,
+                    details: { percentage, reason, ticketNumber: ticket.ticketNumber, conversationId: conversation.id },
+                    status: 'pending',
+                  });
+
+                  replyText = `Your request for a ${percentage}% discount requires manager approval. I have submitted an approval request (**#${ticket.ticketNumber}**) to our support team, and an agent will review it shortly.`;
+                } else {
+                  // 4. Issue discount code normally
+                  const disc = await TicketRepo.issueDiscountCode(bot.tenantId, {
+                    percentage,
+                    reason,
+                    customerEmail: visitorEmail,
+                    conversationId: conversation.id,
+                  });
+
+                  await TenantAuditRepo.log({
+                    tenantId: bot.tenantId,
+                    action: 'DISCOUNT_CODE_ISSUED',
+                    targetResource: 'DISCOUNT_CODE',
+                    targetId: disc.id,
+                    details: { code: disc.code, percentage, reason: disc.reason, customerEmail: visitorEmail, conversationId: conversation.id },
+                    status: 'success',
+                  });
+
+                  replyText = `Here is a special **${disc.percentage}% OFF** promo code for your account: **\`${disc.code}\`**! You can enter this at checkout or billing to apply your discount.`;
+                }
               } else if (fnName === 'call_webhook') {
                 try {
-                  const targetUrl = args.url || process.env.DEFAULT_WEBHOOK_URL;
+                  let targetUrl = args.url || process.env.DEFAULT_WEBHOOK_URL;
+                  let webhookSecret: string | undefined;
+
+                  if (!targetUrl) {
+                    const db = getDb();
+                    const whRes = await db.execute({
+                      sql: `SELECT url, secret_encrypted FROM tenant_webhooks WHERE tenant_id = ? AND is_active = 1 LIMIT 1;`,
+                      args: [bot.tenantId],
+                    });
+                    if (whRes.rows.length > 0) {
+                      targetUrl = String(whRes.rows[0].url);
+                      const secEnc = whRes.rows[0].secret_encrypted;
+                      if (secEnc) {
+                        try {
+                          const parsed = JSON.parse(String(secEnc));
+                          const decrypted = decryptConfig(parsed);
+                          webhookSecret = decrypted?.secret;
+                        } catch {}
+                      }
+                    }
+                  }
+
                   if (targetUrl) {
-                    const webhookResp = await fetch(targetUrl, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
+                    const { JobService } = await import('./jobService');
+                    await JobService.enqueue({
+                      tenantId: bot.tenantId,
+                      type: 'call_webhook',
+                      payload: {
+                        webhook: {
+                          url: targetUrl,
+                          secret: webhookSecret,
+                        },
                         event: args.event_name,
                         payload: args.payload,
                         botId: bot.id,
                         conversationId: conversation.id,
-                        timestamp: new Date().toISOString(),
-                      }),
+                      },
+                      maxAttempts: 3
                     });
-                    if (!webhookResp.ok) {
-                      telemetry.logWebhookFailure(
-                        `External webhook returned HTTP ${webhookResp.status}: ${webhookResp.statusText}`,
-                        {
-                          url: targetUrl,
-                          eventName: args.event_name,
-                          statusCode: webhookResp.status,
-                          payload: args.payload,
-                        }
-                      );
-                    }
                   } else {
                     console.log(`[NomadsChat Mock Webhook] Dispatched event "${args.event_name}":`, args.payload);
                   }

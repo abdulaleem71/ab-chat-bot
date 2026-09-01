@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { TeamMember, TeamInvite, TeamRole } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 
 interface TeamViewProps {
   onNavigateToBilling?: () => void;
@@ -31,7 +32,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
   onNavigateToBilling,
   onNavigateToInbox,
 }) => {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [invites, setInvites] = useState<TeamInvite[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,10 +52,8 @@ export const TeamView: React.FC<TeamViewProps> = ({
   const isAdminOrOwner = currentUserRole === 'admin' || currentUserRole === 'owner';
 
   const getAuthHeaders = () => {
-    const currentToken = localStorage.getItem('auth_token') || token;
     return {
       'Content-Type': 'application/json',
-      ...(currentToken ? { Authorization: `Bearer ${currentToken}` } : {}),
     };
   };
 
@@ -62,8 +61,8 @@ export const TeamView: React.FC<TeamViewProps> = ({
     setLoading(true);
     try {
       const [membersRes, invitesRes] = await Promise.all([
-        fetch('/api/team/members', { headers: getAuthHeaders() }),
-        fetch('/api/team/invites', { headers: getAuthHeaders() }),
+        fetch('/api/team/members', { credentials: 'include', headers: getAuthHeaders() }),
+        fetch('/api/team/invites', { credentials: 'include', headers: getAuthHeaders() }),
       ]);
 
       const [membersData, invitesData] = await Promise.all([
@@ -86,7 +85,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
 
   useEffect(() => {
     fetchTeamData();
-  }, [token]);
+  }, []);
 
   const handleSendInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,6 +99,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
     try {
       const res = await fetch('/api/team/invites', {
         method: 'POST',
+        credentials: 'include',
         headers: getAuthHeaders(),
         body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
       });
@@ -125,6 +125,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
     try {
       const res = await fetch(`/api/team/invites/${inviteToCancel}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: getAuthHeaders(),
       });
       const data = await res.json();
@@ -150,6 +151,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
     try {
       const res = await fetch(`/api/team/members/${editingMember.id}/role`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: getAuthHeaders(),
         body: JSON.stringify({ role: newRole }),
       });
@@ -174,6 +176,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
     try {
       const res = await fetch(`/api/team/members/${memberToDelete.id}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: getAuthHeaders(),
       });
       const data = await res.json();
@@ -624,58 +627,18 @@ export const TeamView: React.FC<TeamViewProps> = ({
       </AnimatePresence>
 
       {/* Delete Teammate Confirmation Modal */}
-      <AnimatePresence>
-        {memberToDelete && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-zinc-200"
-            >
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600">
-                  <Trash2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-extrabold text-zinc-950 font-heading">Remove Teammate?</h3>
-                  <p className="text-xs text-zinc-500 font-medium">Revoke access immediately</p>
-                </div>
-              </div>
-
-              <p className="text-xs text-zinc-600 leading-relaxed mb-5">
-                Are you sure you want to remove <strong className="text-zinc-950 font-bold">{memberToDelete.name}</strong> ({memberToDelete.email}) from this workspace? They will lose access to all chatbots and live chats.
-              </p>
-
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMemberToDelete(null)}
-                  disabled={isSubmitting}
-                  className="px-3.5 py-1.5 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-xl cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmRemoveMember}
-                  disabled={isSubmitting}
-                  className="px-4 py-1.5 text-xs font-extrabold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Removing...</span>
-                    </>
-                  ) : (
-                    <span>Remove Member</span>
-                  )}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <ConfirmDialog
+        isOpen={!!memberToDelete}
+        title="Remove Teammate?"
+        description={`Are you sure you want to remove ${memberToDelete?.name || ''} (${memberToDelete?.email || ''}) from this workspace? They will lose access to all chatbots, inbox conversations, and workspace tools immediately.`}
+        itemName={memberToDelete?.name || memberToDelete?.email || ''}
+        confirmButtonText="Remove Member"
+        isLoading={isSubmitting}
+        onConfirm={handleConfirmRemoveMember}
+        onClose={() => {
+          if (!isSubmitting) setMemberToDelete(null);
+        }}
+      />
 
       {/* Revoke Invite Confirmation Modal */}
       <AnimatePresence>

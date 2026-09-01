@@ -2,7 +2,6 @@ import React from 'react';
 import { motion } from 'motion/react';
 import {
   LayoutDashboard,
-  Activity,
   Users,
   Bot,
   Globe,
@@ -11,8 +10,8 @@ import {
   Filter,
   UserCheck,
   AlertTriangle,
+  ShieldAlert,
   FileText,
-  Shield,
   ExternalLink,
   LogOut,
 } from 'lucide-react';
@@ -22,7 +21,6 @@ import { MotionButton } from '../../components/common/MotionButton';
 
 export type AdminTab =
   | 'overview'
-  | 'activity'
   | 'users'
   | 'chatbots'
   | 'websites'
@@ -31,6 +29,7 @@ export type AdminTab =
   | 'funnel'
   | 'intelligence'
   | 'alerts'
+  | 'moderation'
   | 'audit';
 
 interface AdminSidebarProps {
@@ -51,7 +50,6 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       group: 'Core Operations',
       items: [
         { id: 'overview', label: 'Command Center', icon: LayoutDashboard, badge: 'Live' },
-        { id: 'activity', label: 'Live Activity Feed', icon: Activity },
       ],
     },
     {
@@ -75,6 +73,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       group: 'Security & Governance',
       items: [
         { id: 'alerts', label: 'System Alerts', icon: AlertTriangle },
+        { id: 'moderation', label: 'Content Moderation', icon: ShieldAlert },
         { id: 'audit', label: 'Audit Logs', icon: FileText },
       ],
     },

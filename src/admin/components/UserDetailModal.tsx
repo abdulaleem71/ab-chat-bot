@@ -20,6 +20,7 @@ import {
   ExternalLink,
   RefreshCw,
   Edit3,
+  CreditCard,
 } from 'lucide-react';
 
 interface UserDetailModalProps {
@@ -33,26 +34,35 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
   onClose,
   onUserUpdated,
 }) => {
-  const { adminToken } = useAdminAuth();
+  const { admin } = useAdminAuth();
+  const isSuperAdmin = admin?.role === 'super_admin';
   const [detail, setDetail] = useState<AdminUserDetail | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'chatbots' | 'leads' | 'conversations' | 'actions' | 'audit'>('chatbots');
+  const [activeTab, setActiveTab] = useState<'chatbots' | 'leads' | 'conversations' | 'billing' | 'actions' | 'audit'>('chatbots');
 
   // Action states
   const [newRole, setNewRole] = useState<string>('user');
   const [newPlan, setNewPlan] = useState<string>('Pro');
   const [newPassword, setNewPassword] = useState<string>('');
+  
+  // Billing intervention states
+  const [billingPlan, setBillingPlan] = useState<string>('Pro');
+  const [billingPlanReason, setBillingPlanReason] = useState<string>('');
+  const [creditAmount, setCreditAmount] = useState<string>('25');
+  const [creditReason, setCreditReason] = useState<string>('');
+  const [retryReason, setRetryReason] = useState<string>('');
+
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isSubmittingAction, setIsSubmittingAction] = useState<boolean>(false);
 
   const fetchDetail = useCallback(async () => {
-    if (!adminToken || !userId) return;
+    if (!userId) return;
     try {
       setIsLoading(true);
       setError(null);
       const res = await fetch(`/api/admin/users/${userId}`, {
-        headers: { Authorization: `Bearer ${adminToken}` },
+        credentials: 'include',
       });
       const json = await res.json();
       if (json.success && json.data) {
@@ -70,22 +80,22 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
     } finally {
       setIsLoading(false);
     }
-  }, [adminToken, userId]);
+  }, [userId]);
 
   useEffect(() => {
     fetchDetail();
   }, [fetchDetail]);
 
   const handleUpdateRole = async () => {
-    if (!adminToken || !detail) return;
+    if (!detail) return;
     setIsSubmittingAction(true);
     setActionMessage(null);
     try {
       const res = await fetch(`/api/admin/users/${userId}/update-role`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({ newRole }),
       });
@@ -105,15 +115,15 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
   };
 
   const handleUpdatePlan = async () => {
-    if (!adminToken || !detail || !detail.tenant) return;
+    if (!detail || !detail.tenant) return;
     setIsSubmittingAction(true);
     setActionMessage(null);
     try {
       const res = await fetch(`/api/admin/users/${userId}/update-plan`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({ tenantId: detail.tenant.id, newPlan }),
       });
@@ -133,7 +143,7 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
   };
 
   const handleResetPassword = async () => {
-    if (!adminToken || !detail) return;
+    if (!detail) return;
     if (!newPassword || newPassword.length < 6) {
       setActionMessage({ type: 'error', text: 'New password must be at least 6 characters.' });
       return;
@@ -143,9 +153,9 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
     try {
       const res = await fetch(`/api/admin/users/${userId}/reset-password`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({ newPassword }),
       });
@@ -157,6 +167,99 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
         onUserUpdated?.();
       } else {
         throw new Error(json.error || 'Failed to reset password');
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message });
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  const handleBillingUpdatePlan = async () => {
+    if (!detail || !detail.tenant) return;
+    if (!billingPlanReason.trim()) {
+      setActionMessage({ type: 'error', text: 'Please provide a short reason for changing plan tier.' });
+      return;
+    }
+    setIsSubmittingAction(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/admin/tenants/${detail.tenant.id}/billing/update-plan`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPlan: billingPlan, reason: billingPlanReason.trim() }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setActionMessage({ type: 'success', text: json.message || 'Plan updated successfully.' });
+        setBillingPlanReason('');
+        fetchDetail();
+        onUserUpdated?.();
+      } else {
+        throw new Error(json.error || 'Failed to update plan');
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message });
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  const handleBillingApplyCredit = async () => {
+    if (!detail || !detail.tenant) return;
+    if (!creditReason.trim()) {
+      setActionMessage({ type: 'error', text: 'Please provide a short reason for applying account credit.' });
+      return;
+    }
+    setIsSubmittingAction(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/admin/tenants/${detail.tenant.id}/billing/apply-credit`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: Number(creditAmount), reason: creditReason.trim() }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setActionMessage({ type: 'success', text: json.message || 'Credit applied successfully.' });
+        setCreditReason('');
+        fetchDetail();
+        onUserUpdated?.();
+      } else {
+        throw new Error(json.error || 'Failed to apply credit');
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message });
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  const handleBillingRetryPayment = async () => {
+    if (!detail || !detail.tenant) return;
+    if (!retryReason.trim()) {
+      setActionMessage({ type: 'error', text: 'Please provide a short reason for retrying payment.' });
+      return;
+    }
+    setIsSubmittingAction(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/admin/tenants/${detail.tenant.id}/billing/retry-payment`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: retryReason.trim() }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setActionMessage({ type: 'success', text: json.message || 'Payment retry triggered successfully.' });
+        setRetryReason('');
+        fetchDetail();
+        onUserUpdated?.();
+      } else {
+        throw new Error(json.error || 'Failed to retry payment');
       }
     } catch (err: any) {
       setActionMessage({ type: 'error', text: err.message });
@@ -268,6 +371,7 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
                   { id: 'chatbots', label: `Chatbots (${detail.chatbots.length})`, icon: Bot },
                   { id: 'leads', label: `Leads (${detail.leads.length})`, icon: Sparkles },
                   { id: 'conversations', label: `Conversations (${detail.recentConversations.length})`, icon: MessageSquare },
+                  { id: 'billing', label: 'Billing & Dunning', icon: CreditCard },
                   { id: 'actions', label: 'Admin Actions & Tier', icon: Edit3 },
                   { id: 'audit', label: `Security Logs (${detail.auditLogs.length})`, icon: Shield },
                 ].map((t) => {
@@ -424,6 +528,210 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* TAB: Billing & Dunning */}
+              {activeTab === 'billing' && (
+                <div className="space-y-6">
+                  {actionMessage && (
+                    <div
+                      className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                        actionMessage.type === 'success'
+                          ? 'bg-emerald-950/80 border border-emerald-800 text-emerald-300'
+                          : 'bg-rose-950/80 border border-rose-800 text-rose-300'
+                      }`}
+                    >
+                      {actionMessage.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                      )}
+                      <span>{actionMessage.text}</span>
+                    </div>
+                  )}
+
+                  {/* Tenant Billing Overview Card */}
+                  <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-5 space-y-4">
+                    <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                      <div className="flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-indigo-400" />
+                        <h3 className="text-xs font-bold text-white uppercase tracking-wider">Tenant Subscription & Billing Overview</h3>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase ${
+                        detail.tenant?.paymentStatus === 'active' ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800' :
+                        detail.tenant?.paymentStatus === 'past_due' || detail.tenant?.paymentStatus === 'dunning' ? 'bg-amber-950/80 text-amber-400 border border-amber-800' :
+                        'bg-zinc-800 text-zinc-300'
+                      }`}>
+                        Status: {detail.tenant?.paymentStatus || 'active'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/80">
+                        <div className="text-[10px] text-zinc-400">Current Plan Tier</div>
+                        <div className="text-sm font-bold text-white mt-1 capitalize">{detail.tenant?.plan || 'Pro'}</div>
+                      </div>
+                      <div className="bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/80">
+                        <div className="text-[10px] text-zinc-400">Credit Balance</div>
+                        <div className="text-sm font-bold text-emerald-400 mt-1">${(detail.tenant?.creditBalance || 0).toFixed(2)}</div>
+                      </div>
+                      <div className="bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/80">
+                        <div className="text-[10px] text-zinc-400">Payment Method on File</div>
+                        <div className="text-xs font-semibold text-zinc-200 mt-1">
+                          {detail.tenant?.paymentMethodBrand || 'Visa'} •••• {detail.tenant?.paymentMethodLast4 || '4242'}
+                          <span className="block text-[10px] text-zinc-400 font-normal">Exp: {detail.tenant?.paymentMethodExp || '12/28'}</span>
+                        </div>
+                      </div>
+                      <div className="bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/80">
+                        <div className="text-[10px] text-zinc-400">Failed Payments / Retries</div>
+                        <div className="text-xs font-bold text-zinc-200 mt-1">
+                          {detail.tenant?.failedPaymentsCount || 0} failed / {detail.tenant?.retryAttempts || 0} retries
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Dunning Telemetry Details */}
+                    {detail.tenant?.lastPaymentError && (
+                      <div className="bg-rose-950/40 border border-rose-900/60 p-3 rounded-xl text-xs text-rose-300 space-y-1">
+                        <div className="font-bold flex items-center gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+                          <span>Active Payment Dunning Error</span>
+                        </div>
+                        <div className="text-zinc-300 font-mono text-[11px]">{detail.tenant.lastPaymentError}</div>
+                        {detail.tenant.dunningSince && (
+                          <div className="text-[10px] text-zinc-400 pt-0.5">Dunning active since: {new Date(detail.tenant.dunningSince).toLocaleString()}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* SuperAdmin Billing Interventions Section */}
+                  <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-5 space-y-5">
+                    <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                      <div>
+                        <h3 className="text-xs font-bold text-white uppercase tracking-wider">SuperAdmin Billing Interventions</h3>
+                        <p className="text-[11px] text-zinc-400 mt-0.5">Manually adjust plan tiers, apply account credits, or retry failed payments with audit logging.</p>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${
+                        isSuperAdmin ? 'bg-indigo-950/80 text-indigo-300 border border-indigo-800' : 'bg-rose-950/80 text-rose-300 border border-rose-800'
+                      }`}>
+                        Role: {admin?.role || 'user'} {isSuperAdmin ? '(SuperAdmin Authorized)' : '(Restricted)'}
+                      </span>
+                    </div>
+
+                    {!isSuperAdmin ? (
+                      <div className="bg-rose-950/30 border border-rose-900/60 p-4 rounded-xl text-xs text-rose-300 flex items-center gap-3">
+                        <Shield className="w-5 h-5 text-rose-400 shrink-0" />
+                        <div>
+                          <div className="font-bold">SuperAdmin Role Required</div>
+                          <div className="text-zinc-400 text-[11px] mt-0.5">Billing modifications (plan tier changes, account credits, and payment retries) are strictly restricted to SuperAdmin accounts. Current account role is <span className="font-mono text-white">{admin?.role}</span>.</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        {/* 1. Change Plan Tier */}
+                        <div className="bg-zinc-950/50 p-4 rounded-xl border border-zinc-800/80 space-y-3">
+                          <div className="text-xs font-bold text-zinc-200">1. Manually Change Plan Tier</div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[10px] text-zinc-400 mb-1">New Plan Tier</label>
+                              <select
+                                value={billingPlan}
+                                onChange={(e) => setBillingPlan(e.target.value)}
+                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                              >
+                                <option value="Standard">Standard ($29/mo)</option>
+                                <option value="Pro">Pro ($99/mo)</option>
+                                <option value="Enterprise">Enterprise ($299/mo)</option>
+                                <option value="Ultra">Ultra ($799/mo)</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-zinc-400 mb-1">Reason for Plan Change <span className="text-rose-400">*</span></label>
+                              <input
+                                type="text"
+                                value={billingPlanReason}
+                                onChange={(e) => setBillingPlanReason(e.target.value)}
+                                placeholder="e.g. Account rep override per enterprise agreement"
+                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex justify-end pt-1">
+                            <button
+                              onClick={handleBillingUpdatePlan}
+                              disabled={isSubmittingAction || !billingPlanReason.trim()}
+                              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition cursor-pointer"
+                            >
+                              {isSubmittingAction ? 'Processing...' : 'Update Plan Tier & Log Audit'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 2. Apply One-Time Account Credit */}
+                        <div className="bg-zinc-950/50 p-4 rounded-xl border border-zinc-800/80 space-y-3">
+                          <div className="text-xs font-bold text-zinc-200">2. Apply One-Time Account Credit</div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[10px] text-zinc-400 mb-1">Credit Amount ($ USD)</label>
+                              <input
+                                type="number"
+                                min="1"
+                                step="1"
+                                value={creditAmount}
+                                onChange={(e) => setCreditAmount(e.target.value)}
+                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-zinc-400 mb-1">Reason for Credit <span className="text-rose-400">*</span></label>
+                              <input
+                                type="text"
+                                value={creditReason}
+                                onChange={(e) => setCreditReason(e.target.value)}
+                                placeholder="e.g. Compensation for platform downtime incident"
+                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex justify-end pt-1">
+                            <button
+                              onClick={handleBillingApplyCredit}
+                              disabled={isSubmittingAction || !creditReason.trim()}
+                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition cursor-pointer"
+                            >
+                              {isSubmittingAction ? 'Processing...' : 'Apply Account Credit & Log Audit'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 3. Retry Payment / Dunning Resolution */}
+                        <div className="bg-zinc-950/50 p-4 rounded-xl border border-zinc-800/80 space-y-3">
+                          <div className="text-xs font-bold text-zinc-200">3. Retry Failed Payment / Clear Dunning</div>
+                          <div>
+                            <label className="block text-[10px] text-zinc-400 mb-1">Reason for Payment Retry <span className="text-rose-400">*</span></label>
+                            <input
+                              type="text"
+                              value={retryReason}
+                              onChange={(e) => setRetryReason(e.target.value)}
+                              placeholder="e.g. Customer confirmed updated card is on file"
+                              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                          <div className="flex justify-end pt-1">
+                            <button
+                              onClick={handleBillingRetryPayment}
+                              disabled={isSubmittingAction || !retryReason.trim()}
+                              className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition cursor-pointer"
+                            >
+                              {isSubmittingAction ? 'Processing...' : 'Trigger Payment Retry & Clear Dunning'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 

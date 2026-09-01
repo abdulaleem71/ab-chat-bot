@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Chatbot, BotTone, BotModel, ChannelType } from '../../types';
+import { Chatbot, BotTone, BotModel, ChannelType, ChatbotVersion } from '../../types';
 import { useClickOutside } from '../../hooks/useClickOutside';
-import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle, Lock, Plus, ShieldCheck, ShieldAlert, Smartphone, Instagram, Mail, Layout, ExternalLink } from 'lucide-react';
+import { X, Save, Palette, Bot, Sparkles, MessageSquare, Shield, Check, Send, Globe, Trash2, AlertCircle, Lock, Plus, ShieldCheck, ShieldAlert, Smartphone, Instagram, Mail, Layout, ExternalLink, History, RotateCcw, RefreshCw, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 import { SecurityService } from '../../services/securityService';
 import { MotionButton } from '../common/MotionButton';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import { GEMINI_CONFIG } from '../../config/models';
 
 interface BotEditorModalProps {
@@ -24,18 +25,74 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
 }) => {
   const modalRef = useRef<HTMLDivElement>(null);
   useClickOutside(modalRef, () => {
-    if (isOpen) onClose();
+    if (isOpen && !showDeleteConfirm) onClose();
   });
 
-  const [activeTab, setActiveTab] = useState<'general' | 'appearance' | 'security' | 'leads'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'appearance' | 'security' | 'leads' | 'versions'>('general');
   const [formData, setFormData] = useState<Partial<Chatbot>>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [newDomainInput, setNewDomainInput] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Version History State
+  const [versions, setVersions] = useState<ChatbotVersion[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+  const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
+  const [versionSuccessMessage, setVersionSuccessMessage] = useState<string | null>(null);
+  const [expandedPromptVersionId, setExpandedPromptVersionId] = useState<string | null>(null);
+
+  const fetchVersions = async () => {
+    if (!bot?.id) return;
+    setLoadingVersions(true);
+    try {
+      const res = await fetch(`/api/chatbots/${bot.id}/versions`, {
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.versions)) {
+        setVersions(data.versions);
+      }
+    } catch (err) {
+      console.error('Failed to load bot versions:', err);
+    } finally {
+      setLoadingVersions(false);
+    }
+  };
+
+  const handleRestoreVersion = async (versionId: string) => {
+    if (!bot?.id) return;
+    setRestoringVersionId(versionId);
+    setVersionSuccessMessage(null);
+    setErrorMessage(null);
+    try {
+      const res = await fetch(`/api/chatbots/${bot.id}/versions/${versionId}/restore`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (data.success && data.chatbot) {
+        const restored = data.chatbot;
+        setFormData(prev => ({
+          ...prev,
+          ...restored,
+        }));
+        onSave(restored);
+        setVersionSuccessMessage('Version restored successfully! A rollback snapshot was created.');
+        await fetchVersions();
+      } else {
+        setErrorMessage(data.error || 'Failed to restore version');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to restore version');
+    } finally {
+      setRestoringVersionId(null);
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       setErrorMessage(null);
+      setVersionSuccessMessage(null);
       setNewDomainInput('');
       const defaultDomain = bot?.websiteUrl ? SecurityService.normalizeDomain(bot.websiteUrl) : '';
       const initialAllowed = Array.isArray(bot?.allowedDomains) && bot.allowedDomains.length > 0
@@ -64,6 +121,12 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
         status: bot?.status || 'active',
       });
       setActiveTab('general');
+
+      if (bot?.id) {
+        fetchVersions();
+      } else {
+        setVersions([]);
+      }
     }
   }, [bot, isOpen]);
 
@@ -217,6 +280,26 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
           >
             Lead Capture Gate
           </button>
+          {bot?.id && (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('versions');
+                fetchVersions();
+              }}
+              className={`py-3 px-4 text-xs font-bold border-b-2 transition-all duration-150 cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'versions' ? 'border-black text-black bg-white shadow-xs' : 'border-transparent text-zinc-500 hover:text-black'
+              }`}
+            >
+              <History className="w-3.5 h-3.5 text-amber-600" />
+              <span>Version History</span>
+              {versions.length > 0 && (
+                <span className="text-[10px] bg-zinc-200 text-zinc-800 font-extrabold px-1.5 py-0.2 rounded-full">
+                  {versions.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Modal Body */}
@@ -225,6 +308,13 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs font-semibold flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
               <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {versionSuccessMessage && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{versionSuccessMessage}</span>
             </div>
           )}
 
@@ -630,44 +720,172 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
             </>
           )}
 
+          {/* Version History Tab */}
+          {activeTab === 'versions' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-2xl">
+                <div className="flex items-center gap-2.5">
+                  <History className="w-5 h-5 text-amber-600 shrink-0" />
+                  <div>
+                    <h4 className="text-xs font-extrabold text-amber-950 font-heading">Configuration Snapshots</h4>
+                    <p className="text-[11px] text-amber-800/90 font-medium">
+                      Each save automatically preserves a snapshot. The last 20 versions are archived.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={fetchVersions}
+                  disabled={loadingVersions}
+                  className="p-1.5 text-amber-700 hover:text-amber-950 hover:bg-amber-100/80 rounded-xl transition cursor-pointer disabled:opacity-50"
+                  title="Refresh versions"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingVersions ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+
+              {loadingVersions && versions.length === 0 ? (
+                <div className="p-8 text-center text-zinc-400 space-y-2">
+                  <RefreshCw className="w-6 h-6 animate-spin mx-auto text-zinc-400" />
+                  <p className="text-xs font-medium">Loading version history...</p>
+                </div>
+              ) : versions.length === 0 ? (
+                <div className="p-8 text-center border-2 border-dashed border-zinc-200 rounded-2xl text-zinc-400 space-y-1">
+                  <History className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
+                  <p className="text-xs font-bold text-zinc-700">No previous versions yet</p>
+                  <p className="text-[11px] text-zinc-500 max-w-sm mx-auto">
+                    Saving changes to this chatbot will automatically archive full snapshots here that you can roll back to at any time.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                  {versions.map((ver, idx) => {
+                    const isCurrent = idx === 0;
+                    const isExpanded = expandedPromptVersionId === ver.id;
+                    const isRestoring = restoringVersionId === ver.id;
+
+                    return (
+                      <div
+                        key={ver.id}
+                        className={`p-4 rounded-2xl border transition-all ${
+                          isCurrent
+                            ? 'bg-zinc-50/90 border-zinc-300 ring-1 ring-zinc-200'
+                            : 'bg-white border-zinc-200 hover:border-zinc-300'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold text-zinc-900 font-heading">
+                                {ver.snapshot.name || 'Chatbot'}
+                              </span>
+                              {isCurrent && (
+                                <span className="text-[10px] font-extrabold uppercase tracking-wider bg-black text-white px-2 py-0.5 rounded-md">
+                                  Latest Save
+                                </span>
+                              )}
+                              <span className="text-[10px] font-mono text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded-md">
+                                {ver.id.slice(0, 14)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[11px] text-zinc-500 font-medium">
+                              <span>{new Date(ver.createdAt).toLocaleString()}</span>
+                              <span>•</span>
+                              <span>By <strong className="text-zinc-700">{ver.createdBy}</strong></span>
+                            </div>
+                          </div>
+
+                          <MotionButton
+                            type="button"
+                            variant="secondary"
+                            size="xs"
+                            disabled={isRestoring || restoringVersionId !== null}
+                            onClick={() => handleRestoreVersion(ver.id)}
+                            leftIcon={
+                              isRestoring ? (
+                                <RefreshCw className="w-3 h-3 animate-spin text-zinc-600" />
+                              ) : (
+                                <RotateCcw className="w-3 h-3 text-indigo-600" />
+                              )
+                            }
+                          >
+                            {isRestoring ? 'Restoring...' : 'Restore Version'}
+                          </MotionButton>
+                        </div>
+
+                        {/* Snapshot Specs Pill Row */}
+                        <div className="flex items-center gap-1.5 flex-wrap mt-3 pt-2.5 border-t border-zinc-100 text-[11px]">
+                          <span className="inline-flex items-center gap-1 bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded-md font-medium">
+                            <span>Tone:</span>
+                            <strong className="text-zinc-900">{ver.snapshot.tone || 'Friendly'}</strong>
+                          </span>
+                          <span className="inline-flex items-center gap-1 bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded-md font-medium">
+                            <span>Model:</span>
+                            <strong className="text-zinc-900 font-mono">{ver.snapshot.model || 'gemini-3.7-flash'}</strong>
+                          </span>
+                          {ver.snapshot.allowedDomains && ver.snapshot.allowedDomains.length > 0 && (
+                            <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-medium">
+                              <Shield className="w-3 h-3" />
+                              <span>{ver.snapshot.allowedDomains.length} domains</span>
+                            </span>
+                          )}
+                          {ver.snapshot.fallbackMessage && (
+                            <span className="inline-flex items-center gap-1 bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md font-normal truncate max-w-xs" title={ver.snapshot.fallbackMessage}>
+                              <span>Fallback:</span>
+                              <span className="truncate italic">"{ver.snapshot.fallbackMessage}"</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Expandable System Instruction Preview */}
+                        {ver.snapshot.systemInstruction && (
+                          <div className="mt-2 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedPromptVersionId(isExpanded ? null : ver.id)}
+                              className="flex items-center gap-1 text-zinc-500 hover:text-zinc-800 font-bold transition cursor-pointer"
+                            >
+                              {isExpanded ? (
+                                <>
+                                  <ChevronUp className="w-3 h-3" />
+                                  <span>Hide Instructions</span>
+                                </>
+                              ) : (
+                                <>
+                                  <ChevronDown className="w-3 h-3" />
+                                  <span>View Instructions Snapshot</span>
+                                </>
+                              )}
+                            </button>
+                            {isExpanded && (
+                              <div className="mt-1.5 p-2.5 bg-zinc-100 rounded-xl text-zinc-800 font-mono text-[10px] leading-relaxed whitespace-pre-wrap max-h-32 overflow-y-auto">
+                                {ver.snapshot.systemInstruction}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Modal Footer */}
           <div className="pt-4 border-t border-zinc-100 flex items-center justify-between gap-3">
             <div>
               {bot?.id && onDelete && (
-                showDeleteConfirm ? (
-                  <div className="flex items-center gap-2 bg-red-50 p-1.5 rounded-xl border border-red-200">
-                    <span className="text-[11px] font-bold text-red-800 pl-1">Confirm delete?</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onDelete(bot.id!);
-                        setShowDeleteConfirm(false);
-                        onClose();
-                      }}
-                      className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
-                    >
-                      Yes, Delete
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowDeleteConfirm(false)}
-                      className="px-2 py-1 bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 rounded-lg text-xs font-medium transition cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <MotionButton
-                    type="button"
-                    variant="danger"
-                    size="sm"
-                    shimmer
-                    leftIcon={<Trash2 className="w-3.5 h-3.5 text-white" />}
-                    onClick={() => setShowDeleteConfirm(true)}
-                  >
-                    Delete Chatbot
-                  </MotionButton>
-                )
+                <MotionButton
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  shimmer
+                  leftIcon={<Trash2 className="w-3.5 h-3.5 text-white" />}
+                  onClick={() => setShowDeleteConfirm(true)}
+                >
+                  Delete Chatbot
+                </MotionButton>
               )}
             </div>
 
@@ -693,6 +911,23 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
           </div>
         </form>
           </motion.div>
+
+          {/* Delete Confirmation Dialog */}
+          <ConfirmDialog
+            isOpen={showDeleteConfirm}
+            title={`Delete "${bot?.name || formData.name || 'Chatbot'}"?`}
+            description="This will permanently delete this AI chatbot and unlink all associated conversations, messages, analytics, and knowledge embeddings. This action cannot be undone."
+            itemName={bot?.name || formData.name || ''}
+            confirmButtonText="Delete Chatbot"
+            onConfirm={async () => {
+              if (bot?.id && onDelete) {
+                onDelete(bot.id);
+              }
+              setShowDeleteConfirm(false);
+              onClose();
+            }}
+            onClose={() => setShowDeleteConfirm(false)}
+          />
         </div>
       )}
     </AnimatePresence>

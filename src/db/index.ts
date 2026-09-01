@@ -118,6 +118,11 @@ export async function initDb(): Promise<void> {
         name TEXT NOT NULL,
         owner_email TEXT NOT NULL,
         plan TEXT NOT NULL DEFAULT 'Pro',
+        logo_url TEXT,
+        timezone TEXT DEFAULT 'UTC',
+        is_disabled INTEGER NOT NULL DEFAULT 0,
+        disabled_reason TEXT,
+        deleted_at TEXT,
         created_at TEXT NOT NULL
       );
     `);
@@ -170,17 +175,35 @@ export async function initDb(): Promise<void> {
         lead_title TEXT,
         human_operator_online INTEGER NOT NULL DEFAULT 1,
         status TEXT NOT NULL DEFAULT 'active',
+        is_disabled INTEGER NOT NULL DEFAULT 0,
+        disabled_reason TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
       );
     `);
 
-    // Create Knowledge Sources Table
+    // Create Chatbot Versions Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS chatbot_versions (
+        id TEXT PRIMARY KEY,
+        chatbot_id TEXT NOT NULL,
+        snapshot TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE
+      );
+    `);
+
+    try {
+      await client.execute(`CREATE INDEX IF NOT EXISTS idx_chatbot_versions_bot ON chatbot_versions(chatbot_id);`);
+      await client.execute(`CREATE INDEX IF NOT EXISTS idx_chatbot_versions_created ON chatbot_versions(chatbot_id, created_at DESC);`);
+    } catch (e) {}
+
+    // Create Knowledge Sources Table (Tenant-owned)
     await client.execute(`
       CREATE TABLE IF NOT EXISTS knowledge_sources (
         id TEXT PRIMARY KEY,
-        chatbot_id TEXT NOT NULL,
         tenant_id TEXT NOT NULL,
         type TEXT NOT NULL,
         title TEXT NOT NULL,
@@ -189,8 +212,18 @@ export async function initDb(): Promise<void> {
         status TEXT NOT NULL DEFAULT 'indexed',
         chunk_count INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
         FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Chatbot Knowledge Sources Join Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS chatbot_knowledge_sources (
+        chatbot_id TEXT NOT NULL,
+        knowledge_source_id TEXT NOT NULL,
+        PRIMARY KEY (chatbot_id, knowledge_source_id),
+        FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
+        FOREIGN KEY (knowledge_source_id) REFERENCES knowledge_sources(id) ON DELETE CASCADE
       );
     `);
 
@@ -199,15 +232,72 @@ export async function initDb(): Promise<void> {
       CREATE TABLE IF NOT EXISTS knowledge_chunks (
         id TEXT PRIMARY KEY,
         source_id TEXT NOT NULL,
-        chatbot_id TEXT NOT NULL,
         tenant_id TEXT NOT NULL,
         content TEXT NOT NULL,
         chunk_index INTEGER NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (source_id) REFERENCES knowledge_sources(id) ON DELETE CASCADE,
-        FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
       );
     `);
+
+    // Create Transactional Emails Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS transactional_emails (
+        id TEXT PRIMARY KEY,
+        to_email TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        body TEXT NOT NULL,
+        token TEXT,
+        type TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    // Migration for legacy knowledge tables (migrating chatbot_id to join table and dropping old columns)
+    try {
+      const ksInfo = await client.execute(`PRAGMA table_info(knowledge_sources);`);
+      if (ksInfo.rows.some((r: any) => String(r.name) === 'chatbot_id')) {
+        await client.execute(`
+          INSERT OR IGNORE INTO chatbot_knowledge_sources (chatbot_id, knowledge_source_id)
+          SELECT chatbot_id, id FROM knowledge_sources WHERE chatbot_id IS NOT NULL AND chatbot_id != '';
+        `);
+        try {
+          await client.execute(`ALTER TABLE knowledge_sources DROP COLUMN chatbot_id;`);
+        } catch (e) {}
+      }
+    } catch (e) {}
+
+    try {
+      const tenantInfo = await client.execute(`PRAGMA table_info(tenants);`);
+      if (!tenantInfo.rows.some((r: any) => String(r.name) === 'deleted_at')) {
+        await client.execute(`ALTER TABLE tenants ADD COLUMN deleted_at TEXT;`);
+      }
+    } catch (e) {}
+
+    try {
+      await client.execute(`DELETE FROM tenants WHERE deleted_at IS NOT NULL AND datetime(deleted_at, '+30 days') < datetime('now');`);
+    } catch (e) {}
+
+    // Create Contacts Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS contacts (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        external_id TEXT,
+        name TEXT,
+        email TEXT,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    try {
+      await client.execute(`CREATE INDEX IF NOT EXISTS idx_contacts_tenant ON contacts(tenant_id);`);
+      await client.execute(`CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(tenant_id, email);`);
+      await client.execute(`CREATE INDEX IF NOT EXISTS idx_contacts_external ON contacts(tenant_id, external_id);`);
+    } catch (e) {}
 
     // Create Conversations Table
     await client.execute(`
@@ -216,6 +306,7 @@ export async function initDb(): Promise<void> {
         chatbot_id TEXT NOT NULL,
         tenant_id TEXT NOT NULL,
         visitor_id TEXT NOT NULL,
+        contact_id TEXT,
         visitor_name TEXT,
         visitor_email TEXT,
         visitor_location TEXT,
@@ -226,11 +317,25 @@ export async function initDb(): Promise<void> {
         last_message_time TEXT NOT NULL,
         unread_by_agent INTEGER NOT NULL DEFAULT 1,
         csat_rating INTEGER,
+        is_test INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         FOREIGN KEY (chatbot_id) REFERENCES chatbots(id) ON DELETE CASCADE,
-        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
       );
     `);
+
+    try {
+      const convInfo = await client.execute(`PRAGMA table_info(conversations);`);
+      if (!convInfo.rows.some((r: any) => String(r.name) === 'contact_id')) {
+        await client.execute(`ALTER TABLE conversations ADD COLUMN contact_id TEXT REFERENCES contacts(id);`);
+      }
+      if (!convInfo.rows.some((r: any) => String(r.name) === 'is_test')) {
+        await client.execute(`ALTER TABLE conversations ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0;`);
+      }
+      await client.execute(`CREATE INDEX IF NOT EXISTS idx_conversations_contact ON conversations(contact_id);`);
+      await client.execute(`CREATE INDEX IF NOT EXISTS idx_conversations_istest ON conversations(is_test);`);
+    } catch (e) {}
 
     // Create Messages Table
     await client.execute(`
@@ -323,11 +428,13 @@ export async function initDb(): Promise<void> {
         description TEXT NOT NULL,
         priority TEXT NOT NULL DEFAULT 'medium',
         status TEXT NOT NULL DEFAULT 'open',
+        assignee_id TEXT,
         customer_email TEXT,
         notes_json TEXT DEFAULT '[]',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (assignee_id) REFERENCES users(id) ON DELETE SET NULL
       );
     `);
 
@@ -340,8 +447,149 @@ export async function initDb(): Promise<void> {
         percentage REAL NOT NULL DEFAULT 10.0,
         reason TEXT,
         customer_email TEXT,
+        conversation_id TEXT,
         created_at TEXT NOT NULL,
         expires_at TEXT,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Discount Code Policies Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS discount_code_policies (
+        tenant_id TEXT PRIMARY KEY,
+        max_percent REAL NOT NULL DEFAULT 20.0,
+        max_per_conversation INTEGER NOT NULL DEFAULT 1,
+        requires_approval_above REAL NOT NULL DEFAULT 15.0,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Tenant Audit Logs Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS tenant_audit_logs (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        target_resource TEXT,
+        target_id TEXT,
+        details_json TEXT,
+        status TEXT NOT NULL DEFAULT 'success',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Moderation Blocklist Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS moderation_blocklist (
+        id TEXT PRIMARY KEY,
+        pattern TEXT NOT NULL UNIQUE,
+        category TEXT DEFAULT 'general',
+        created_at TEXT NOT NULL,
+        admin_email TEXT
+      );
+    `);
+
+    // Create Moderation Queue Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS moderation_queue (
+        id TEXT PRIMARY KEY,
+        item_type TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        resource_title TEXT,
+        content_snippet TEXT,
+        reason TEXT,
+        status TEXT NOT NULL DEFAULT 'pending_review',
+        flagged_source TEXT NOT NULL DEFAULT 'automatic_keyword_scan',
+        flagged_by TEXT,
+        created_at TEXT NOT NULL,
+        reviewed_by_admin_email TEXT,
+        reviewed_at TEXT,
+        action_details TEXT,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Seed default blocklist if empty
+    try {
+      const blCheck = await client.execute(`SELECT COUNT(*) as cnt FROM moderation_blocklist;`);
+      if (Number(blCheck.rows[0].cnt) === 0) {
+        const now = new Date().toISOString();
+        const defaults = [
+          ['bl_1', 'credit card', 'financial', now, 'system@nomadschat.com'],
+          ['bl_2', 'ssn', 'pii', now, 'system@nomadschat.com'],
+          ['bl_3', 'cvv', 'financial', now, 'system@nomadschat.com'],
+          ['bl_4', 'hack', 'security', now, 'system@nomadschat.com'],
+          ['bl_5', 'malware', 'security', now, 'system@nomadschat.com'],
+          ['bl_6', 'exploit', 'security', now, 'system@nomadschat.com'],
+          ['bl_7', 'phishing', 'security', now, 'system@nomadschat.com'],
+          ['bl_8', 'bypass safety', 'safety', now, 'system@nomadschat.com'],
+          ['bl_9', 'jailbreak', 'safety', now, 'system@nomadschat.com'],
+        ];
+        for (const d of defaults) {
+          try {
+            await client.execute({
+              sql: `INSERT OR IGNORE INTO moderation_blocklist (id, pattern, category, created_at, admin_email) VALUES (?, ?, ?, ?, ?);`,
+              args: d,
+            });
+          } catch {}
+        }
+      }
+    } catch {}
+
+    // Create Audit Events Table (Append-Only)
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        actor_id TEXT,
+        action TEXT NOT NULL,
+        target_type TEXT,
+        target_id TEXT,
+        metadata TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Tenant Notifications Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS tenant_notifications (
+        tenant_id TEXT PRIMARY KEY,
+        new_ticket_alert INTEGER NOT NULL DEFAULT 1,
+        integration_disconnected_alert INTEGER NOT NULL DEFAULT 1,
+        usage_near_limit_alert INTEGER NOT NULL DEFAULT 1,
+        email_notifications_enabled INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Tenant API Keys Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS tenant_api_keys (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        key_prefix TEXT NOT NULL,
+        key_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Tenant Webhooks Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS tenant_webhooks (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        secret_encrypted TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
         FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
       );
     `);
@@ -378,6 +626,23 @@ export async function initDb(): Promise<void> {
       );
     `);
 
+    // Create Background Jobs Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS background_jobs (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT,
+        type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        error TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 3,
+        next_retry_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+
     // Create Performance Indexes
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_chatbots_tenant ON chatbots(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_ks_bot ON knowledge_sources(chatbot_id);`);
@@ -388,6 +653,8 @@ export async function initDb(): Promise<void> {
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_integrations_tenant ON integrations(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_invites_tenant ON team_invitations(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_support_tickets_tenant ON support_tickets(tenant_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_tenant_audit_tenant ON tenant_audit_logs(tenant_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_tenant_audit_created ON tenant_audit_logs(created_at);`);
 
     // Column Migration for website_url
     try {
@@ -420,7 +687,7 @@ export async function initDb(): Promise<void> {
       // Column already exists
     }
 
-    // Column Migration for users avatar_url & last_active_at
+    // Column Migration for users avatar_url & verification/reset
     try {
       await client.execute(`ALTER TABLE users ADD COLUMN avatar_url TEXT;`);
     } catch {
@@ -428,6 +695,46 @@ export async function initDb(): Promise<void> {
     }
     try {
       await client.execute(`ALTER TABLE users ADD COLUMN last_active_at TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 1;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN email_verification_token TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN email_verification_expires_at TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN password_reset_token TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN password_reset_expires_at TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN mfa_enabled INTEGER DEFAULT 0;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN mfa_secret TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN mfa_backup_codes_json TEXT;`);
     } catch {
       // Column already exists
     }
@@ -498,6 +805,38 @@ export async function initDb(): Promise<void> {
       // Column already exists
     }
 
+    // Column Migration for tenant billing interventions & dunning telemetry
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN credit_balance REAL DEFAULT 0.0;`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN payment_status TEXT DEFAULT 'active';`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN failed_payments_count INTEGER DEFAULT 0;`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN retry_attempts INTEGER DEFAULT 0;`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN last_payment_error TEXT;`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN dunning_since TEXT;`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN is_disabled INTEGER DEFAULT 0;`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN disabled_reason TEXT;`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE chatbots ADD COLUMN is_disabled INTEGER DEFAULT 0;`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE chatbots ADD COLUMN disabled_reason TEXT;`);
+    } catch {}
+
     // Column Migration for conversation outcome logging
     try {
       await client.execute(`ALTER TABLE conversations ADD COLUMN resolved_by TEXT DEFAULT 'ai';`);
@@ -518,6 +857,11 @@ export async function initDb(): Promise<void> {
     // Column Migration for escalation rules on tenants
     try {
       await client.execute(`ALTER TABLE tenants ADD COLUMN escalation_rules_json TEXT;`);
+    } catch {
+      // Column already exists
+    }
+    try {
+      await client.execute(`ALTER TABLE support_tickets ADD COLUMN assignee_id TEXT;`);
     } catch {
       // Column already exists
     }
@@ -670,9 +1014,14 @@ async function seedInitialData(db: Client) {
     SSO is available on Pro ($49/mo) and Enterprise plans.`;
 
     await db.execute({
-      sql: `INSERT INTO knowledge_sources (id, chatbot_id, tenant_id, type, title, content, source_url, status, chunk_count, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      args: [ks1Id, botId, tenantId, 'url', 'Acme Security & SSO Setup Documentation', ks1Content, 'https://docs.acmesaas.io/sso-guide', 'indexed', 2, now],
+      sql: `INSERT INTO knowledge_sources (id, tenant_id, type, title, content, source_url, status, chunk_count, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: [ks1Id, tenantId, 'url', 'Acme Security & SSO Setup Documentation', ks1Content, 'https://docs.acmesaas.io/sso-guide', 'indexed', 2, now],
+    });
+
+    await db.execute({
+      sql: `INSERT OR IGNORE INTO chatbot_knowledge_sources (chatbot_id, knowledge_source_id) VALUES (?, ?);`,
+      args: [botId, ks1Id],
     });
 
     const ks2Id = 'ks_2';
@@ -683,22 +1032,27 @@ async function seedInitialData(db: Client) {
     A: Free tier allows 1,000 requests/day. Pro tier allows 100,000 requests/day. Enterprise offers unlimited capacity.`;
 
     await db.execute({
-      sql: `INSERT INTO knowledge_sources (id, chatbot_id, tenant_id, type, title, content, source_url, status, chunk_count, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      args: [ks2Id, botId, tenantId, 'faq', 'Acme Workspace FAQs & Rate Limits', ks2Content, '', 'indexed', 2, now],
+      sql: `INSERT INTO knowledge_sources (id, tenant_id, type, title, content, source_url, status, chunk_count, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: [ks2Id, tenantId, 'faq', 'Acme Workspace FAQs & Rate Limits', ks2Content, '', 'indexed', 2, now],
+    });
+
+    await db.execute({
+      sql: `INSERT OR IGNORE INTO chatbot_knowledge_sources (chatbot_id, knowledge_source_id) VALUES (?, ?);`,
+      args: [botId, ks2Id],
     });
 
     // Seed Knowledge Chunks for RAG
     await db.execute({
-      sql: `INSERT INTO knowledge_chunks (id, source_id, chatbot_id, tenant_id, content, chunk_index, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?);`,
-      args: ['kc_1', ks1Id, botId, tenantId, ks1Content, 0, now],
+      sql: `INSERT INTO knowledge_chunks (id, source_id, tenant_id, content, chunk_index, created_at)
+            VALUES (?, ?, ?, ?, ?, ?);`,
+      args: ['kc_1', ks1Id, tenantId, ks1Content, 0, now],
     });
 
     await db.execute({
-      sql: `INSERT INTO knowledge_chunks (id, source_id, chatbot_id, tenant_id, content, chunk_index, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?);`,
-      args: ['kc_2', ks2Id, botId, tenantId, ks2Content, 0, now],
+      sql: `INSERT INTO knowledge_chunks (id, source_id, tenant_id, content, chunk_index, created_at)
+            VALUES (?, ?, ?, ?, ?, ?);`,
+      args: ['kc_2', ks2Id, tenantId, ks2Content, 0, now],
     });
 
     // Seed Demo Conversations & Messages

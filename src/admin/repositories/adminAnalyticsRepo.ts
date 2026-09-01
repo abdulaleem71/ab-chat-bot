@@ -170,6 +170,12 @@ export class AdminAnalyticsRepo {
       leadArgs.push(options.chatbotId);
     }
 
+    if (!(options as any).includeTestData) {
+      convWhere += ' AND (c.is_test = 0 OR c.is_test IS NULL)';
+      msgWhere += ' AND m.conversation_id NOT IN (SELECT id FROM conversations WHERE is_test = 1)';
+      leadWhere += ' AND l.conversation_id NOT IN (SELECT id FROM conversations WHERE is_test = 1)';
+    }
+
     // 1. Fetch Conversations in time window
     const convsRes = await db.execute({
       sql: `

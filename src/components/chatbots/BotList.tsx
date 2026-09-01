@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Chatbot } from '../../types';
 import { Bot, Plus, Settings, MessageSquare, Code, ShieldCheck, Trash2, Globe, AlertTriangle, Search, BookOpen } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import { getModelDisplayName } from '../../config/models';
 
 interface BotListProps {
@@ -265,48 +266,20 @@ export const BotList: React.FC<BotListProps> = ({
       </div>
 
       {/* Delete Confirmation Modal */}
-      <AnimatePresence>
-        {deletingBot && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 border border-zinc-200 space-y-4"
-            >
-              <div className="w-12 h-12 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mx-auto">
-                <AlertTriangle className="w-6 h-6" />
-              </div>
-              <div className="text-center space-y-1">
-                <h3 className="text-lg font-bold text-zinc-900 font-heading">Delete {deletingBot.name}?</h3>
-                <p className="text-xs text-zinc-500 leading-relaxed font-body">
-                  This will permanently delete this AI chatbot and unlink all associated conversations and embeddings. This action cannot be undone.
-                </p>
-              </div>
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <MotionButton
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setDeletingBot(null)}
-                >
-                  Cancel
-                </MotionButton>
-                <MotionButton
-                  variant="danger"
-                  size="sm"
-                  shimmer
-                  onClick={() => {
-                    if (onDeleteBot) onDeleteBot(deletingBot);
-                    setDeletingBot(null);
-                  }}
-                >
-                  Delete Chatbot
-                </MotionButton>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <ConfirmDialog
+        isOpen={!!deletingBot}
+        title={`Delete "${deletingBot?.name || 'Chatbot'}"?`}
+        description="This will permanently delete this AI chatbot and unlink all associated conversations, messages, analytics, and knowledge embeddings. This action cannot be undone."
+        itemName={deletingBot?.name || ''}
+        confirmButtonText="Delete Chatbot"
+        onConfirm={() => {
+          if (onDeleteBot && deletingBot) {
+            onDeleteBot(deletingBot);
+          }
+          setDeletingBot(null);
+        }}
+        onClose={() => setDeletingBot(null)}
+      />
     </div>
   );
 };

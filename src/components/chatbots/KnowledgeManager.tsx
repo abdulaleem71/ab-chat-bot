@@ -1,30 +1,27 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Chatbot, KnowledgeSource, KnowledgeType } from '../../types';
-import { Globe, FileText, HelpCircle, Plus, Trash2, CheckCircle2, Sparkles, Loader2, Link2, ExternalLink, Laptop, Code } from 'lucide-react';
+import { Chatbot, KnowledgeSource } from '../../types';
+import { Globe, FileText, HelpCircle, Plus, Trash2, CheckCircle2, Sparkles, Loader2, Link2, ExternalLink, Laptop, Code, Check } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 
 interface KnowledgeManagerProps {
-  selectedBot?: Chatbot | null;
-  allBots?: Chatbot[];
-  onSelectBot?: (bot: Chatbot) => void;
-  onCreateBot?: () => void;
+  chatbots: Chatbot[];
   knowledgeSources: KnowledgeSource[];
-  onAddSource: (source: Partial<KnowledgeSource>) => Promise<void>;
-  onScrapeUrl: (url: string) => Promise<void>;
-  onIngestHtml?: (html: string, url?: string, title?: string) => Promise<void>;
-  onDeleteSource: (sourceId: string) => void;
+  onAddSource: (source: Partial<KnowledgeSource> & { chatbotIds: string[] }) => Promise<void>;
+  onScrapeUrl: (url: string, chatbotIds: string[]) => Promise<void>;
+  onIngestHtml?: (html: string, url?: string, title?: string, chatbotIds?: string[]) => Promise<void>;
+  onUpdateSourceLinks: (sourceId: string, chatbotIds: string[]) => Promise<void>;
+  onDeleteSource: (sourceId: string) => Promise<void>;
 }
 
 export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
-  selectedBot,
-  allBots = [],
-  onSelectBot,
-  onCreateBot,
-  knowledgeSources,
+  chatbots = [],
+  knowledgeSources = [],
   onAddSource,
   onScrapeUrl,
   onIngestHtml,
+  onUpdateSourceLinks,
   onDeleteSource,
 }) => {
   const [activeTab, setActiveTab] = useState<'url' | 'local' | 'faq' | 'text'>('url');
@@ -36,51 +33,42 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   const [faqAnswer, setFaqAnswer] = useState('');
   const [docTitle, setDocTitle] = useState('');
   const [docContent, setDocContent] = useState('');
+
+  // Multi-select chatbots for new source (default to all chatbots)
+  const [selectedChatbotIds, setSelectedChatbotIds] = useState<string[]>(chatbots.map(b => b.id));
   const [isLoading, setIsLoading] = useState(false);
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deletingSource, setDeletingSource] = useState<KnowledgeSource | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [editingLinksSourceId, setEditingLinksSourceId] = useState<string | null>(null);
+  const [tempLinksBotIds, setTempLinksBotIds] = useState<string[]>([]);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  if (!selectedBot) {
-    return (
-      <div className="bg-white border border-zinc-200/80 rounded-3xl p-12 text-center shadow-xs animate-in fade-in duration-200">
-        <div className="w-16 h-16 bg-zinc-100 rounded-3xl flex items-center justify-center mx-auto mb-4 text-zinc-400">
-          <Sparkles className="w-8 h-8 text-indigo-600" />
-        </div>
-        <h2 className="text-xl font-bold text-zinc-900 mb-2 font-heading">No Chatbot Selected</h2>
-        <p className="text-xs text-zinc-500 max-w-md mx-auto mb-6 font-body">
-          Create or select a chatbot to manage its ground truth knowledge base, crawl website pages, and configure custom FAQ documents.
-        </p>
-        {onCreateBot && (
-          <MotionButton
-            variant="primary"
-            size="md"
-            shimmer
-            leftIcon={<Plus className="w-4 h-4" />}
-            onClick={onCreateBot}
-          >
-            Create New Chatbot
-          </MotionButton>
-        )}
-      </div>
+  const toggleTargetBot = (botId: string) => {
+    setSelectedChatbotIds(prev =>
+      prev.includes(botId) ? prev.filter(id => id !== botId) : [...prev, botId]
     );
-  }
+  };
 
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault();
     const url = inputUrl.trim();
     if (!url || isLoading) return;
+    if (selectedChatbotIds.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please select at least one chatbot to link this knowledge source to.' });
+      return;
+    }
+
     setIsLoading(true);
     setStatusMessage(null);
 
     const isLocal = url.includes('localhost') || url.includes('127.0.0.1') || url.includes('0.0.0.0');
 
     if (isLocal && onIngestHtml) {
-      // Attempt browser-assisted direct fetch from the user's active session
       try {
         const localRes = await fetch(url, { mode: 'cors' });
         if (localRes.ok) {
           const html = await localRes.text();
-          await onIngestHtml(html, url, `Local Page: ${url}`);
+          await onIngestHtml(html, url, `Local Page: ${url}`, selectedChatbotIds);
           setInputUrl('');
           setStatusMessage({ type: 'success', text: `Successfully fetched local page from ${url} and indexed RAG chunks!` });
           setIsLoading(false);
@@ -92,7 +80,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
     }
 
     try {
-      await onScrapeUrl(url);
+      await onScrapeUrl(url, selectedChatbotIds);
       setInputUrl('');
       setStatusMessage({ type: 'success', text: 'URL successfully crawled, parsed into Markdown, and indexed into RAG knowledge chunks!' });
     } catch (err: any) {
@@ -115,11 +103,15 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   const handleIngestRawHtml = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!rawHtmlContent.trim() || isLoading || !onIngestHtml) return;
+    if (selectedChatbotIds.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please select at least one chatbot to link this knowledge source to.' });
+      return;
+    }
     setIsLoading(true);
     setStatusMessage(null);
 
     try {
-      await onIngestHtml(rawHtmlContent.trim(), localUrl.trim() || undefined, htmlDocTitle.trim() || undefined);
+      await onIngestHtml(rawHtmlContent.trim(), localUrl.trim() || undefined, htmlDocTitle.trim() || undefined, selectedChatbotIds);
       setRawHtmlContent('');
       setHtmlDocTitle('');
       setStatusMessage({ type: 'success', text: 'Website HTML successfully converted to structured Markdown chunks and indexed!' });
@@ -134,16 +126,19 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   const handleAddFaq = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!faqQuestion.trim() || !faqAnswer.trim() || isLoading) return;
+    if (selectedChatbotIds.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please select at least one chatbot to link this knowledge source to.' });
+      return;
+    }
     setIsLoading(true);
     setStatusMessage(null);
 
     try {
       await onAddSource({
-        chatbotId: selectedBot.id,
-        tenantId: selectedBot.tenantId,
         type: 'faq',
         title: `FAQ: ${faqQuestion.trim()}`,
         content: `Question: ${faqQuestion.trim()}\nAnswer: ${faqAnswer.trim()}`,
+        chatbotIds: selectedChatbotIds,
       });
       setFaqQuestion('');
       setFaqAnswer('');
@@ -159,16 +154,19 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   const handleAddDoc = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!docTitle.trim() || !docContent.trim() || isLoading) return;
+    if (selectedChatbotIds.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please select at least one chatbot to link this knowledge source to.' });
+      return;
+    }
     setIsLoading(true);
     setStatusMessage(null);
 
     try {
       await onAddSource({
-        chatbotId: selectedBot.id,
-        tenantId: selectedBot.tenantId,
         type: 'text',
         title: docTitle.trim(),
         content: docContent.trim(),
+        chatbotIds: selectedChatbotIds,
       });
       setDocTitle('');
       setDocContent('');
@@ -181,57 +179,60 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
     }
   };
 
-  const currentBotSources = knowledgeSources.filter(k => k.chatbotId === selectedBot.id);
-  const totalChunks = currentBotSources.reduce((acc, s) => acc + (s.chunkCount || 1), 0);
+  const totalChunks = knowledgeSources.reduce((acc, s) => acc + (s.chunkCount || 1), 0);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
       {/* Header Bar */}
       <div className="bg-zinc-950 border border-zinc-800 rounded-3xl p-6 sm:p-8 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
-          <div
-            style={{ backgroundColor: selectedBot.primaryColor || '#09090b' }}
-            className="w-14 h-14 rounded-2xl text-3xl flex items-center justify-center text-white font-bold border border-white/20 shadow-md shrink-0"
-          >
-            {selectedBot.avatar || '🤖'}
+          <div className="w-14 h-14 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-bold shadow-md shrink-0">
+            <Globe className="w-7 h-7" />
           </div>
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/80 border border-emerald-800 px-2.5 py-0.5 rounded-full">
-                RAG Grounding Engine
+                Tenant Knowledge Center
               </span>
               <span className="text-[11px] font-mono text-zinc-400">
-                {currentBotSources.length} Sources • {totalChunks} Chunks
+                {knowledgeSources.length} Total Sources • {totalChunks} Chunks
               </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">{selectedBot.name} Knowledge Base</h1>
-            <p className="text-xs text-zinc-400 font-medium">Connect live websites, local dev sites, and documentation to ground your chatbot in real data.</p>
+            <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">Knowledge Base & RAG Sources</h1>
+            <p className="text-xs text-zinc-400 font-medium">Manage tenant-wide knowledge sources and link them to any combination of your chatbots.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Ingestion & Chatbot Association Form */}
+      <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs space-y-6">
+        <div className="border-b border-zinc-200 pb-4">
+          <label className="block text-xs font-extrabold text-zinc-900 mb-2 font-heading uppercase tracking-wide">
+            1. Select Target Chatbots for New Knowledge Source ({selectedChatbotIds.length} of {chatbots.length} selected)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {chatbots.map(bot => {
+              const isSelected = selectedChatbotIds.includes(bot.id);
+              return (
+                <button
+                  key={bot.id}
+                  type="button"
+                  onClick={() => toggleTargetBot(bot.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+                    isSelected
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                      : 'bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100'
+                  }`}
+                >
+                  <span>{bot.avatar || '🤖'}</span>
+                  <span>{bot.name}</span>
+                  {isSelected && <Check className="w-3.5 h-3.5 ml-0.5" />}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {allBots.length > 1 && onSelectBot && (
-          <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 p-2 rounded-2xl shrink-0">
-            <span className="text-[11px] text-zinc-400 font-semibold px-2">Target Bot:</span>
-            <select
-              value={selectedBot.id}
-              onChange={e => {
-                const b = allBots.find(x => x.id === e.target.value);
-                if (b) onSelectBot(b);
-              }}
-              className="bg-zinc-950 text-white text-xs font-bold border border-zinc-700 rounded-xl px-3 py-1.5 focus:outline-none"
-            >
-              {allBots.map(b => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-      </div>
-
-      {/* Input Ingestion Form */}
-      <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs space-y-6">
         <div className="flex border-b border-zinc-200 overflow-x-auto scrollbar-none gap-2">
           <motion.button
             type="button"
@@ -325,16 +326,13 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                   variant="primary"
                   size="md"
                   shimmer
-                  disabled={isLoading || !inputUrl.trim()}
+                  disabled={isLoading || !inputUrl.trim() || selectedChatbotIds.length === 0}
                   leftIcon={isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
                   className="shrink-0"
                 >
                   {isLoading ? 'Crawling Page...' : 'Scrape & Ingest'}
                 </MotionButton>
               </div>
-              <p className="text-[11px] text-zinc-500 mt-2 font-medium font-body">
-                Fetches live HTML, converts content into structured Markdown with headings and lists, and generates overlapping RAG chunks for accurate answering.
-              </p>
             </div>
           </form>
         )}
@@ -342,16 +340,6 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         {/* Tab 2: Localhost & HTML Source */}
         {activeTab === 'local' && (
           <form onSubmit={handleIngestRawHtml} className="space-y-4">
-            <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 text-indigo-950 text-xs space-y-1.5 font-body">
-              <div className="font-bold flex items-center gap-2 text-indigo-900 font-heading">
-                <Laptop className="w-4 h-4 text-indigo-600" />
-                <span>Local Website (localhost:3000 / localhost:5173) & HTML Ingestion</span>
-              </div>
-              <p className="text-indigo-800/90 text-[11px] leading-relaxed font-body">
-                Because cloud sandboxes cannot directly connect to your personal computer's loopback network, you can paste the HTML source code from your local development browser (<strong>Right Click &rarr; View Page Source / Inspect</strong>) or enter page content below to index your local project instantly.
-              </p>
-            </div>
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Local Source URL / Identifier</label>
@@ -359,7 +347,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                   type="text"
                   value={localUrl}
                   onChange={e => setLocalUrl(e.target.value)}
-                  placeholder="http://localhost:3000 or http://localhost:5173"
+                  placeholder="http://localhost:3000"
                   className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-mono text-zinc-800"
                 />
               </div>
@@ -369,30 +357,28 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                   type="text"
                   value={htmlDocTitle}
                   onChange={e => setHtmlDocTitle(e.target.value)}
-                  placeholder="e.g., Localhost Product Catalog & Services"
+                  placeholder="e.g., Localhost Product Catalog"
                   className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium font-body"
                 />
               </div>
             </div>
-
             <div>
               <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Page HTML / Body Source Markup</label>
               <textarea
                 value={rawHtmlContent}
                 onChange={e => setRawHtmlContent(e.target.value)}
-                rows={6}
-                placeholder="<html><body><h1>Services</h1><p>We provide custom Shopify development, Shopify Plus development, Liquid development, and conversion optimization.</p></body></html>"
+                rows={5}
+                placeholder="<html><body>...</body></html>"
                 className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-mono text-zinc-800"
                 required
               />
             </div>
-
             <MotionButton
               type="submit"
               variant="dark"
               size="md"
               shimmer
-              disabled={isLoading || !rawHtmlContent.trim()}
+              disabled={isLoading || !rawHtmlContent.trim() || selectedChatbotIds.length === 0}
               leftIcon={isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Code className="w-4 h-4" />}
             >
               Index Local Website HTML
@@ -409,7 +395,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 type="text"
                 value={faqQuestion}
                 onChange={e => setFaqQuestion(e.target.value)}
-                placeholder="e.g., Do you offer Shopify development?"
+                placeholder="e.g., What are your support hours?"
                 className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium font-body"
                 required
               />
@@ -420,7 +406,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 value={faqAnswer}
                 onChange={e => setFaqAnswer(e.target.value)}
                 rows={3}
-                placeholder="We provide custom Shopify development, Shopify Plus development, Liquid development, and conversion optimization."
+                placeholder="We provide 24/7 support via our live concierge and email."
                 className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium font-body"
                 required
               />
@@ -430,7 +416,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
               variant="primary"
               size="md"
               shimmer
-              disabled={isLoading || !faqQuestion.trim() || !faqAnswer.trim()}
+              disabled={isLoading || !faqQuestion.trim() || !faqAnswer.trim() || selectedChatbotIds.length === 0}
               leftIcon={<Plus className="w-4 h-4" />}
             >
               Add FAQ Pair
@@ -447,7 +433,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 type="text"
                 value={docTitle}
                 onChange={e => setDocTitle(e.target.value)}
-                placeholder="e.g., Services & Capabilities Overview"
+                placeholder="e.g., Security & Compliance Overview"
                 className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium font-body"
                 required
               />
@@ -458,7 +444,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                 value={docContent}
                 onChange={e => setDocContent(e.target.value)}
                 rows={5}
-                placeholder="We provide custom Shopify development, Shopify Plus development, Liquid development, and conversion optimization."
+                placeholder="Our platform complies with SOC2 Type II, GDPR, and HIPAA standards."
                 className="w-full px-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-mono text-zinc-800"
                 required
               />
@@ -468,7 +454,7 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
               variant="primary"
               size="md"
               shimmer
-              disabled={isLoading || !docTitle.trim() || !docContent.trim()}
+              disabled={isLoading || !docTitle.trim() || !docContent.trim() || selectedChatbotIds.length === 0}
               leftIcon={<Plus className="w-4 h-4" />}
             >
               Index Document
@@ -481,100 +467,176 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
       <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Indexed Knowledge Context ({currentBotSources.length})</h3>
-            <p className="text-xs text-zinc-500 font-medium font-body">Grounding context used to synthesize answers and generate citation references</p>
+            <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Tenant Knowledge Sources ({knowledgeSources.length})</h3>
+            <p className="text-xs text-zinc-500 font-medium font-body">All knowledge sources in your tenant and their linked chatbots</p>
           </div>
         </div>
 
-        {currentBotSources.length === 0 ? (
+        {knowledgeSources.length === 0 ? (
           <div className="text-center py-10 border-2 border-dashed border-zinc-200 rounded-2xl space-y-2">
             <Globe className="w-8 h-8 text-zinc-300 mx-auto" />
             <p className="text-xs font-bold text-zinc-700 font-heading">No knowledge sources trained yet</p>
-            <p className="text-[11px] text-zinc-400 font-body">Scrape a website URL, paste HTML source, or add FAQ pairs above to teach this AI bot your product details.</p>
+            <p className="text-[11px] text-zinc-400 font-body">Scrape a website URL, paste HTML source, or add FAQ pairs above to teach your AI bots.</p>
           </div>
         ) : (
           <div className="divide-y divide-zinc-100">
-            {currentBotSources.map(source => (
-              <div key={source.id} className="py-4 flex items-start justify-between gap-4 group hover:bg-zinc-50/70 p-3 rounded-2xl transition">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="p-2.5 rounded-xl bg-zinc-100 text-zinc-800 shrink-0">
-                    {source.type === 'url' ? (
-                      <Globe className="w-4 h-4" />
-                    ) : source.type === 'faq' ? (
-                      <HelpCircle className="w-4 h-4" />
-                    ) : (
-                      <FileText className="w-4 h-4" />
-                    )}
-                  </div>
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-xs font-extrabold text-zinc-900 truncate font-heading">{source.title}</h4>
-                      <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase font-mono">
-                        {source.status}
-                      </span>
+            {knowledgeSources.map(source => {
+              const linkedBots = chatbots.filter(b => source.chatbotIds?.includes(b.id));
+              const isEditingLinks = editingLinksSourceId === source.id;
+
+              return (
+                <div key={source.id} className="py-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 group hover:bg-zinc-50/70 p-3 rounded-2xl transition">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <div className="p-2.5 rounded-xl bg-zinc-100 text-zinc-800 shrink-0">
+                      {source.type === 'url' ? (
+                        <Globe className="w-4 h-4" />
+                      ) : source.type === 'faq' ? (
+                        <HelpCircle className="w-4 h-4" />
+                      ) : (
+                        <FileText className="w-4 h-4" />
+                      )}
                     </div>
+                    <div className="min-w-0 space-y-1.5 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-xs font-extrabold text-zinc-900 truncate font-heading">{source.title}</h4>
+                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase font-mono \${
+                          source.status === 'indexed' ? 'bg-emerald-100 text-emerald-800' : 
+                          source.status === 'failed' ? 'bg-red-100 text-red-800' :
+                          'bg-amber-100 text-amber-800 animate-pulse'
+                        }`}>
+                          {source.status}
+                        </span>
+                        <span className="text-[9px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-mono">
+                          {source.chunkCount || 1} Chunks
+                        </span>
+                      </div>
 
-                    {source.sourceUrl && (
-                      <a
-                        href={source.sourceUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-[11px] text-indigo-600 hover:underline flex items-center gap-1 truncate font-mono"
-                      >
-                        <span className="truncate">{source.sourceUrl}</span>
-                        <ExternalLink className="w-3 h-3 shrink-0" />
-                      </a>
-                    )}
+                      {source.sourceUrl && (
+                        <a
+                          href={source.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-indigo-600 hover:underline flex items-center gap-1 truncate font-mono"
+                        >
+                          <span className="truncate">{source.sourceUrl}</span>
+                          <ExternalLink className="w-3 h-3 shrink-0" />
+                        </a>
+                      )}
 
-                    <p className="text-[11px] text-zinc-500 line-clamp-2 max-w-2xl font-normal leading-relaxed font-body">
-                      {source.content}
-                    </p>
+                      <p className="text-[11px] text-zinc-500 line-clamp-2 max-w-2xl font-normal leading-relaxed font-body">
+                        {source.content}
+                      </p>
 
-                    <div className="flex items-center gap-2 text-[10px] text-zinc-400 font-medium font-body">
-                      <span className="font-semibold text-zinc-600">{source.chunkCount || 1} RAG Chunks</span>
-                      <span>•</span>
-                      <span>Updated {new Date(source.updatedAt).toLocaleDateString()}</span>
+                      {/* Linked Chatbots Badges & Editor */}
+                      <div className="pt-1 flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-bold text-zinc-600">Linked Chatbots:</span>
+                        {isEditingLinks ? (
+                          <div className="flex items-center gap-1.5 flex-wrap bg-white border border-zinc-200 p-2 rounded-xl shadow-xs">
+                            {chatbots.map(b => {
+                              const linked = tempLinksBotIds.includes(b.id);
+                              return (
+                                <button
+                                  key={b.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setTempLinksBotIds(prev =>
+                                      linked ? prev.filter(id => id !== b.id) : [...prev, b.id]
+                                    );
+                                  }}
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer flex items-center gap-1 border ${
+                                    linked ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-zinc-100 text-zinc-700 border-zinc-200'
+                                  }`}
+                                >
+                                  <span>{b.avatar}</span>
+                                  <span>{b.name}</span>
+                                </button>
+                              );
+                            })}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await onUpdateSourceLinks(source.id, tempLinksBotIds);
+                                setEditingLinksSourceId(null);
+                              }}
+                              className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[11px] font-bold hover:bg-emerald-700 cursor-pointer"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingLinksSourceId(null)}
+                              className="px-2 py-1 bg-zinc-200 text-zinc-700 rounded-lg text-[11px] font-bold hover:bg-zinc-300 cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {linkedBots.length === 0 ? (
+                              <span className="text-[11px] text-amber-600 font-medium">Unlinked (No bots selected)</span>
+                            ) : (
+                              linkedBots.map(b => (
+                                <span key={b.id} className="inline-flex items-center gap-1 text-[10px] font-bold bg-zinc-100 text-zinc-800 border border-zinc-200 px-2 py-0.5 rounded-lg">
+                                  <span>{b.avatar || '🤖'}</span>
+                                  <span>{b.name}</span>
+                                </span>
+                              ))
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingLinksSourceId(source.id);
+                                setTempLinksBotIds(source.chatbotIds || []);
+                              }}
+                              className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold underline ml-1 cursor-pointer"
+                            >
+                              Edit Links
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {deleteConfirmId === source.id ? (
-                  <div className="flex items-center gap-1.5 bg-red-50 p-1.5 rounded-xl border border-red-200 shrink-0">
-                    <span className="text-[10px] font-bold text-red-800 pl-1">Delete source?</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onDeleteSource(source.id);
-                        setDeleteConfirmId(null);
-                      }}
-                      className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded-md text-[11px] font-bold transition cursor-pointer"
-                    >
-                      Delete
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDeleteConfirmId(null)}
-                      className="px-1.5 py-0.5 bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 rounded-md text-[11px] font-medium transition cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
                   <motion.button
                     whileHover={{ scale: 1.15 }}
                     whileTap={{ scale: 0.9 }}
-                    onClick={() => setDeleteConfirmId(source.id)}
+                    onClick={() => setDeletingSource(source)}
                     className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition cursor-pointer shrink-0"
                     title="Remove Source"
                   >
                     <Trash2 className="w-4 h-4" />
                   </motion.button>
-                )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmDialog
+        isOpen={!!deletingSource}
+        title="Delete Knowledge Source?"
+        description="This will permanently remove this knowledge source and delete all chunked vector embeddings. AI chatbots will no longer reference this information in their grounded answers."
+        itemName={deletingSource?.title || ''}
+        confirmButtonText="Delete Source"
+        isLoading={isDeleting}
+        onConfirm={async () => {
+          if (deletingSource) {
+            setIsDeleting(true);
+            try {
+              await onDeleteSource(deletingSource.id);
+              setDeletingSource(null);
+            } finally {
+              setIsDeleting(false);
+            }
+          }
+        }}
+        onClose={() => {
+          if (!isDeleting) setDeletingSource(null);
+        }}
+      />
     </div>
   );
 };

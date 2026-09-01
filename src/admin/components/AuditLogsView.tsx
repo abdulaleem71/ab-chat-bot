@@ -19,7 +19,7 @@ import { AuditDetailModal } from './AuditDetailModal';
 import { useAdminAuth } from '../context/AdminAuthContext';
 
 export const AuditLogsView: React.FC = () => {
-  const { adminToken } = useAdminAuth();
+  useAdminAuth();
   const [logs, setLogs] = useState<AdminAuditLog[]>([]);
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -31,14 +31,9 @@ export const AuditLogsView: React.FC = () => {
   const [page, setPage] = useState(0);
   const limit = 30;
 
-  const getEffectiveToken = () => {
-    return adminToken || localStorage.getItem('nomads_admin_token') || localStorage.getItem('nomadschat_admin_token') || '';
-  };
-
   const fetchAuditLogs = async () => {
     setIsLoading(true);
     try {
-      const token = getEffectiveToken();
       const params = new URLSearchParams({
         limit: limit.toString(),
         offset: (page * limit).toString(),
@@ -48,9 +43,7 @@ export const AuditLogsView: React.FC = () => {
       });
 
       const res = await fetch(`/api/admin/audit-logs?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        credentials: 'include',
       });
 
       if (res.ok) {

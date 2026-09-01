@@ -8,7 +8,7 @@ export class KnowledgeService {
   /**
    * Safe URL Fetching with SSRF Protection and Strict Manual Redirect Validation
    */
-  static async scrapeAndIngestUrl(chatbotId: string, tenantId: string, initialUrl: string): Promise<KnowledgeSource> {
+  static async scrapeAndIngestUrl(tenantId: string, initialUrl: string, chatbotIds: string[] = []): Promise<KnowledgeSource> {
     let currentUrlStr = initialUrl;
     let redirectCount = 0;
     const maxRedirects = 5;
@@ -47,7 +47,6 @@ export class KnowledgeService {
             throw new Error(`Redirect HTTP ${res.status} missing Location header`);
           }
 
-          // Resolve relative redirect against current validatedUrl
           const nextUrl = new URL(locationHeader, validatedUrl);
           currentUrlStr = nextUrl.toString();
           redirectCount++;
@@ -83,14 +82,12 @@ export class KnowledgeService {
       throw new Error('Remote response body exceeds maximum permitted size (5MB)');
     }
 
-    // Extract Page Title and Meta Description if present
     const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     const extractedTitle = titleMatch ? this.decodeHtmlEntities(titleMatch[1]).trim() : '';
 
     const metaDescMatch = rawHtml.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i);
     const metaDescription = metaDescMatch ? this.decodeHtmlEntities(metaDescMatch[1]).trim() : '';
 
-    // Clean and convert HTML to structured Markdown text
     let cleanText = this.htmlToStructuredText(rawHtml);
 
     if (metaDescription && !cleanText.includes(metaDescription)) {
@@ -104,38 +101,32 @@ export class KnowledgeService {
     const title = extractedTitle || `Scraped: ${finalUrl.hostname}${finalUrl.pathname}`;
     const chunks = this.chunkTextWithOverlap(cleanText, 350, 40);
 
-    // Check if a source already exists for this URL on this chatbot to replace/update cleanly
-    const existingSources = await KnowledgeRepo.findSourcesByBot(chatbotId, tenantId);
+    const existingSources = await KnowledgeRepo.findSourcesByTenant(tenantId);
     const existingUrlSource = existingSources.find(s => s.sourceUrl === initialUrl || s.sourceUrl === finalUrl?.toString());
     if (existingUrlSource) {
       await KnowledgeRepo.deleteSource(existingUrlSource.id, tenantId);
     }
 
-    const source: KnowledgeSource = {
+    const source = {
       id: newId('ks'),
-      chatbotId,
       tenantId,
-      type: 'url',
+      type: 'url' as const,
       title: title.slice(0, 250),
       content: cleanText,
       sourceUrl: initialUrl,
-      status: 'indexed',
-      chunkCount: chunks.length,
+      status: 'indexed' as const,
       updatedAt: new Date().toISOString(),
     };
 
-    return await KnowledgeRepo.createSourceWithChunks(source, chunks);
+    return await KnowledgeRepo.createSourceWithChunks(source, chunks, chatbotIds);
   }
 
-  /**
-   * Ingest Raw HTML from local websites, browser-assisted fetch, or view-source pastes
-   */
   static async ingestRawHtml(
-    chatbotId: string,
     tenantId: string,
     rawHtml: string,
     sourceUrl?: string,
-    customTitle?: string
+    customTitle?: string,
+    chatbotIds: string[] = []
   ): Promise<KnowledgeSource> {
     if (!rawHtml || rawHtml.trim().length === 0) {
       throw new Error('HTML content cannot be empty');
@@ -145,14 +136,12 @@ export class KnowledgeService {
       throw new Error('Raw HTML exceeds maximum permitted size of 5MB');
     }
 
-    // Extract Page Title and Meta Description
     const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     const extractedTitle = titleMatch ? this.decodeHtmlEntities(titleMatch[1]).trim() : '';
 
     const metaDescMatch = rawHtml.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i);
     const metaDescription = metaDescMatch ? this.decodeHtmlEntities(metaDescMatch[1]).trim() : '';
 
-    // Convert HTML to structured Markdown text
     let cleanText = this.htmlToStructuredText(rawHtml);
 
     if (metaDescription && !cleanText.includes(metaDescription)) {
@@ -170,40 +159,34 @@ export class KnowledgeService {
     const title = customTitle || extractedTitle || (sourceUrl ? `Page: ${sourceUrl}` : 'Imported Website Page');
     const chunks = this.chunkTextWithOverlap(cleanText, 350, 40);
 
-    // Replace previous source for same URL if exists
     if (sourceUrl) {
-      const existingSources = await KnowledgeRepo.findSourcesByBot(chatbotId, tenantId);
+      const existingSources = await KnowledgeRepo.findSourcesByTenant(tenantId);
       const existingUrlSource = existingSources.find(s => s.sourceUrl === sourceUrl);
       if (existingUrlSource) {
         await KnowledgeRepo.deleteSource(existingUrlSource.id, tenantId);
       }
     }
 
-    const source: KnowledgeSource = {
+    const source = {
       id: newId('ks'),
-      chatbotId,
       tenantId,
-      type: 'url',
+      type: 'url' as const,
       title: title.slice(0, 250),
       content: cleanText,
       sourceUrl: sourceUrl || 'http://localhost (Imported)',
-      status: 'indexed',
-      chunkCount: chunks.length,
+      status: 'indexed' as const,
       updatedAt: new Date().toISOString(),
     };
 
-    return await KnowledgeRepo.createSourceWithChunks(source, chunks);
+    return await KnowledgeRepo.createSourceWithChunks(source, chunks, chatbotIds);
   }
 
-  /**
-   * Ingest Raw Text or FAQ Document
-   */
   static async ingestTextDocument(
-    chatbotId: string,
     tenantId: string,
     title: string,
     content: string,
-    type: 'text' | 'faq' = 'text'
+    type: 'text' | 'faq' = 'text',
+    chatbotIds: string[] = []
   ): Promise<KnowledgeSource> {
     const cleanContent = content.trim();
     if (cleanContent.length === 0) {
@@ -212,20 +195,18 @@ export class KnowledgeService {
 
     const chunks = this.chunkTextWithOverlap(cleanContent, 350, 40);
 
-    const source: KnowledgeSource = {
+    const source = {
       id: newId('ks'),
-      chatbotId,
       tenantId,
       type,
       title: title.slice(0, 200) || 'Custom Knowledge Document',
       content: cleanContent,
       sourceUrl: '',
-      status: 'indexed',
-      chunkCount: chunks.length,
+      status: 'indexed' as const,
       updatedAt: new Date().toISOString(),
     };
 
-    return await KnowledgeRepo.createSourceWithChunks(source, chunks);
+    return await KnowledgeRepo.createSourceWithChunks(source, chunks, chatbotIds);
   }
 
   private static htmlToStructuredText(html: string): string {
@@ -291,20 +272,18 @@ export class KnowledgeService {
       await KnowledgeRepo.deleteSource(existing.id, tenantId);
     }
 
-    const source: KnowledgeSource = {
+    const source = {
       id: newId('ks'),
-      chatbotId,
       tenantId,
-      type: 'url',
+      type: 'url' as const,
       title,
       content: cleanContent,
       sourceUrl,
-      status: 'indexed',
-      chunkCount: chunks.length,
+      status: 'indexed' as const,
       updatedAt: new Date().toISOString(),
     };
 
-    return await KnowledgeRepo.createSourceWithChunks(source, chunks);
+    return await KnowledgeRepo.createSourceWithChunks(source, chunks, [chatbotId]);
   }
 
   private static decodeHtmlEntities(str: string): string {
@@ -521,20 +500,18 @@ export class KnowledgeService {
             await KnowledgeRepo.deleteSource(existingUrlSource.id, tenantId);
           }
 
-          const source: KnowledgeSource = {
+          const source = {
             id: newId('ks'),
-            chatbotId,
             tenantId,
-            type: 'url',
+            type: 'url' as const,
             title: `${title} (${originUrl.hostname})`.slice(0, 250),
             content: cleanText,
             sourceUrl: normalizedUrl,
-            status: 'indexed',
-            chunkCount: chunks.length,
+            status: 'indexed' as const,
             updatedAt: new Date().toISOString(),
           };
 
-          await KnowledgeRepo.createSourceWithChunks(source, chunks);
+          await KnowledgeRepo.createSourceWithChunks(source, chunks, [chatbotId]);
           pagesCrawled.push(normalizedUrl);
         }
 

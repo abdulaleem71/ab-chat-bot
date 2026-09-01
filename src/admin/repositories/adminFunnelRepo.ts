@@ -178,6 +178,11 @@ export class AdminFunnelRepo {
       leadArgs.push(options.chatbotId);
     }
 
+    if (!(options as any).includeTestData) {
+      convWhere += ' AND (c.is_test = 0 OR c.is_test IS NULL)';
+      leadWhere += ' AND l.conversation_id NOT IN (SELECT id FROM conversations WHERE is_test = 1)';
+    }
+
     // 1. Fetch Conversations
     const convsRes = await db.execute({
       sql: `

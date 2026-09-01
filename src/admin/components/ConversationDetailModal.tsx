@@ -41,7 +41,7 @@ export const ConversationDetailModal: React.FC<ConversationDetailModalProps> = (
   onClose,
   onStatusUpdated,
 }) => {
-  const { adminToken } = useAdminAuth();
+  const { } = useAdminAuth();
   const [detail, setDetail] = useState<AdminConversationDetail | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,10 +51,6 @@ export const ConversationDetailModal: React.FC<ConversationDetailModalProps> = (
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
-
-  const getEffectiveToken = () => {
-    return adminToken || localStorage.getItem('nomads_admin_token') || localStorage.getItem('nomadschat_admin_token') || '';
-  };
 
   useEffect(() => {
     if (isOpen && conversationId) {
@@ -72,11 +68,8 @@ export const ConversationDetailModal: React.FC<ConversationDetailModalProps> = (
     setIsLoading(true);
     setError(null);
     try {
-      const token = getEffectiveToken();
       const res = await fetch(`/api/admin/conversations/${id}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        credentials: 'include',
       });
       const contentType = res.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
@@ -99,12 +92,11 @@ export const ConversationDetailModal: React.FC<ConversationDetailModalProps> = (
     setIsUpdatingStatus(true);
     setStatusMessage(null);
     try {
-      const token = getEffectiveToken();
       const res = await fetch(`/api/admin/conversations/${conversationId}/status`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ status: newStatus }),
       });
@@ -135,12 +127,9 @@ export const ConversationDetailModal: React.FC<ConversationDetailModalProps> = (
     if (!conversationId) return;
     setIsUpdatingStatus(true);
     try {
-      const token = getEffectiveToken();
       const res = await fetch(`/api/admin/conversations/${conversationId}`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        credentials: 'include',
       });
       const contentType = res.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {

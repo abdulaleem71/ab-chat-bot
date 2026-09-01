@@ -12,8 +12,20 @@ interface EmbedChatWidgetProps {
 
 export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloating = false, onClose }) => {
   const storageKey = `nomadschat_conv_${bot.id}`;
+  const visitorIdKey = `nomadschat_visitor_id_${bot.id}`;
   const [conversationId, setConversationId] = useState<string>(() => {
     return sessionStorage.getItem(storageKey) || '';
+  });
+  const [visitorId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      let vid = localStorage.getItem(visitorIdKey);
+      if (!vid) {
+        vid = 'vis_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+        localStorage.setItem(visitorIdKey, vid);
+      }
+      return vid;
+    }
+    return 'vis_' + Date.now();
   });
 
   const [messages, setMessages] = useState<Message[]>([
@@ -183,6 +195,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversationId: conversationId || undefined,
+          visitorId,
           name: leadName.trim() || 'Website Visitor',
           email: leadEmail.trim(),
           firstQuestion: messages.length > 1 ? messages[1].content : undefined,
@@ -246,6 +259,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
           conversationId: conversationId || undefined,
           conversationHistory: [...messages, userMsg],
           visitorInfo: {
+            visitorId,
             email: leadEmail ? leadEmail.trim() : undefined,
             name: leadName ? leadName.trim() : undefined,
             location: meta.location,

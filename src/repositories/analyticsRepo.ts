@@ -17,16 +17,21 @@ export class AnalyticsRepo {
   ): Promise<AnalyticsSummary> {
     const db = getDb();
 
-    let convWhere = `WHERE tenant_id = ?`;
-    let msgWhere = `WHERE tenant_id = ?`;
+    let convWhere = `WHERE tenant_id = ? AND (is_test = 0 OR is_test IS NULL)`;
     let leadWhere = `WHERE tenant_id = ?`;
     const params: any[] = [tenantId];
 
     if (chatbotId) {
       convWhere += ` AND chatbot_id = ?`;
-      msgWhere += ` AND chatbot_id = ?`;
       leadWhere += ` AND chatbot_id = ?`;
       params.push(chatbotId);
+    }
+
+    let msgWhere = `WHERE tenant_id = ? AND conversation_id IN (SELECT id FROM conversations WHERE tenant_id = ? AND (is_test = 0 OR is_test IS NULL))`;
+    const msgParams: any[] = [tenantId, tenantId];
+    if (chatbotId) {
+      msgWhere += ` AND chatbot_id = ?`;
+      msgParams.push(chatbotId);
     }
 
     // Total Conversations
@@ -39,7 +44,7 @@ export class AnalyticsRepo {
     // Total Messages
     const msgRes = await db.execute({
       sql: `SELECT COUNT(*) as total FROM messages ${msgWhere};`,
-      args: params,
+      args: msgParams,
     });
     const totalMessages = Number(msgRes.rows[0]?.total || 0);
 
@@ -103,7 +108,7 @@ export class AnalyticsRepo {
     let avgResponseTimeSec = 0;
     const msgRows = await db.execute({
       sql: `SELECT conversation_id, sender, created_at FROM messages ${msgWhere} ORDER BY conversation_id ASC, created_at ASC;`,
-      args: params,
+      args: msgParams,
     });
     const byConv = new Map<string, { sender: string; ts: number }[]>();
     for (const row of msgRows.rows) {
@@ -136,7 +141,7 @@ export class AnalyticsRepo {
     const topTopics: { topic: string; count: number }[] = [];
     const visitorRows = await db.execute({
       sql: `SELECT content FROM messages ${msgWhere} AND sender = 'visitor';`,
-      args: params,
+      args: msgParams,
     });
     if (visitorRows.rows.length > 0) {
       const topicCounts = new Map<string, number>();

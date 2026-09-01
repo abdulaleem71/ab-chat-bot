@@ -39,7 +39,7 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
   onClose,
   onRefreshList,
 }) => {
-  const { adminToken } = useAdminAuth();
+  useAdminAuth();
   const [detail, setDetail] = useState<AdminDomainDetail | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,12 +56,12 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
 
   const fetchDomainDetail = async () => {
-    if (!adminToken) return;
+    if (!domain) return;
     try {
       setIsLoading(true);
       setError(null);
       const res = await fetch(`/api/admin/domains/${encodeURIComponent(domain)}`, {
-        headers: { Authorization: `Bearer ${adminToken}` },
+        credentials: 'include',
       });
 
       if (!res.ok) {
@@ -86,17 +86,17 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
 
   useEffect(() => {
     fetchDomainDetail();
-  }, [domain, adminToken]);
+  }, [domain]);
 
   const handleRunDiagnostic = async () => {
-    if (!adminToken || isRunningDiagnostic) return;
+    if (isRunningDiagnostic) return;
     try {
       setIsRunningDiagnostic(true);
       const res = await fetch('/api/admin/domains/verify', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({ domain }),
       });
@@ -121,14 +121,14 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
   };
 
   const handleUpdateStatus = async () => {
-    if (!adminToken || isUpdatingStatus) return;
+    if (isUpdatingStatus) return;
     try {
       setIsUpdatingStatus(true);
       const res = await fetch(`/api/admin/domains/${encodeURIComponent(domain)}/status`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({
           status: selectedStatus,
@@ -153,13 +153,12 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
   };
 
   const handleToggleWhitelist = async (isWhitelisted: boolean) => {
-    if (!adminToken) return;
     try {
       const res = await fetch(`/api/admin/domains/${encodeURIComponent(domain)}/whitelist`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({ isWhitelisted }),
       });
@@ -176,7 +175,6 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
   };
 
   const handleToggleBlock = async (isBlocked: boolean) => {
-    if (!adminToken) return;
     const confirmMsg = isBlocked
       ? `Are you sure you want to BLOCK '${domain}'? This will immediately prevent all chatbots from rendering or responding on this domain.`
       : `Unblock '${domain}'?`;
@@ -185,9 +183,9 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
     try {
       const res = await fetch(`/api/admin/domains/${encodeURIComponent(domain)}/block`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({ isBlocked }),
       });

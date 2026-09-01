@@ -82,6 +82,7 @@ export interface ConversationListFilters {
   sortOrder?: 'ASC' | 'DESC';
   limit?: number;
   offset?: number;
+  includeTestData?: boolean;
 }
 
 export interface AdminConversationMetrics {
@@ -99,11 +100,13 @@ export class AdminConversationRepo {
   /**
    * Fetches high-level conversation KPIs across the platform
    */
-  public static async getMetrics(tenantId?: string): Promise<AdminConversationMetrics> {
+  public static async getMetrics(tenantId?: string, includeTestData = false): Promise<AdminConversationMetrics> {
     const db = getDb();
     
     try {
-      const convCondition = tenantId ? 'WHERE tenant_id = ?' : '';
+      let convCondition = includeTestData 
+        ? (tenantId ? 'WHERE tenant_id = ?' : '') 
+        : (tenantId ? 'WHERE tenant_id = ? AND (is_test = 0 OR is_test IS NULL)' : 'WHERE (is_test = 0 OR is_test IS NULL)');
       const convArgs = tenantId ? [tenantId] : [];
 
       const totalConvsRes = await db.execute({
@@ -124,17 +127,25 @@ export class AdminConversationRepo {
       const avgCsat = convRow?.avg_csat ? Number(Number(convRow.avg_csat).toFixed(1)) : 0;
       const csatRatedCount = Number(convRow?.rated_cnt || 0);
 
-      const msgCondition = tenantId ? 'WHERE tenant_id = ?' : '';
+      let msgCondition = includeTestData
+        ? (tenantId ? 'WHERE tenant_id = ?' : '')
+        : (tenantId ? 'WHERE tenant_id = ? AND conversation_id NOT IN (SELECT id FROM conversations WHERE tenant_id = ? AND is_test = 1)' : 'WHERE conversation_id NOT IN (SELECT id FROM conversations WHERE is_test = 1)');
+      const msgArgs = includeTestData ? (tenantId ? [tenantId] : []) : (tenantId ? [tenantId, tenantId] : []);
+
       const totalMsgsRes = await db.execute({
         sql: `SELECT COUNT(*) as total_msgs FROM messages ${msgCondition};`,
-        args: convArgs,
+        args: msgArgs,
       });
       const totalMessages = Number(totalMsgsRes.rows[0]?.total_msgs || 0);
 
-      const leadsCondition = tenantId ? 'WHERE tenant_id = ?' : '';
+      let leadsCondition = includeTestData
+        ? (tenantId ? 'WHERE tenant_id = ?' : '')
+        : (tenantId ? 'WHERE tenant_id = ? AND conversation_id NOT IN (SELECT id FROM conversations WHERE tenant_id = ? AND is_test = 1)' : 'WHERE conversation_id NOT IN (SELECT id FROM conversations WHERE is_test = 1)');
+      const leadsArgs = includeTestData ? (tenantId ? [tenantId] : []) : (tenantId ? [tenantId, tenantId] : []);
+
       const totalLeadsRes = await db.execute({
         sql: `SELECT COUNT(*) as total_leads FROM leads ${leadsCondition};`,
-        args: convArgs,
+        args: leadsArgs,
       });
       const totalLeadsCaptured = Number(totalLeadsRes.rows[0]?.total_leads || 0);
 
@@ -172,7 +183,7 @@ export class AdminConversationRepo {
     filters: ConversationListFilters = {}
   ): Promise<{ conversations: AdminConversationItem[]; total: number; metrics: AdminConversationMetrics }> {
     const db = getDb();
-    const metrics = await this.getMetrics(filters.tenantId);
+    const metrics = await this.getMetrics(filters.tenantId, filters.includeTestData);
 
     // Build query with joins
     let query = `
@@ -191,6 +202,10 @@ export class AdminConversationRepo {
       WHERE 1=1
     `;
     const args: any[] = [];
+
+    if (!filters.includeTestData) {
+      query += ` AND (c.is_test = 0 OR c.is_test IS NULL)`;
+    }
 
     if (filters.tenantId) {
       query += ` AND c.tenant_id = ?`;

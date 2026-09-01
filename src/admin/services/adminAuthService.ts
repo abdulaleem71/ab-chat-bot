@@ -85,7 +85,7 @@ export class AdminAuthService {
   /**
    * Generates a signed Admin JWT token with strict claims
    */
-  static generateAdminToken(admin: AdminUser, jwtSecret: string): string {
+  static generateAdminToken(admin: AdminUser, jwtSecret: string, expiresIn: string = '12h'): string {
     return jwt.sign(
       {
         id: admin.id,
@@ -95,7 +95,7 @@ export class AdminAuthService {
         isAdmin: true,
       },
       jwtSecret,
-      { expiresIn: '12h' }
+      { expiresIn: expiresIn as any }
     );
   }
 

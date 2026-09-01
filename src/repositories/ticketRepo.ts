@@ -12,7 +12,9 @@ export class TicketRepo {
       conversationId?: string;
       subject: string;
       description: string;
-      priority?: 'low' | 'medium' | 'high' | 'urgent';
+      priority?: 'low' | 'medium' | 'high';
+      status?: 'open' | 'pending' | 'resolved' | 'closed';
+      assigneeId?: string;
       customerEmail?: string;
     }
   ): Promise<SupportTicket> {
@@ -21,13 +23,15 @@ export class TicketRepo {
     const ticketNumber = `TKT-${Math.floor(1000 + Math.random() * 9000)}`;
     const now = new Date().toISOString();
     const priority = data.priority || 'medium';
+    const status = data.status || 'open';
+    const assigneeId = data.assigneeId || null;
 
     await db.execute({
       sql: `
         INSERT INTO support_tickets (
           id, tenant_id, conversation_id, ticket_number, subject, description,
-          priority, status, customer_email, notes_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          priority, status, assignee_id, customer_email, notes_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
       `,
       args: [
         id,
@@ -37,13 +41,22 @@ export class TicketRepo {
         data.subject,
         data.description,
         priority,
-        'open',
+        status,
+        assigneeId,
         data.customerEmail || null,
         JSON.stringify(['Created autonomously by AI Assistant during conversation']),
         now,
         now,
       ],
     });
+
+    let assigneeName: string | undefined;
+    if (assigneeId) {
+      const uRes = await db.execute({ sql: `SELECT name FROM users WHERE id = ? LIMIT 1;`, args: [assigneeId] });
+      if (uRes.rows.length > 0) {
+        assigneeName = String(uRes.rows[0].name);
+      }
+    }
 
     return {
       id,
@@ -53,7 +66,9 @@ export class TicketRepo {
       subject: data.subject,
       description: data.description,
       priority,
-      status: 'open',
+      status,
+      assigneeId: assigneeId || undefined,
+      assigneeName,
       customerEmail: data.customerEmail,
       notes: ['Created autonomously by AI Assistant during conversation'],
       createdAt: now,
@@ -65,15 +80,16 @@ export class TicketRepo {
     tenantId: string,
     ticketNumberOrId: string,
     data: {
-      status?: 'open' | 'in_progress' | 'resolved' | 'closed';
-      priority?: 'low' | 'medium' | 'high' | 'urgent';
+      status?: 'open' | 'pending' | 'resolved' | 'closed';
+      priority?: 'low' | 'medium' | 'high';
+      assigneeId?: string | null;
       note?: string;
     }
   ): Promise<SupportTicket | null> {
     const db = getDb();
     const clean = ticketNumberOrId.trim();
     const res = await db.execute({
-      sql: `SELECT * FROM support_tickets WHERE tenant_id = ? AND (ticket_number = ? OR id = ?) LIMIT 1;`,
+      sql: `SELECT st.*, u.name as assignee_name FROM support_tickets st LEFT JOIN users u ON st.assignee_id = u.id WHERE st.tenant_id = ? AND (st.ticket_number = ? OR st.id = ?) LIMIT 1;`,
       args: [tenantId, clean, clean],
     });
 
@@ -88,20 +104,31 @@ export class TicketRepo {
 
     const updatedStatus = data.status || existing.status;
     const updatedPriority = data.priority || existing.priority;
+    const updatedAssigneeId = data.assigneeId !== undefined ? data.assigneeId : existing.assigneeId;
 
     await db.execute({
       sql: `
         UPDATE support_tickets SET
-          status = ?, priority = ?, notes_json = ?, updated_at = ?
+          status = ?, priority = ?, assignee_id = ?, notes_json = ?, updated_at = ?
         WHERE id = ? AND tenant_id = ?;
       `,
-      args: [updatedStatus, updatedPriority, JSON.stringify(updatedNotes), now, existing.id, tenantId],
+      args: [updatedStatus, updatedPriority, updatedAssigneeId || null, JSON.stringify(updatedNotes), now, existing.id, tenantId],
     });
+
+    let assigneeName = existing.assigneeName;
+    if (updatedAssigneeId && updatedAssigneeId !== existing.assigneeId) {
+      const uRes = await db.execute({ sql: `SELECT name FROM users WHERE id = ? LIMIT 1;`, args: [updatedAssigneeId] });
+      assigneeName = uRes.rows.length > 0 ? String(uRes.rows[0].name) : undefined;
+    } else if (!updatedAssigneeId) {
+      assigneeName = undefined;
+    }
 
     return {
       ...existing,
       status: updatedStatus,
       priority: updatedPriority,
+      assigneeId: updatedAssigneeId || undefined,
+      assigneeName,
       notes: updatedNotes,
       updatedAt: now,
     };
@@ -110,10 +137,25 @@ export class TicketRepo {
   static async getTickets(tenantId: string): Promise<SupportTicket[]> {
     const db = getDb();
     const res = await db.execute({
-      sql: `SELECT * FROM support_tickets WHERE tenant_id = ? ORDER BY created_at DESC;`,
+      sql: `
+        SELECT st.*, u.name as assignee_name 
+        FROM support_tickets st 
+        LEFT JOIN users u ON st.assignee_id = u.id 
+        WHERE st.tenant_id = ? 
+        ORDER BY st.created_at DESC;
+      `,
       args: [tenantId],
     });
     return res.rows.map(r => this.mapRowToTicket(r));
+  }
+
+  static async countDiscountCodesForConversation(tenantId: string, conversationId: string): Promise<number> {
+    const db = getDb();
+    const res = await db.execute({
+      sql: `SELECT COUNT(*) as cnt FROM discount_codes WHERE tenant_id = ? AND conversation_id = ?;`,
+      args: [tenantId, conversationId],
+    });
+    return Number(res.rows[0]?.cnt || 0);
   }
 
   // ----------------------------------------------------
@@ -125,6 +167,7 @@ export class TicketRepo {
       percentage: number;
       reason?: string;
       customerEmail?: string;
+      conversationId?: string;
     }
   ): Promise<DiscountCode> {
     const db = getDb();
@@ -136,10 +179,10 @@ export class TicketRepo {
     await db.execute({
       sql: `
         INSERT INTO discount_codes (
-          id, tenant_id, code, percentage, reason, customer_email, created_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+          id, tenant_id, code, percentage, reason, customer_email, conversation_id, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
       `,
-      args: [id, tenantId, code, data.percentage, data.reason || 'AI Customer Retention Courtesy', data.customerEmail || null, now, expiresAt],
+      args: [id, tenantId, code, data.percentage, data.reason || 'AI Customer Retention Courtesy', data.customerEmail || null, data.conversationId || null, now, expiresAt],
     });
 
     return {
@@ -171,6 +214,8 @@ export class TicketRepo {
       description: String(r.description),
       priority: (r.priority || 'medium') as any,
       status: (r.status || 'open') as any,
+      assigneeId: r.assignee_id ? String(r.assignee_id) : undefined,
+      assigneeName: r.assignee_name ? String(r.assignee_name) : undefined,
       customerEmail: r.customer_email ? String(r.customer_email) : undefined,
       notes,
       createdAt: String(r.created_at),

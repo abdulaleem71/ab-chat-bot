@@ -1,6 +1,7 @@
 import { getDb } from '../db/index';
 import { newId } from '../lib/ids';
 import { TeamMember, TeamInvite } from '../types';
+import { Role } from '../config/permissions';
 
 export class TeamRepo {
   static async getTeamMembers(tenantId: string): Promise<TeamMember[]> {
@@ -19,9 +20,10 @@ export class TeamRepo {
 
     return res.rows.map(r => {
       const rawRole = String(r.member_role || r.role || 'agent').toLowerCase();
-      let role: 'Admin' | 'Agent' | 'Owner' = 'Agent';
+      let role: Role = 'Agent';
       if (rawRole === 'owner') role = 'Owner';
       else if (rawRole === 'admin') role = 'Admin';
+      else if (rawRole === 'viewer') role = 'Viewer';
       else role = 'Agent';
 
       return {
@@ -45,23 +47,32 @@ export class TeamRepo {
       args: [tenantId],
     });
 
-    return res.rows.map(r => ({
-      id: String(r.id),
-      tenantId: String(r.tenant_id),
-      email: String(r.email),
-      role: (r.role === 'Admin' ? 'Admin' : 'Agent'),
-      invitedBy: String(r.invited_by || ''),
-      invitedByName: r.invited_by_name ? String(r.invited_by_name) : undefined,
-      status: 'pending',
-      createdAt: String(r.created_at),
-      expiresAt: String(r.expires_at),
-    }));
+    return res.rows.map(r => {
+      const rawRole = String(r.role || 'Agent');
+      let role: Role = 'Agent';
+      if (rawRole.toLowerCase() === 'owner') role = 'Owner';
+      else if (rawRole.toLowerCase() === 'admin') role = 'Admin';
+      else if (rawRole.toLowerCase() === 'viewer') role = 'Viewer';
+      else role = 'Agent';
+
+      return {
+        id: String(r.id),
+        tenantId: String(r.tenant_id),
+        email: String(r.email),
+        role,
+        invitedBy: String(r.invited_by || ''),
+        invitedByName: r.invited_by_name ? String(r.invited_by_name) : undefined,
+        status: 'pending',
+        createdAt: String(r.created_at),
+        expiresAt: String(r.expires_at),
+      };
+    });
   }
 
   static async inviteTeammate(
     tenantId: string,
     email: string,
-    role: 'Admin' | 'Agent',
+    role: Role,
     invitedBy: string,
     invitedByName?: string
   ): Promise<TeamInvite> {

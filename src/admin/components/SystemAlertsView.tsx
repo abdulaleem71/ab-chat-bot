@@ -22,7 +22,7 @@ import { SystemAlert, AlertStats } from '../repositories/adminAlertsRepo';
 import { useAdminAuth } from '../context/AdminAuthContext';
 
 export const SystemAlertsView: React.FC = () => {
-  const { adminToken } = useAdminAuth();
+  useAdminAuth();
   const [alerts, setAlerts] = useState<SystemAlert[]>([]);
   const [stats, setStats] = useState<AlertStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -40,14 +40,9 @@ export const SystemAlertsView: React.FC = () => {
   const [newCategory, setNewCategory] = useState<'security' | 'performance' | 'integration' | 'quality' | 'system'>('performance');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const getEffectiveToken = () => {
-    return adminToken || localStorage.getItem('nomads_admin_token') || localStorage.getItem('nomadschat_admin_token') || '';
-  };
-
   const fetchAlerts = async () => {
     setIsLoading(true);
     try {
-      const token = getEffectiveToken();
       const params = new URLSearchParams({
         ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
         ...(severityFilter !== 'all' ? { severity: severityFilter } : {}),
@@ -55,9 +50,7 @@ export const SystemAlertsView: React.FC = () => {
       });
 
       const res = await fetch(`/api/admin/alerts?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        credentials: 'include',
       });
 
       if (res.ok) {
@@ -83,11 +76,10 @@ export const SystemAlertsView: React.FC = () => {
 
   const handleAcknowledge = async (id: string) => {
     try {
-      const token = getEffectiveToken();
       const res = await fetch(`/api/admin/alerts/${id}/acknowledge`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       });
@@ -102,11 +94,10 @@ export const SystemAlertsView: React.FC = () => {
 
   const handleResolve = async (id: string) => {
     try {
-      const token = localStorage.getItem('nomads_admin_token') || 'local-admin-token';
       const res = await fetch(`/api/admin/alerts/${id}/resolve`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       });
@@ -122,11 +113,10 @@ export const SystemAlertsView: React.FC = () => {
   const handleResolveAll = async () => {
     if (!window.confirm('Are you sure you want to mark all active alerts as resolved?')) return;
     try {
-      const token = localStorage.getItem('nomads_admin_token') || 'local-admin-token';
       const res = await fetch(`/api/admin/alerts/resolve-all`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       });
@@ -145,11 +135,10 @@ export const SystemAlertsView: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      const token = localStorage.getItem('nomads_admin_token') || 'local-admin-token';
       const res = await fetch('/api/admin/alerts/create', {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({

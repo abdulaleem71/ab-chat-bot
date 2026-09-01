@@ -39,15 +39,16 @@ export class ConversationRepo {
     const toolsInvokedJson = JSON.stringify(conv.toolsInvoked || []);
     await db.execute({
       sql: `INSERT INTO conversations (
-        id, chatbot_id, tenant_id, visitor_id, visitor_name, visitor_email, visitor_location,
+        id, chatbot_id, tenant_id, visitor_id, contact_id, visitor_name, visitor_email, visitor_location,
         visitor_browser, page_url, channel, assigned_to, assigned_to_name, status, last_message, last_message_time,
-        unread_by_agent, csat_rating, csat_feedback, resolved_by, tools_invoked_json, bot_type, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        unread_by_agent, csat_rating, csat_feedback, resolved_by, tools_invoked_json, bot_type, is_test, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       args: [
         conv.id,
         conv.chatbotId,
         conv.tenantId,
         conv.visitorId,
+        conv.contactId || null,
         conv.visitorName || '',
         conv.visitorEmail || '',
         conv.visitorLocation || 'Unknown',
@@ -65,10 +66,19 @@ export class ConversationRepo {
         conv.resolvedBy || 'ai',
         toolsInvokedJson,
         conv.botType || 'support',
+        conv.isTest ? 1 : 0,
         conv.createdAt || new Date().toISOString(),
       ],
     });
     return conv;
+  }
+
+  static async updateContactId(conversationId: string, contactId: string): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE conversations SET contact_id = ? WHERE id = ?;`,
+      args: [contactId, conversationId],
+    });
   }
 
   static async updateOutcome(
@@ -290,6 +300,7 @@ export class ConversationRepo {
       chatbotId: String(r.chatbot_id),
       tenantId: String(r.tenant_id),
       visitorId: String(r.visitor_id),
+      contactId: r.contact_id ? String(r.contact_id) : undefined,
       visitorName: r.visitor_name ? String(r.visitor_name) : undefined,
       visitorEmail: r.visitor_email ? String(r.visitor_email) : undefined,
       visitorLocation: r.visitor_location ? String(r.visitor_location) : undefined,
@@ -313,6 +324,7 @@ export class ConversationRepo {
         }
       })(),
       botType: (r.bot_type || 'support') as any,
+      isTest: Number(r.is_test) === 1,
       createdAt: String(r.created_at),
     };
   }

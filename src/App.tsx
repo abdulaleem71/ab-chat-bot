@@ -18,6 +18,10 @@ import { FeaturesView } from './components/features/FeaturesView';
 import { FaqView } from './components/faq/FaqView';
 import { IntegrationsView } from './components/integrations/IntegrationsView';
 import { TeamView } from './components/team/TeamView';
+import { SettingsView } from './components/settings/SettingsView';
+import { AccountView } from './components/account/AccountView';
+import { VerificationBanner } from './components/layout/VerificationBanner';
+import { MfaRecommendationBanner } from './components/layout/MfaRecommendationBanner';
 import { StatusPage } from './components/public/StatusPage';
 import { SecurityPage } from './components/public/SecurityPage';
 import { Footer } from './components/layout/Footer';
@@ -26,17 +30,18 @@ import { ExpiredTrialModal } from './components/pricing/ExpiredTrialModal';
 import { CheckoutModal } from './components/pricing/CheckoutModal';
 import { AdminApp } from './admin/AdminApp';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
-import { Chatbot, KnowledgeSource, Conversation, Message, VisitorLead, GroundingSource, AnalyticsSummary, TenantPlan } from './types';
+import { Chatbot, KnowledgeSource, Conversation, Message, SupportTicket, VisitorLead, GroundingSource, AnalyticsSummary, TenantPlan } from './types';
 import { MessageSquare, X, AlertCircle, Loader2 } from 'lucide-react';
 
 function DashboardContent() {
-  const { token, isAuthenticated, tenant, switchPlan } = useAuth();
+  const { isAuthenticated, tenant, switchPlan } = useAuth();
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [chatbots, setChatbots] = useState<Chatbot[]>([]);
   const [selectedBot, setSelectedBot] = useState<Chatbot | null>(null);
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [leads, setLeads] = useState<VisitorLead[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
 
@@ -80,18 +85,21 @@ function DashboardContent() {
     }
   }, [isAuthenticated, tenant?.id, tenant?.trialEndsAt, tenant?.hasPaymentMethod]);
 
-  const getAuthHeaders = () => {
-    const currentToken = localStorage.getItem('auth_token') || token;
-    return {
-      'Content-Type': 'application/json',
-      ...(currentToken ? { Authorization: `Bearer ${currentToken}` } : {}),
-    };
+  const fetchApi = (url: string, options: RequestInit = {}) => {
+    return fetch(url, {
+      credentials: 'include',
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    });
   };
 
   // 1. Fetch Chatbots on Auth / Mount
   useEffect(() => {
     if (!isAuthenticated) return;
-    fetch('/api/chatbots', { headers: getAuthHeaders() })
+    fetchApi('/api/chatbots')
       .then(res => res.json())
       .then(data => {
         if (data.success && data.chatbots) {
@@ -102,12 +110,12 @@ function DashboardContent() {
         }
       })
       .catch(err => console.log('Error fetching chatbots:', err));
-  }, [token, isAuthenticated]);
+  }, [isAuthenticated]);
 
-  // 2. Fetch Knowledge Sources when Selected Bot Changes
-  useEffect(() => {
-    if (!isAuthenticated || !selectedBot) return;
-    fetch(`/api/chatbots/${selectedBot.id}/knowledge`, { headers: getAuthHeaders() })
+  // 2. Fetch Tenant Knowledge Sources
+  const fetchKnowledgeSources = () => {
+    if (!isAuthenticated) return;
+    fetchApi('/api/knowledge')
       .then(res => res.json())
       .then(data => {
         if (data.success && data.knowledgeSources) {
@@ -115,19 +123,32 @@ function DashboardContent() {
         }
       })
       .catch(err => console.log('Error fetching knowledge sources:', err));
-  }, [selectedBot?.id, isAuthenticated]);
+  };
+
+  useEffect(() => {
+    fetchKnowledgeSources();
+  }, [isAuthenticated]);
+
+  // Poll for pending knowledge sources
+  useEffect(() => {
+    const hasPending = knowledgeSources.some(s => s.status === 'pending' || s.status === 'processing');
+    if (!hasPending || !isAuthenticated) return;
+    
+    const intervalId = setInterval(fetchKnowledgeSources, 3000);
+    return () => clearInterval(intervalId);
+  }, [knowledgeSources, isAuthenticated]);
 
   // 3. Fetch Conversations & Inbox Data
   useEffect(() => {
     if (!isAuthenticated) return;
-    fetch('/api/conversations', { headers: getAuthHeaders() })
+    fetchApi('/api/conversations')
       .then(res => res.json())
       .then(data => {
         if (data.success && data.conversations) {
           setConversations(data.conversations);
           // Fetch messages for each conversation
           data.conversations.forEach((c: Conversation) => {
-            fetch(`/api/conversations/${c.id}/messages`, { headers: getAuthHeaders() })
+            fetchApi(`/api/conversations/${c.id}/messages`)
               .then(mRes => mRes.json())
               .then(mData => {
                 if (mData.success && mData.messages) {
@@ -138,12 +159,12 @@ function DashboardContent() {
         }
       })
       .catch(err => console.log('Error fetching conversations:', err));
-  }, [token, isAuthenticated, activeTab]);
+  }, [isAuthenticated, activeTab]);
 
   // 4. Fetch Leads
   useEffect(() => {
     if (!isAuthenticated) return;
-    fetch('/api/leads', { headers: getAuthHeaders() })
+    fetchApi('/api/leads')
       .then(res => res.json())
       .then(data => {
         if (data.success && data.leads) {
@@ -151,12 +172,40 @@ function DashboardContent() {
         }
       })
       .catch(err => console.log('Error fetching leads:', err));
-  }, [token, isAuthenticated, activeTab]);
+  }, [isAuthenticated, activeTab]);
+
+  // Fetch Support Tickets
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    fetchApi('/api/tickets')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.tickets) {
+          setTickets(data.tickets);
+        }
+      })
+      .catch(err => console.log('Error fetching support tickets:', err));
+  }, [isAuthenticated, activeTab]);
+
+  const handleUpdateTicket = async (ticketId: string, data: { status?: string; priority?: string; assigneeId?: string | null; note?: string }) => {
+    try {
+      const res = await fetchApi(`/api/tickets/${ticketId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+      const resData = await res.json();
+      if (resData.success && resData.ticket) {
+        setTickets(prev => prev.map(t => t.id === ticketId ? resData.ticket : t));
+      }
+    } catch (err) {
+      console.log('Error updating ticket:', err);
+    }
+  };
 
   // 5. Fetch Analytics
   useEffect(() => {
     if (!isAuthenticated) return;
-    fetch('/api/analytics', { headers: getAuthHeaders() })
+    fetchApi('/api/analytics')
       .then(res => res.json())
       .then(data => {
         if (data.success && data.analytics) {
@@ -164,7 +213,7 @@ function DashboardContent() {
         }
       })
       .catch(err => console.log('Error fetching analytics:', err));
-  }, [token, isAuthenticated, activeTab]);
+  }, [isAuthenticated, activeTab]);
 
   // Close open protected drawers/modals on logout
   useEffect(() => {
@@ -199,7 +248,8 @@ function DashboardContent() {
       try {
         const res = await fetch(`/api/chatbots/${editingBot.id}`, {
           method: 'PUT',
-          headers: getAuthHeaders(),
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(formData),
         });
         const data = await res.json();
@@ -215,7 +265,8 @@ function DashboardContent() {
       try {
         const res = await fetch('/api/chatbots', {
           method: 'POST',
-          headers: getAuthHeaders(),
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(formData),
         });
         const data = await res.json();
@@ -253,7 +304,7 @@ function DashboardContent() {
     try {
       const res = await fetch(`/api/chatbots/${bot.id}`, {
         method: 'DELETE',
-        headers: getAuthHeaders(),
+        credentials: 'include',
       });
       const data = await res.json();
       if (data.success) {
@@ -284,29 +335,29 @@ function DashboardContent() {
   };
 
   // Knowledge Handlers
-  const handleAddKnowledgeSource = async (sourceData: Partial<KnowledgeSource>) => {
-    if (!selectedBot) return;
+  const handleAddKnowledgeSource = async (sourceData: Partial<KnowledgeSource> & { chatbotIds: string[] }) => {
     try {
-      const res = await fetch(`/api/chatbots/${selectedBot.id}/knowledge`, {
+      const res = await fetch(`/api/knowledge`, {
         method: 'POST',
-        headers: getAuthHeaders(),
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sourceData),
       });
       const data = await res.json();
       if (data.success && data.knowledgeSource) {
-        setKnowledgeSources(prev => [data.knowledgeSource, ...prev]);
+        setKnowledgeSources(prev => [data.knowledgeSource, ...prev.filter(k => k.id !== data.knowledgeSource.id)]);
       }
     } catch (err) {
       console.log('Error adding knowledge source:', err);
     }
   };
 
-  const handleScrapeUrl = async (url: string) => {
-    if (!selectedBot) return;
-    const res = await fetch(`/api/chatbots/${selectedBot.id}/scrape-url`, {
+  const handleScrapeUrl = async (url: string, chatbotIds: string[]) => {
+    const res = await fetch(`/api/knowledge/scrape-url`, {
       method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ url }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, chatbotIds }),
     });
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Failed to scrape URL');
@@ -315,12 +366,12 @@ function DashboardContent() {
     }
   };
 
-  const handleIngestHtml = async (html: string, url?: string, title?: string) => {
-    if (!selectedBot) return;
-    const res = await fetch(`/api/chatbots/${selectedBot.id}/ingest-raw-html`, {
+  const handleIngestHtml = async (html: string, url?: string, title?: string, chatbotIds: string[] = []) => {
+    const res = await fetch(`/api/knowledge/ingest-raw-html`, {
       method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ html, url, title }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html, url, title, chatbotIds }),
     });
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Failed to ingest HTML');
@@ -329,12 +380,28 @@ function DashboardContent() {
     }
   };
 
-  const handleDeleteKnowledgeSource = async (sourceId: string) => {
-    if (!selectedBot) return;
+  const handleUpdateSourceLinks = async (sourceId: string, chatbotIds: string[]) => {
     try {
-      await fetch(`/api/chatbots/${selectedBot.id}/knowledge/${sourceId}`, {
+      const res = await fetch(`/api/knowledge/${sourceId}/links`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatbotIds }),
+      });
+      const data = await res.json();
+      if (data.success && data.knowledgeSource) {
+        setKnowledgeSources(prev => prev.map(k => k.id === sourceId ? data.knowledgeSource : k));
+      }
+    } catch (e) {
+      console.log('Error updating source links:', e);
+    }
+  };
+
+  const handleDeleteKnowledgeSource = async (sourceId: string) => {
+    try {
+      await fetch(`/api/knowledge/${sourceId}`, {
         method: 'DELETE',
-        headers: getAuthHeaders(),
+        credentials: 'include',
       });
     } catch (e) {
       console.log('Error deleting source from server:', e);
@@ -354,6 +421,7 @@ function DashboardContent() {
       body: JSON.stringify({
         message,
         conversationHistory: history,
+        isPlayground: true,
       }),
     });
     const data = await res.json();
@@ -454,6 +522,9 @@ function DashboardContent() {
         onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
       />
 
+      <VerificationBanner />
+      <MfaRecommendationBanner onNavigateToAccount={() => setActiveTab('account')} />
+
       {/* Main Layout Area */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* Mobile Slide-over Drawer Menu */}
@@ -528,14 +599,12 @@ function DashboardContent() {
 
                 {activeTab === 'knowledge' && (
                   <KnowledgeManager
-                    selectedBot={activeBot}
-                    allBots={chatbots}
-                    onSelectBot={setSelectedBot}
-                    onCreateBot={handleCreateBot}
+                    chatbots={chatbots}
                     knowledgeSources={knowledgeSources}
                     onAddSource={handleAddKnowledgeSource}
                     onScrapeUrl={handleScrapeUrl}
                     onIngestHtml={handleIngestHtml}
+                    onUpdateSourceLinks={handleUpdateSourceLinks}
                     onDeleteSource={handleDeleteKnowledgeSource}
                   />
                 )}
@@ -556,9 +625,11 @@ function DashboardContent() {
                     conversations={conversations}
                     messages={messages}
                     chatbots={chatbots}
+                    tickets={tickets}
                     onSendMessage={handleInboxSendMessage}
                     onToggleTakeover={handleToggleTakeover}
                     onResolveConversation={handleResolveConversation}
+                    onUpdateTicket={handleUpdateTicket}
                     onAssignConversation={(id, memberId, memberName) => {
                       setConversations(prev =>
                         prev.map(c =>
@@ -583,6 +654,14 @@ function DashboardContent() {
                     onNavigateToBilling={() => setActiveTab('billing')}
                     onNavigateToInbox={() => setActiveTab('inbox')}
                   />
+                )}
+
+                {activeTab === 'account' && (
+                  <AccountView />
+                )}
+
+                {activeTab === 'settings' && (
+                  <SettingsView />
                 )}
 
                 {activeTab === 'status' && (

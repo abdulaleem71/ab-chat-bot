@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -8,20 +9,28 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
+import speakeasy from 'speakeasy';
+import QRCode from 'qrcode';
+import { encrypt, decrypt } from './src/services/encryptionService';
 
 // Load environment variables
 dotenv.config({ override: process.env.NODE_ENV !== 'production' });
 
 import { initDb, getDb, validateDatabaseConfig, ensureDbInitialized } from './src/db/index';
 import { UserRepo } from './src/repositories/userRepo';
+import { sendTransactionalEmail } from './src/services/emailService';
 import { ChatbotRepo } from './src/repositories/chatbotRepo';
+import { ChatbotVersionRepo } from './src/repositories/chatbotVersionRepo';
 import { KnowledgeRepo } from './src/repositories/knowledgeRepo';
 import { ConversationRepo } from './src/repositories/conversationRepo';
 import { LeadRepo } from './src/repositories/leadRepo';
 import { AnalyticsRepo } from './src/repositories/analyticsRepo';
 import { TeamRepo } from './src/repositories/teamRepo';
 import { IntegrationRepo } from './src/repositories/integrationRepo';
+import { ContactRepo } from './src/repositories/contactRepo';
+import { HubspotSyncService } from './src/services/crmSyncService';
 import { KnowledgeService } from './src/services/knowledgeService';
 import { ChatService } from './src/services/chatService';
 import { SecurityService } from './src/services/securityService';
@@ -33,12 +42,18 @@ import { AdminUserRepo } from './src/admin/repositories/adminUserRepo';
 import { AdminChatbotRepo } from './src/admin/repositories/adminChatbotRepo';
 import { AdminDomainRepo } from './src/admin/repositories/adminDomainRepo';
 import { AdminConversationRepo } from './src/admin/repositories/adminConversationRepo';
+import { Action, hasPermission } from './src/config/permissions';
+import { TicketRepo } from './src/repositories/ticketRepo';
+import { PolicyRepo, TenantAuditRepo } from './src/repositories/policyRepo';
+import { SettingsRepo } from './src/repositories/settingsRepo';
+import { AuditEventsRepo } from './src/repositories/auditEventsRepo';
 import { AdminAnalyticsRepo } from './src/admin/repositories/adminAnalyticsRepo';
 import { AdminFunnelRepo } from './src/admin/repositories/adminFunnelRepo';
 import { AdminIntelligenceRepo } from './src/admin/repositories/adminIntelligenceRepo';
 import { AdminAlertsRepo } from './src/admin/repositories/adminAlertsRepo';
 import { AdminUser } from './src/admin/types';
 import { OAuthService } from './src/services/oauthService';
+import { newId } from './src/lib/ids';
 
 const _filename = typeof __filename !== 'undefined' ? __filename : (import.meta?.url ? fileURLToPath(import.meta.url) : '');
 const _dirname = typeof __dirname !== 'undefined' ? __dirname : (_filename ? path.dirname(_filename) : process.cwd());
@@ -49,6 +64,16 @@ app.set('trust proxy', 1);
 
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'nomadschat_secure_jwt_secret_key_2026';
+
+// Environment-aware cookie options
+const isProduction = process.env.NODE_ENV === 'production';
+const getCookieOptions = (maxAgeMs: number) => ({
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? ('strict' as const) : ('lax' as const),
+  path: '/',
+  maxAge: maxAgeMs,
+});
 
 if (process.env.NODE_ENV === 'production') {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'nomadschat_secure_jwt_secret_key_2026' || process.env.JWT_SECRET.trim().length < 16) {
@@ -109,18 +134,19 @@ app.use('/api/chatbots/:id/chat', cors({ origin: '*', credentials: false }));
 app.use('/api/chatbots/:id/auto-detect-host', cors({ origin: '*', credentials: false }));
 app.use('/widget.js', cors({ origin: '*', credentials: false }));
 
-// All other routes use controlled CORS policy
+// All other routes use controlled CORS policy with credentials true for httpOnly cookies
 app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
       callback(null, true);
     },
-    credentials: false,
+    credentials: true,
   })
 );
 
 app.use(express.json({ limit: '500kb' }));
+app.use(cookieParser());
 
 // Rate Limiters
 const globalApiLimiter = rateLimit({
@@ -175,7 +201,7 @@ app.use('/api/', async (req, res, next) => {
   }
 });
 
-// Authentication Middleware
+// Authentication Middleware (reads token from httpOnly cookies)
 interface AuthenticatedRequest extends express.Request {
   user?: {
     id: string;
@@ -187,12 +213,11 @@ interface AuthenticatedRequest extends express.Request {
 }
 
 function requireAuth(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const token = req.cookies?.accessToken || req.cookies?.token;
+  if (!token) {
     return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
   }
 
-  const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as any;
     req.user = {
@@ -220,18 +245,40 @@ function requireTenantAdminAuth(req: AuthenticatedRequest, res: express.Response
   next();
 }
 
+function requireOwner(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  const role = String(req.user?.role || '').toLowerCase();
+  if (role !== 'owner') {
+    return res.status(403).json({
+      success: false,
+      error: 'Permission Denied: Only the workspace Owner can perform this action.',
+    });
+  }
+  next();
+}
+
+function requirePermission(action: Action) {
+  return (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
+    }
+    const role = req.user.role;
+    if (hasPermission(role, action)) {
+      return next();
+    }
+    return res.status(403).json({
+      success: false,
+      error: `Permission Denied: Role '${role}' lacks permission for '${action}'.`,
+    });
+  };
+}
+
 // Dedicated Admin Server-Side Authentication Middleware
 export interface AdminAuthenticatedRequest extends express.Request {
   admin?: AdminUser;
 }
 
 export function requireAdminAuth(req: AdminAuthenticatedRequest, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ success: false, error: 'Administrator clearance required: Missing bearer token' });
-  }
-
-  const token = authHeader.split(' ')[1];
+  const token = req.cookies?.adminAccessToken || req.cookies?.adminToken || req.cookies?.accessToken;
   const verifiedAdmin = AdminAuthService.verifyAdminToken(token, JWT_SECRET);
 
   if (!verifiedAdmin) {
@@ -254,6 +301,20 @@ export function requireAdminAuth(req: AdminAuthenticatedRequest, res: express.Re
   }
 
   req.admin = verifiedAdmin;
+  next();
+}
+
+export function requireSuperAdmin(req: AdminAuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  const admin = req.admin;
+  if (!admin) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: Admin authentication required' });
+  }
+  if (admin.role !== 'super_admin') {
+    return res.status(403).json({
+      success: false,
+      error: `Forbidden: Billing interventions are restricted to SuperAdmin role only (Current role: ${admin.role}).`,
+    });
+  }
   next();
 }
 
@@ -345,6 +406,9 @@ app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res) => {
 
   const passwordHash = await bcrypt.hash(password, 10);
 
+  const verificationToken = crypto.randomBytes(32).toString('hex');
+  const verificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
   const user = await UserRepo.createUser({
     id: userId,
     email: email.toLowerCase(),
@@ -353,6 +417,18 @@ app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res) => {
     tenant_id: tenantId,
     role: 'owner',
     created_at: now,
+  });
+
+  await UserRepo.setEmailVerificationToken(userId, verificationToken, verificationExpiresAt);
+
+  // Send verification email
+  const verifyUrl = `${req.protocol}://${req.get('host')}/api/auth/verify-email?token=${verificationToken}`;
+  await sendTransactionalEmail({
+    to: email.toLowerCase(),
+    subject: 'Verify your NomadsChat workspace email',
+    html: `<p>Hello ${user.name},</p><p>Welcome to NomadsChat! Please verify your email address by clicking the link below:</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`,
+    token: verificationToken,
+    type: 'verification',
   });
 
   const token = jwt.sign(
@@ -442,16 +518,34 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
     tenant.plan = 'Free';
   }
 
+  if (user.mfa_enabled === 1) {
+    const mfaToken = jwt.sign({ userId: user.id, mfaPending: true }, JWT_SECRET, { expiresIn: '5m' });
+    return res.json({
+      success: true,
+      requireMfa: true,
+      mfaToken,
+      userId: user.id,
+      email: user.email,
+    });
+  }
+
   const token = jwt.sign(
     { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
     JWT_SECRET,
     { expiresIn: '7d' }
   );
 
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+
   res.json({
     success: true,
     token,
-    user: { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
+    user: { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role, mfaEnabled: Boolean(user.mfa_enabled) },
     tenant: {
       id: tenant.id,
       name: tenant.name,
@@ -464,6 +558,196 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
       paymentMethodBrand: tenant.payment_method_brand,
       paymentMethodLast4: tenant.payment_method_last4,
       paymentMethodExp: tenant.payment_method_exp,
+    },
+  });
+}));
+
+// ==========================================
+// MFA (TWO-FACTOR AUTHENTICATION) ENDPOINTS
+// ==========================================
+
+app.post('/api/auth/mfa/setup', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const user = await UserRepo.findUserById(req.user!.id);
+  if (!user) {
+    return res.status(404).json({ success: false, error: 'User not found.' });
+  }
+  const secret = speakeasy.generateSecret({ name: `NomadsChat (${user.email})` });
+  const qrCode = await QRCode.toDataURL(secret.otpauth_url!);
+  res.json({
+    success: true,
+    secret: secret.base32,
+    qrCode,
+  });
+}));
+
+app.post('/api/auth/mfa/verify-setup', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { secret, code } = req.body || {};
+  if (!secret || !code) {
+    return res.status(400).json({ success: false, error: 'Secret and verification code are required.' });
+  }
+
+  const isValid = speakeasy.totp.verify({
+    secret,
+    encoding: 'base32',
+    token: String(code).trim(),
+    window: 2,
+  });
+
+  if (!isValid) {
+    return res.status(400).json({ success: false, error: 'Invalid 6-digit verification code. Please check your authenticator app.' });
+  }
+
+  const backupCodes: string[] = [];
+  const hashedBackupCodes: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    const codeStr = crypto.randomBytes(4).toString('hex').toUpperCase();
+    backupCodes.push(codeStr);
+    const hashed = await bcrypt.hash(codeStr, 10);
+    hashedBackupCodes.push(hashed);
+  }
+
+  const encryptedSecret = encrypt(secret);
+  await UserRepo.updateUserMfa(req.user!.id, 1, encryptedSecret, JSON.stringify(hashedBackupCodes));
+
+  res.json({
+    success: true,
+    message: 'Two-factor authentication enabled successfully.',
+    backupCodes,
+  });
+}));
+
+app.post('/api/auth/mfa/disable', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { password } = req.body || {};
+  if (!password) {
+    return res.status(400).json({ success: false, error: 'Password is required to disable 2FA.' });
+  }
+
+  const user = await UserRepo.findUserById(req.user!.id);
+  if (!user) {
+    return res.status(404).json({ success: false, error: 'User not found.' });
+  }
+
+  let isValid = false;
+  if (user.password_hash.startsWith('$2')) {
+    isValid = await bcrypt.compare(password, user.password_hash);
+  } else {
+    isValid = user.password_hash === password;
+  }
+
+  if (!isValid) {
+    return res.status(400).json({ success: false, error: 'Incorrect password.' });
+  }
+
+  await UserRepo.updateUserMfa(user.id, 0, null, null);
+  res.json({ success: true, message: 'Two-factor authentication has been disabled.' });
+}));
+
+app.post('/api/auth/mfa/verify-login', authLimiter, asyncHandler(async (req, res) => {
+  const { mfaToken, userId, code } = req.body || {};
+  let targetUserId = userId;
+
+  if (mfaToken) {
+    try {
+      const decoded = jwt.verify(mfaToken, JWT_SECRET) as any;
+      if (decoded.mfaPending && decoded.userId) {
+        targetUserId = decoded.userId;
+      }
+    } catch {
+      return res.status(400).json({ success: false, error: 'Invalid or expired MFA session token.' });
+    }
+  }
+
+  if (!targetUserId || !code) {
+    return res.status(400).json({ success: false, error: 'User ID and MFA code are required.' });
+  }
+
+  const user = await UserRepo.findUserById(targetUserId);
+  if (!user || !user.mfa_enabled || !user.mfa_secret) {
+    return res.status(400).json({ success: false, error: 'MFA is not enabled for this user.' });
+  }
+
+  const decryptedSecret = decrypt(user.mfa_secret);
+  const isValidTotp = speakeasy.totp.verify({
+    secret: decryptedSecret,
+    encoding: 'base32',
+    token: String(code).trim(),
+    window: 2,
+  });
+
+  let authenticated = isValidTotp;
+
+  if (!authenticated && user.mfa_backup_codes_json) {
+    try {
+      const backupHashes: string[] = JSON.parse(user.mfa_backup_codes_json);
+      let matchedIndex = -1;
+      for (let i = 0; i < backupHashes.length; i++) {
+        const match = await bcrypt.compare(String(code).trim(), backupHashes[i]);
+        if (match) {
+          matchedIndex = i;
+          break;
+        }
+      }
+      if (matchedIndex !== -1) {
+        authenticated = true;
+        backupHashes.splice(matchedIndex, 1);
+        await UserRepo.updateMfaBackupCodes(user.id, JSON.stringify(backupHashes));
+      }
+    } catch (err) {
+      console.error('Backup code verify error:', err);
+    }
+  }
+
+  if (!authenticated) {
+    return res.status(401).json({ success: false, error: 'Invalid verification code or backup code.' });
+  }
+
+  let tenant = await UserRepo.findTenantById(user.tenant_id);
+  if (!tenant) {
+    const now = new Date().toISOString();
+    const trialEndsAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+    tenant = await UserRepo.createTenant({
+      id: user.tenant_id,
+      name: `${user.name}'s Workspace`,
+      owner_email: user.email,
+      plan: 'growth_pro',
+      created_at: now,
+      trial_started_at: now,
+      trial_ends_at: trialEndsAt,
+      payment_method_on_file: 0,
+    });
+  }
+
+  const token = jwt.sign(
+    { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+
+  res.json({
+    success: true,
+    token,
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      tenantId: user.tenant_id,
+      role: user.role,
+      emailVerified: Boolean(user.email_verified ?? 1),
+      mfaEnabled: Boolean(user.mfa_enabled),
+    },
+    tenant: {
+      id: tenant.id,
+      name: tenant.name,
+      ownerEmail: tenant.owner_email,
+      plan: tenant.plan,
+      createdAt: tenant.created_at,
     },
   });
 }));
@@ -729,15 +1013,22 @@ app.post('/api/auth/forgot-password', authLimiter, asyncHandler(async (req, res)
     });
   }
 
-  const resetToken = jwt.sign(
-    { userId: user.id, email: user.email, action: 'password_reset' },
-    JWT_SECRET,
-    { expiresIn: '15m' }
-  );
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour expiry
+  await UserRepo.setPasswordResetToken(user.id, resetToken, expiresAt);
+
+  const resetUrl = `${req.protocol}://${req.get('host')}/reset-password?token=${resetToken}&email=${encodeURIComponent(user.email)}`;
+  await sendTransactionalEmail({
+    to: user.email,
+    subject: 'Password Reset Request - NomadsChat',
+    html: `<p>Hello ${user.name},</p><p>You requested a password reset. Click the link below to reset your password (valid for 1 hour):</p><p><a href="${resetUrl}">${resetUrl}</a></p>`,
+    token: resetToken,
+    type: 'password_reset',
+  });
 
   res.json({
     success: true,
-    message: 'Password reset token generated.',
+    message: 'Password reset instructions sent to your email.',
     resetToken,
   });
 }));
@@ -745,28 +1036,32 @@ app.post('/api/auth/forgot-password', authLimiter, asyncHandler(async (req, res)
 app.post('/api/auth/reset-password', authLimiter, asyncHandler(async (req, res) => {
   const { email, resetToken, newPassword } = req.body || {};
 
-  if (!email || typeof email !== 'string' || !newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
-    return res.status(400).json({ success: false, error: 'Email and a new password (min 6 characters) are required' });
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+    return res.status(400).json({ success: false, error: 'A new password of at least 6 characters is required' });
   }
 
-  const user = await UserRepo.findUserByEmail(email.trim().toLowerCase());
-  if (!user) {
-    return res.status(400).json({ success: false, error: 'User account not found' });
-  }
-
+  let user = null;
   if (resetToken) {
-    try {
-      const decoded = jwt.verify(resetToken, JWT_SECRET) as any;
-      if (decoded.action !== 'password_reset' || decoded.userId !== user.id) {
-        return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
-      }
-    } catch (err) {
-      return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
+    user = await UserRepo.findUserByPasswordResetToken(resetToken);
+  }
+  if (!user && email) {
+    user = await UserRepo.findUserByEmail(email.trim().toLowerCase());
+  }
+
+  if (!user) {
+    return res.status(400).json({ success: false, error: 'Invalid or expired password reset token' });
+  }
+
+  // Check expiration (1 hour)
+  if (user.password_reset_expires_at) {
+    if (new Date(user.password_reset_expires_at) <= new Date()) {
+      return res.status(400).json({ success: false, error: 'Password reset token has expired (1 hour limit). Please request a new one.' });
     }
   }
 
   const passwordHash = await bcrypt.hash(newPassword, 10);
   await UserRepo.updateUserPassword(user.id, passwordHash);
+  await UserRepo.clearPasswordResetToken(user.id);
 
   res.json({
     success: true,
@@ -774,9 +1069,109 @@ app.post('/api/auth/reset-password', authLimiter, asyncHandler(async (req, res) 
   });
 }));
 
+app.post('/api/auth/verify-email', asyncHandler(async (req, res) => {
+  const { token } = req.body || {};
+  if (!token) {
+    return res.status(400).json({ success: false, error: 'Verification token is required.' });
+  }
+
+  const user = await UserRepo.findUserByVerificationToken(token);
+  if (!user) {
+    return res.status(400).json({ success: false, error: 'Invalid or expired email verification token.' });
+  }
+
+  await UserRepo.verifyUserEmail(user.id);
+  res.json({ success: true, message: 'Email address verified successfully!' });
+}));
+
+app.get('/api/auth/verify-email', asyncHandler(async (req, res) => {
+  const token = req.query.token ? String(req.query.token) : '';
+  if (!token) {
+    return res.status(400).send('Verification token is required.');
+  }
+
+  const user = await UserRepo.findUserByVerificationToken(token);
+  if (!user) {
+    return res.status(400).send('Invalid or expired email verification token.');
+  }
+
+  await UserRepo.verifyUserEmail(user.id);
+  res.redirect('/?verified=true');
+}));
+
+app.post('/api/auth/resend-verification', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const userId = req.user!.id;
+  const user = await UserRepo.findUserById(userId);
+  if (!user) {
+    return res.status(404).json({ success: false, error: 'User not found.' });
+  }
+
+  const verificationToken = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  await UserRepo.setEmailVerificationToken(userId, verificationToken, expiresAt);
+
+  const verifyUrl = `${req.protocol}://${req.get('host')}/api/auth/verify-email?token=${verificationToken}`;
+  await sendTransactionalEmail({
+    to: user.email,
+    subject: 'Verify your NomadsChat workspace email',
+    html: `<p>Hello ${user.name},</p><p>Please verify your email address by clicking the link below:</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`,
+    token: verificationToken,
+    type: 'verification',
+  });
+
+  res.json({ success: true, message: 'Verification email sent successfully.' });
+}));
+
+app.post('/api/auth/change-password', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword || newPassword.length < 6) {
+    return res.status(400).json({ success: false, error: 'Current password and new password (min 6 characters) are required.' });
+  }
+
+  const user = await UserRepo.findUserById(req.user!.id);
+  if (!user) {
+    return res.status(404).json({ success: false, error: 'User not found.' });
+  }
+
+  let isValid = false;
+  if (user.password_hash.startsWith('$2')) {
+    isValid = await bcrypt.compare(currentPassword, user.password_hash);
+  } else {
+    isValid = user.password_hash === currentPassword;
+  }
+
+  if (!isValid) {
+    return res.status(400).json({ success: false, error: 'Incorrect current password.' });
+  }
+
+  const newHash = await bcrypt.hash(newPassword, 10);
+  await UserRepo.updateUserPassword(user.id, newHash);
+  res.json({ success: true, message: 'Password changed successfully.' });
+}));
+
+app.post('/api/auth/update-profile', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { name, avatarUrl } = req.body || {};
+  if (!name || typeof name !== 'string') {
+    return res.status(400).json({ success: false, error: 'Name is required.' });
+  }
+
+  await UserRepo.updateUserProfile(req.user!.id, name.trim(), avatarUrl);
+  res.json({ success: true, message: 'Profile updated successfully.' });
+}));
+
+app.get('/api/tenant/transactional-emails', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const db = getDb();
+  const resEmails = await db.execute({
+    sql: `SELECT * FROM transactional_emails ORDER BY created_at DESC LIMIT 50;`,
+    args: [],
+  });
+  res.json({ success: true, emails: resEmails.rows });
+}));
+
 app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const user = req.user!;
-  let tenantRow = await UserRepo.findTenantById(user.tenantId);
+  const authUser = req.user!;
+  const userRow = await UserRepo.findUserById(authUser.id);
+  let tenantRow = await UserRepo.findTenantById(authUser.tenantId);
 
   // Auto-downgrade check if trial expired and no card on file
   if (tenantRow) {
@@ -794,7 +1189,16 @@ app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedReque
 
   res.json({
     success: true,
-    user,
+    user: {
+      id: authUser.id,
+      email: authUser.email,
+      name: userRow ? userRow.name : authUser.name,
+      tenantId: authUser.tenantId,
+      role: authUser.role,
+      emailVerified: userRow ? Boolean((userRow as any).email_verified ?? 1) : true,
+      avatarUrl: userRow ? (userRow as any).avatar_url : undefined,
+      mfaEnabled: userRow ? Boolean(userRow.mfa_enabled) : false,
+    },
     tenant: tenantRow ? {
       id: tenantRow.id,
       name: tenantRow.name,
@@ -807,6 +1211,8 @@ app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedReque
       paymentMethodBrand: tenantRow.payment_method_brand,
       paymentMethodLast4: tenantRow.payment_method_last4,
       paymentMethodExp: tenantRow.payment_method_exp,
+      isDisabled: Boolean(tenantRow.is_disabled),
+      disabledReason: tenantRow.disabled_reason,
       byokConfig: {
         hasCustomKey: Boolean(tenantRow.byok_api_key),
         provider: tenantRow.byok_provider || 'gemini',
@@ -1048,6 +1454,220 @@ app.post('/api/admin/users/:userId/reset-password', requireAdminAuth, asyncHandl
   }
 
   res.json({ success: true, message: 'User password reset and hash updated securely.' });
+}));
+
+// ==========================================
+// TENANT BILLING INTERVENTION ENDPOINTS (SuperAdmin only)
+// ==========================================
+app.post('/api/admin/tenants/:tenantId/billing/update-plan', requireAdminAuth, requireSuperAdmin, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { tenantId } = req.params;
+  const { newPlan, reason } = req.body || {};
+  const admin = req.admin!;
+
+  if (!newPlan || typeof newPlan !== 'string') {
+    return res.status(400).json({ success: false, error: 'New plan tier is required.' });
+  }
+  if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'A short reason text is required for billing interventions.' });
+  }
+
+  const db = getDb();
+  const tRes = await db.execute({ sql: `SELECT * FROM tenants WHERE id = ? LIMIT 1;`, args: [tenantId] });
+  if (tRes.rows.length === 0) {
+    return res.status(404).json({ success: false, error: 'Tenant workspace not found.' });
+  }
+  const oldPlan = String(tRes.rows[0].plan || 'Pro');
+
+  await db.execute({
+    sql: `UPDATE tenants SET plan = ? WHERE id = ?;`,
+    args: [newPlan, tenantId],
+  });
+
+  await AdminAuditRepo.logAction({
+    adminId: admin.id,
+    adminEmail: admin.email,
+    action: 'ADMIN_TENANT_PLAN_CHANGE',
+    targetResource: 'TENANT_BILLING',
+    targetId: tenantId,
+    ipAddress: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || ''),
+    userAgent: String(req.headers['user-agent'] || ''),
+    status: 'success',
+    detailsJson: JSON.stringify({ tenantId, oldPlan, newPlan, reason: reason.trim() }),
+  });
+
+  res.json({
+    success: true,
+    message: `Successfully updated tenant plan from ${oldPlan} to ${newPlan}.`,
+  });
+}));
+
+app.post('/api/admin/tenants/:tenantId/billing/apply-credit', requireAdminAuth, requireSuperAdmin, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { tenantId } = req.params;
+  const { amount, reason } = req.body || {};
+  const admin = req.admin!;
+
+  const creditAmount = Number(amount);
+  if (isNaN(creditAmount) || creditAmount <= 0) {
+    return res.status(400).json({ success: false, error: 'Valid positive credit amount is required.' });
+  }
+  if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'A short reason text is required for credit adjustments.' });
+  }
+
+  const db = getDb();
+  const tRes = await db.execute({ sql: `SELECT * FROM tenants WHERE id = ? LIMIT 1;`, args: [tenantId] });
+  if (tRes.rows.length === 0) {
+    return res.status(404).json({ success: false, error: 'Tenant workspace not found.' });
+  }
+
+  await db.execute({
+    sql: `UPDATE tenants SET credit_balance = COALESCE(credit_balance, 0) + ? WHERE id = ?;`,
+    args: [creditAmount, tenantId],
+  });
+
+  await AdminAuditRepo.logAction({
+    adminId: admin.id,
+    adminEmail: admin.email,
+    action: 'ADMIN_TENANT_APPLY_CREDIT',
+    targetResource: 'TENANT_BILLING',
+    targetId: tenantId,
+    ipAddress: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || ''),
+    userAgent: String(req.headers['user-agent'] || ''),
+    status: 'success',
+    detailsJson: JSON.stringify({ tenantId, creditAmount, reason: reason.trim() }),
+  });
+
+  res.json({
+    success: true,
+    message: `Successfully applied $${creditAmount.toFixed(2)} account credit.`,
+  });
+}));
+
+app.post('/api/admin/tenants/:tenantId/billing/retry-payment', requireAdminAuth, requireSuperAdmin, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { tenantId } = req.params;
+  const { reason } = req.body || {};
+  const admin = req.admin!;
+
+  if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'A short reason text is required for payment retry interventions.' });
+  }
+
+  const db = getDb();
+  const tRes = await db.execute({ sql: `SELECT * FROM tenants WHERE id = ? LIMIT 1;`, args: [tenantId] });
+  if (tRes.rows.length === 0) {
+    return res.status(404).json({ success: false, error: 'Tenant workspace not found.' });
+  }
+
+  await db.execute({
+    sql: `UPDATE tenants SET payment_status = 'active', failed_payments_count = 0, retry_attempts = COALESCE(retry_attempts, 0) + 1, last_payment_error = NULL, dunning_since = NULL WHERE id = ?;`,
+    args: [tenantId],
+  });
+
+  await AdminAuditRepo.logAction({
+    adminId: admin.id,
+    adminEmail: admin.email,
+    action: 'ADMIN_TENANT_RETRY_PAYMENT',
+    targetResource: 'TENANT_BILLING',
+    targetId: tenantId,
+    ipAddress: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || ''),
+    userAgent: String(req.headers['user-agent'] || ''),
+    status: 'success',
+    detailsJson: JSON.stringify({ tenantId, reason: reason.trim() }),
+  });
+
+  res.json({
+    success: true,
+    message: 'Successfully triggered payment retry and cleared dunning status.',
+  });
+}));
+
+// ==========================================
+// ADMIN TENANT & CHATBOT DISABLE / ENABLE ENDPOINTS (SuperAdmin Only)
+// ==========================================
+app.post('/api/admin/tenants/:tenantId/disable', requireAdminAuth, requireSuperAdmin, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const admin = req.admin!;
+  const tenantId = req.params.tenantId;
+  const { is_disabled, reason } = req.body || {};
+
+  if (typeof is_disabled !== 'boolean') {
+    return res.status(400).json({ success: false, error: 'is_disabled boolean is required.' });
+  }
+
+  if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'A short reason text is required for this action.' });
+  }
+
+  const db = getDb();
+  const tRes = await db.execute({ sql: `SELECT * FROM tenants WHERE id = ? LIMIT 1;`, args: [tenantId] });
+  if (tRes.rows.length === 0) {
+    return res.status(404).json({ success: false, error: 'Tenant workspace not found.' });
+  }
+
+  await db.execute({
+    sql: `UPDATE tenants SET is_disabled = ?, disabled_reason = ? WHERE id = ?;`,
+    args: [is_disabled ? 1 : 0, is_disabled ? reason.trim() : null, tenantId],
+  });
+
+  const actionName = is_disabled ? 'TENANT_DISABLED' : 'TENANT_ENABLED';
+  await AdminAuditRepo.logAction({
+    adminId: admin.id,
+    adminEmail: admin.email,
+    action: actionName,
+    targetResource: 'TENANT',
+    targetId: tenantId,
+    ipAddress: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || ''),
+    userAgent: String(req.headers['user-agent'] || ''),
+    status: 'success',
+    detailsJson: JSON.stringify({ tenantId, reason: reason.trim(), isDisabled: is_disabled }),
+  });
+
+  res.json({
+    success: true,
+    message: is_disabled ? 'Workspace successfully disabled.' : 'Workspace successfully re-enabled.',
+  });
+}));
+
+app.post('/api/admin/chatbots/:id/disable', requireAdminAuth, requireSuperAdmin, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const admin = req.admin!;
+  const chatbotId = req.params.id;
+  const { is_disabled, reason } = req.body || {};
+
+  if (typeof is_disabled !== 'boolean') {
+    return res.status(400).json({ success: false, error: 'is_disabled boolean is required.' });
+  }
+
+  if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'A short reason text is required for this action.' });
+  }
+
+  const db = getDb();
+  const bRes = await db.execute({ sql: `SELECT * FROM chatbots WHERE id = ? LIMIT 1;`, args: [chatbotId] });
+  if (bRes.rows.length === 0) {
+    return res.status(404).json({ success: false, error: 'Chatbot not found.' });
+  }
+
+  await db.execute({
+    sql: `UPDATE chatbots SET is_disabled = ?, disabled_reason = ? WHERE id = ?;`,
+    args: [is_disabled ? 1 : 0, is_disabled ? reason.trim() : null, chatbotId],
+  });
+
+  const actionName = is_disabled ? 'CHATBOT_DISABLED' : 'CHATBOT_ENABLED';
+  await AdminAuditRepo.logAction({
+    adminId: admin.id,
+    adminEmail: admin.email,
+    action: actionName,
+    targetResource: 'CHATBOT',
+    targetId: chatbotId,
+    ipAddress: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || ''),
+    userAgent: String(req.headers['user-agent'] || ''),
+    status: 'success',
+    detailsJson: JSON.stringify({ chatbotId, reason: reason.trim(), isDisabled: is_disabled }),
+  });
+
+  res.json({
+    success: true,
+    message: is_disabled ? 'Chatbot successfully disabled.' : 'Chatbot successfully re-enabled.',
+  });
 }));
 
 // ==========================================
@@ -1711,9 +2331,135 @@ app.post('/api/admin/alerts/create', requireAdminAuth, asyncHandler(async (req: 
 }));
 
 // ==========================================
+// CONTENT MODERATION SERVICE & ADMIN ENDPOINTS
+// ==========================================
+import { ModerationService } from './src/services/moderationService';
+async function checkAndFlagContent(tenantId: string, resourceId: string, resourceTitle: string, itemType: 'chatbot_instructions' | 'knowledge_base', content: string) {
+  return ModerationService.checkAndFlagContent(tenantId, resourceId, resourceTitle, itemType, content);
+}
+
+app.get('/api/admin/moderation', requireAdminAuth, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const db = getDb();
+  const itemsRes = await db.execute(`SELECT * FROM moderation_queue ORDER BY created_at DESC LIMIT 200;`);
+  const blRes = await db.execute(`SELECT * FROM moderation_blocklist ORDER BY created_at DESC;`);
+
+  res.json({
+    success: true,
+    items: itemsRes.rows,
+    blocklist: blRes.rows,
+  });
+}));
+
+app.post('/api/admin/moderation/blocklist', requireAdminAuth, requireSuperAdmin, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const { action, pattern, category, id } = req.body || {};
+  const admin = req.admin!;
+  const db = getDb();
+
+  if (action === 'add') {
+    if (!pattern || typeof pattern !== 'string' || pattern.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Pattern is required.' });
+    }
+    const cleanPattern = pattern.trim().toLowerCase();
+    const newId = 'bl_' + Date.now();
+    const now = new Date().toISOString();
+
+    await db.execute({
+      sql: `INSERT OR IGNORE INTO moderation_blocklist (id, pattern, category, created_at, admin_email) VALUES (?, ?, ?, ?, ?);`,
+      args: [newId, cleanPattern, category || 'general', now, admin.email],
+    });
+
+    await AdminAuditRepo.logAction({
+      adminId: admin.id,
+      adminEmail: admin.email,
+      action: 'MODERATION_BLOCKLIST_ADD',
+      targetResource: 'MODERATION_BLOCKLIST',
+      targetId: newId,
+      ipAddress: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || ''),
+      userAgent: String(req.headers['user-agent'] || ''),
+      status: 'success',
+      detailsJson: JSON.stringify({ pattern: cleanPattern, category }),
+    });
+
+    return res.json({ success: true, message: 'Blocklist pattern added successfully.' });
+  } else if (action === 'delete') {
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Pattern ID is required.' });
+    }
+    await db.execute({ sql: `DELETE FROM moderation_blocklist WHERE id = ?;`, args: [id] });
+
+    await AdminAuditRepo.logAction({
+      adminId: admin.id,
+      adminEmail: admin.email,
+      action: 'MODERATION_BLOCKLIST_DELETE',
+      targetResource: 'MODERATION_BLOCKLIST',
+      targetId: id,
+      ipAddress: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || ''),
+      userAgent: String(req.headers['user-agent'] || ''),
+      status: 'success',
+      detailsJson: JSON.stringify({ patternId: id }),
+    });
+
+    return res.json({ success: true, message: 'Blocklist pattern deleted successfully.' });
+  }
+
+  res.status(400).json({ success: false, error: 'Invalid blocklist action.' });
+}));
+
+app.post('/api/admin/moderation/:id/review', requireAdminAuth, requireSuperAdmin, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
+  const modId = req.params.id;
+  const { status, action: modAction } = req.body || {};
+  const admin = req.admin!;
+
+  if (!['reviewed_ok', 'action_taken', 'dismissed'].includes(status)) {
+    return res.status(400).json({ success: false, error: 'Invalid moderation status.' });
+  }
+
+  const db = getDb();
+  const mRes = await db.execute({ sql: `SELECT * FROM moderation_queue WHERE id = ? LIMIT 1;`, args: [modId] });
+  if (mRes.rows.length === 0) {
+    return res.status(404).json({ success: false, error: 'Moderation queue item not found.' });
+  }
+
+  const item = mRes.rows[0];
+  const now = new Date().toISOString();
+  let actionDetails = '';
+
+  if (modAction === 'disable_chatbot' && (item.item_type === 'chatbot_instructions' || item.item_type === 'knowledge_base')) {
+    await db.execute({
+      sql: `UPDATE chatbots SET status = 'disabled', updated_at = ? WHERE id = ?;`,
+      args: [now, item.resource_id],
+    });
+    actionDetails = 'Chatbot disabled via content moderation review.';
+  } else if (modAction === 'dismiss') {
+    actionDetails = 'Item dismissed by moderation review.';
+  } else {
+    actionDetails = 'Marked reviewed and approved.';
+  }
+
+  await db.execute({
+    sql: `UPDATE moderation_queue SET status = ?, reviewed_by_admin_email = ?, reviewed_at = ?, action_details = ? WHERE id = ?;`,
+    args: [status, admin.email, now, actionDetails, modId],
+  });
+
+  await AdminAuditRepo.logAction({
+    adminId: admin.id,
+    adminEmail: admin.email,
+    action: 'MODERATION_ITEM_REVIEW',
+    targetResource: 'MODERATION_QUEUE',
+    targetId: modId,
+    ipAddress: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || ''),
+    userAgent: String(req.headers['user-agent'] || ''),
+    status: 'success',
+    detailsJson: JSON.stringify({ modId, itemType: item.item_type, resourceId: item.resource_id, status, modAction, actionDetails }),
+  });
+
+  res.json({ success: true, message: `Moderation item successfully updated to ${status}.` });
+}));
+
+// ==========================================
 // CHATBOT ENDPOINTS
 // ==========================================
-app.get('/api/chatbots', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/chatbots', requireAuth, requirePermission('view_inbox'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbots = await ChatbotRepo.findByTenant(req.user!.tenantId);
   res.json({ success: true, chatbots });
 }));
@@ -1782,7 +2528,7 @@ app.get('/api/chatbots/:id/public', asyncHandler(async (req, res) => {
 }));
 
 // Security configuration endpoint for dashboard management
-app.get('/api/chatbots/:id/security', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/chatbots/:id/security', requireAuth, requirePermission('edit_chatbot'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const bot = await ChatbotRepo.findById(req.params.id, req.user!.tenantId);
   if (!bot) {
     return res.status(404).json({ success: false, error: 'Chatbot not found' });
@@ -1805,7 +2551,7 @@ app.get('/api/chatbots/:id/security', requireAuth, asyncHandler(async (req: Auth
   });
 }));
 
-app.put('/api/chatbots/:id/security', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.put('/api/chatbots/:id/security', requireAuth, requirePermission('edit_chatbot'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { domainLockEnabled, allowedDomains, regenerateSecretKey } = req.body || {};
   const bot = await ChatbotRepo.findById(req.params.id, req.user!.tenantId);
   if (!bot) {
@@ -1852,7 +2598,7 @@ app.put('/api/chatbots/:id/security', requireAuth, asyncHandler(async (req: Auth
 }));
 
 // Test Domain Authorization Diagnostic Tool
-app.post('/api/chatbots/:id/security/test-domain', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/chatbots/:id/security/test-domain', requireAuth, requirePermission('edit_chatbot'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { testDomain } = req.body || {};
   if (!testDomain || typeof testDomain !== 'string') {
     return res.status(400).json({ success: false, error: 'testDomain string is required' });
@@ -1896,7 +2642,7 @@ app.post('/api/chatbots/:id/security/test-domain', requireAuth, asyncHandler(asy
   });
 }));
 
-app.post('/api/chatbots', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/chatbots', requireAuth, requirePermission('edit_chatbot'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { name, description, websiteUrl, allowedDomains, domainLockEnabled, systemInstruction, tone, primaryColor, avatar, greetingMessage, model, fallbackMessage, collectLeadEmail, leadTitle } = req.body || {};
 
   if (!name || typeof name !== 'string' || name.trim().length === 0 || name.length > 100) {
@@ -1947,19 +2693,44 @@ app.post('/api/chatbots', requireAuth, asyncHandler(async (req: AuthenticatedReq
     updatedAt: now,
   });
 
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'chatbot_created',
+    targetType: 'chatbot',
+    targetId: newBot.id,
+    metadata: { name: newBot.name },
+  });
+
   // Automatically fetch and ingest knowledge content from the provided website URL
   if (cleanUrl) {
     try {
-      await KnowledgeService.scrapeAndIngestUrl(newBot.id, req.user!.tenantId, cleanUrl);
+      const scrapedSource = await KnowledgeService.scrapeAndIngestUrl(req.user!.tenantId, cleanUrl, [newBot.id]);
+      if (scrapedSource) {
+        await checkAndFlagContent(req.user!.tenantId, scrapedSource.id, scrapedSource.title, 'knowledge_base', scrapedSource.content);
+      }
     } catch (err: any) {
       console.warn(`[WARN] Auto-scrape on bot creation (${newBot.id}):`, err.message);
     }
   }
 
+  await checkAndFlagContent(req.user!.tenantId, newBot.id, newBot.name, 'chatbot_instructions', newBot.systemInstruction);
+
+  // Record initial version
+  try {
+    await ChatbotVersionRepo.createVersion(
+      newBot.id,
+      newBot,
+      req.user!.email || (req.user as any)!.name || 'User'
+    );
+  } catch (vErr) {
+    console.warn('[WARN] Failed to create initial version for chatbot:', vErr);
+  }
+
   res.json({ success: true, chatbot: newBot });
 }));
 
-app.put('/api/chatbots/:id', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.put('/api/chatbots/:id', requireAuth, requirePermission('edit_chatbot'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const body = req.body || {};
   const allowedUpdates: Partial<Chatbot> = {};
 
@@ -1982,51 +2753,257 @@ app.put('/api/chatbots/:id', requireAuth, asyncHandler(async (req: Authenticated
   if (typeof body.status === 'string' && ['active', 'paused', 'archived'].includes(body.status)) allowedUpdates.status = body.status as any;
 
   const existingBot = await ChatbotRepo.findById(req.params.id, req.user!.tenantId);
+  if (!existingBot) {
+    return res.status(404).json({ success: false, error: 'Chatbot not found' });
+  }
+
+  // Requirement 2: On every save of a chatbot's config, insert a new version row before applying changes (keep last 20)
+  try {
+    await ChatbotVersionRepo.createVersion(
+      existingBot.id,
+      existingBot,
+      req.user!.email || (req.user as any)!.name || 'User'
+    );
+  } catch (vErr) {
+    console.warn('[WARN] Failed to snapshot chatbot version before update:', vErr);
+  }
+
   const updated = await ChatbotRepo.update(req.params.id, req.user!.tenantId, allowedUpdates);
   if (!updated) {
     return res.status(404).json({ success: false, error: 'Chatbot not found' });
   }
 
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'chatbot_edited',
+    targetType: 'chatbot',
+    targetId: updated.id,
+    metadata: { name: updated.name, updates: Object.keys(allowedUpdates) },
+  });
+
+  if (allowedUpdates.systemInstruction) {
+    await checkAndFlagContent(req.user!.tenantId, updated.id, updated.name, 'chatbot_instructions', allowedUpdates.systemInstruction);
+  }
+
   // If websiteUrl was provided or changed, auto-scrape and index in background
   if (allowedUpdates.websiteUrl && (allowedUpdates.websiteUrl !== existingBot?.websiteUrl)) {
-    KnowledgeService.scrapeAndIngestUrl(updated.id, req.user!.tenantId, allowedUpdates.websiteUrl)
+    KnowledgeService.scrapeAndIngestUrl(req.user!.tenantId, allowedUpdates.websiteUrl, [updated.id])
+      .then(async (scraped) => {
+        if (scraped) {
+          await checkAndFlagContent(req.user!.tenantId, scraped.id, scraped.title, 'knowledge_base', scraped.content);
+        }
+      })
       .catch(err => console.warn(`[WARN] Auto-scrape on bot update (${updated.id}):`, err.message));
   }
 
   res.json({ success: true, chatbot: updated });
 }));
 
-app.delete('/api/chatbots/:id', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+// ==========================================
+// CHATBOT VERSION HISTORY & RESTORE ENDPOINTS
+// ==========================================
+app.get('/api/chatbots/:id/versions', requireAuth, requirePermission('view_inbox'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const bot = await ChatbotRepo.findById(req.params.id, req.user!.tenantId);
+  if (!bot) {
+    return res.status(404).json({ success: false, error: 'Chatbot not found' });
+  }
+  const versions = await ChatbotVersionRepo.listByChatbot(req.params.id);
+  res.json({ success: true, versions });
+}));
+
+app.post('/api/chatbots/:id/versions/:versionId/restore', requireAuth, requirePermission('edit_chatbot'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const authorName = req.user!.email || (req.user as any)!.name || 'User';
+  const restored = await ChatbotVersionRepo.restoreVersion(
+    req.params.id,
+    req.user!.tenantId,
+    req.params.versionId,
+    authorName
+  );
+  if (!restored) {
+    return res.status(404).json({ success: false, error: 'Failed to restore version or version not found' });
+  }
+
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'chatbot_restored_version',
+    targetType: 'chatbot',
+    targetId: restored.id,
+    metadata: { name: restored.name, versionId: req.params.versionId },
+  });
+
+  if (restored.systemInstruction) {
+    await checkAndFlagContent(req.user!.tenantId, restored.id, restored.name, 'chatbot_instructions', restored.systemInstruction);
+  }
+
+  res.json({ success: true, chatbot: restored, message: 'Chatbot version restored successfully' });
+}));
+
+app.delete('/api/chatbots/:id', requireAuth, requirePermission('delete_chatbot'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const deleted = await ChatbotRepo.delete(req.params.id, req.user!.tenantId);
   if (!deleted) {
     return res.status(404).json({ success: false, error: 'Chatbot not found' });
   }
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'chatbot_deleted',
+    targetType: 'chatbot',
+    targetId: req.params.id,
+  });
   res.json({ success: true, id: req.params.id });
 }));
 
 // ==========================================
-// KNOWLEDGE BASE ENDPOINTS
+// KNOWLEDGE BASE ENDPOINTS (Tenant-level & Chatbot-level)
 // ==========================================
-app.get('/api/chatbots/:id/knowledge', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/knowledge', requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const sources = await KnowledgeRepo.findSourcesByTenant(req.user!.tenantId);
+  res.json({ success: true, knowledgeSources: sources });
+}));
+
+app.post('/api/knowledge', express.json({ limit: '1mb' }), requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { type, title, content, chatbotIds } = req.body || {};
+  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'Knowledge content is required' });
+  }
+  const targetBotIds = Array.isArray(chatbotIds) ? chatbotIds : [];
+
+  try {
+    const source = await KnowledgeService.ingestTextDocument(
+      req.user!.tenantId,
+      title || 'Custom Knowledge Document',
+      content,
+      type === 'faq' ? 'faq' : 'text',
+      targetBotIds
+    );
+    await checkAndFlagContent(req.user!.tenantId, source.id, source.title, 'knowledge_base', source.content);
+    res.json({ success: true, knowledgeSource: source });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message || 'Failed to ingest knowledge' });
+  }
+}));
+
+app.post('/api/knowledge/scrape-url', requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { url, chatbotIds } = req.body || {};
+  if (!url || typeof url !== 'string' || url.length > 2000) {
+    return res.status(400).json({ success: false, error: 'Valid URL is required' });
+  }
+  const targetBotIds = Array.isArray(chatbotIds) ? chatbotIds : [];
+
+  try {
+    const { JobService } = await import('./src/services/jobService');
+    await JobService.enqueue({
+      tenantId: req.user!.tenantId,
+      type: 'scrape_url',
+      payload: { url, chatbotIds: targetBotIds },
+      maxAttempts: 1
+    });
+    
+    // Return a dummy pending source for the UI
+    const pendingSource = {
+      id: 'pending_' + Date.now(),
+      chatbotIds: targetBotIds,
+      tenantId: req.user!.tenantId,
+      title: url,
+      type: 'url',
+      status: 'pending',
+      content: 'Crawling in progress...',
+      chunkCount: 0,
+      updatedAt: new Date().toISOString()
+    };
+    res.json({ success: true, knowledgeSource: pendingSource });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message || 'Failed to enqueue target URL crawl job' });
+  }
+}));
+
+app.post('/api/knowledge/ingest-raw-html', express.json({ limit: '10mb' }), requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { html, url, title, chatbotIds } = req.body || {};
+  if (!html || typeof html !== 'string' || html.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'HTML markup content is required' });
+  }
+  const targetBotIds = Array.isArray(chatbotIds) ? chatbotIds : [];
+
+  try {
+    const source = await KnowledgeService.ingestRawHtml(
+      req.user!.tenantId,
+      html,
+      typeof url === 'string' ? url : undefined,
+      typeof title === 'string' ? title : undefined,
+      targetBotIds
+    );
+    if (source) {
+      await checkAndFlagContent(req.user!.tenantId, source.id, source.title, 'knowledge_base', source.content);
+    }
+    res.json({ success: true, knowledgeSource: source });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message || 'Failed to ingest HTML content' });
+  }
+}));
+
+app.put('/api/knowledge/:sourceId/links', express.json({ limit: '1mb' }), requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { chatbotIds } = req.body || {};
+  if (!Array.isArray(chatbotIds)) {
+    return res.status(400).json({ success: false, error: 'chatbotIds array is required' });
+  }
+  try {
+    await KnowledgeRepo.updateSourceLinks(req.params.sourceId, req.user!.tenantId, chatbotIds);
+    const updated = await KnowledgeRepo.findSourceById(req.params.sourceId, req.user!.tenantId);
+    res.json({ success: true, knowledgeSource: updated });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message || 'Failed to update knowledge links' });
+  }
+}));
+
+app.delete('/api/knowledge/:sourceId', requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const deleted = await KnowledgeRepo.deleteSource(req.params.sourceId, req.user!.tenantId);
+  if (!deleted) {
+    return res.status(404).json({ success: false, error: 'Knowledge source not found' });
+  }
+  res.json({ success: true, id: req.params.sourceId });
+}));
+
+// Backward compatibility chatbot-level endpoints
+app.get('/api/chatbots/:id/knowledge', requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const sources = await KnowledgeRepo.findSourcesByBot(req.params.id, req.user!.tenantId);
   res.json({ success: true, knowledgeSources: sources });
 }));
 
-app.post('/api/chatbots/:id/scrape-url', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/chatbots/:id/scrape-url', requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { url } = req.body || {};
   if (!url || typeof url !== 'string' || url.length > 2000) {
     return res.status(400).json({ success: false, error: 'Valid URL is required' });
   }
 
   try {
-    const source = await KnowledgeService.scrapeAndIngestUrl(req.params.id, req.user!.tenantId, url);
-    res.json({ success: true, knowledgeSource: source });
+    const { JobService } = await import('./src/services/jobService');
+    await JobService.enqueue({
+      tenantId: req.user!.tenantId,
+      type: 'scrape_url',
+      payload: { url, chatbotIds: [req.params.id] },
+      maxAttempts: 1
+    });
+    
+    const pendingSource = {
+      id: 'pending_' + Date.now(),
+      chatbotIds: [req.params.id],
+      tenantId: req.user!.tenantId,
+      title: url,
+      type: 'url',
+      status: 'pending',
+      content: 'Crawling in progress...',
+      chunkCount: 0,
+      updatedAt: new Date().toISOString()
+    };
+    res.json({ success: true, knowledgeSource: pendingSource });
   } catch (err: any) {
-    res.status(400).json({ success: false, error: err.message || 'Failed to crawl target URL' });
+    res.status(400).json({ success: false, error: err.message || 'Failed to enqueue target URL crawl job' });
   }
 }));
 
-app.post('/api/chatbots/:id/ingest-raw-html', express.json({ limit: '10mb' }), requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/chatbots/:id/ingest-raw-html', express.json({ limit: '10mb' }), requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { html, url, title } = req.body || {};
   if (!html || typeof html !== 'string' || html.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'HTML markup content is required' });
@@ -2034,11 +3011,11 @@ app.post('/api/chatbots/:id/ingest-raw-html', express.json({ limit: '10mb' }), r
 
   try {
     const source = await KnowledgeService.ingestRawHtml(
-      req.params.id,
       req.user!.tenantId,
       html,
       typeof url === 'string' ? url : undefined,
-      typeof title === 'string' ? title : undefined
+      typeof title === 'string' ? title : undefined,
+      [req.params.id]
     );
     res.json({ success: true, knowledgeSource: source });
   } catch (err: any) {
@@ -2046,7 +3023,7 @@ app.post('/api/chatbots/:id/ingest-raw-html', express.json({ limit: '10mb' }), r
   }
 }));
 
-app.post('/api/chatbots/:id/knowledge', express.json({ limit: '1mb' }), requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/chatbots/:id/knowledge', express.json({ limit: '1mb' }), requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { type, title, content } = req.body || {};
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'Knowledge content is required' });
@@ -2054,11 +3031,11 @@ app.post('/api/chatbots/:id/knowledge', express.json({ limit: '1mb' }), requireA
 
   try {
     const source = await KnowledgeService.ingestTextDocument(
-      req.params.id,
       req.user!.tenantId,
       title || 'Custom Knowledge Document',
       content,
-      type === 'faq' ? 'faq' : 'text'
+      type === 'faq' ? 'faq' : 'text',
+      [req.params.id]
     );
     res.json({ success: true, knowledgeSource: source });
   } catch (err: any) {
@@ -2066,7 +3043,7 @@ app.post('/api/chatbots/:id/knowledge', express.json({ limit: '1mb' }), requireA
   }
 }));
 
-app.delete('/api/chatbots/:id/knowledge/:sourceId', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.delete('/api/chatbots/:id/knowledge/:sourceId', requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const deleted = await KnowledgeRepo.deleteSource(req.params.sourceId, req.user!.tenantId);
   if (!deleted) {
     return res.status(404).json({ success: false, error: 'Knowledge source not found' });
@@ -2133,7 +3110,7 @@ app.post('/api/chatbots/:id/auto-detect-host', autoDetectLimiter, asyncHandler(a
 // PUBLIC AI CHAT ENDPOINT
 // ==========================================
 app.post('/api/chatbots/:id/chat', chatLimiter, asyncHandler(async (req, res) => {
-  const { message, conversationId, visitorInfo } = req.body || {};
+  const { message, conversationId, visitorInfo, isPlayground, isTest } = req.body || {};
 
   if (!message || typeof message !== 'string' || message.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'Message content is required' });
@@ -2146,6 +3123,26 @@ app.post('/api/chatbots/:id/chat', chatLimiter, asyncHandler(async (req, res) =>
   const bot = await ChatbotRepo.findById(req.params.id);
   if (!bot || bot.status === 'archived') {
     return res.status(404).json({ success: false, error: 'Chatbot not found or inactive' });
+  }
+
+  if (bot.isDisabled) {
+    return res.json({
+      success: true,
+      reply: 'This chatbot is temporarily unavailable.',
+      disabled: true,
+      reason: bot.disabledReason || 'Chatbot suspended by administration.',
+    });
+  }
+
+  const tenantRes = await getDb().execute({ sql: `SELECT is_disabled, disabled_reason FROM tenants WHERE id = ? LIMIT 1;`, args: [bot.tenantId] });
+  if (tenantRes.rows.length > 0 && Number(tenantRes.rows[0].is_disabled) === 1) {
+    const reason = tenantRes.rows[0].disabled_reason || 'Workspace suspended by administration.';
+    return res.json({
+      success: true,
+      reply: 'This chatbot is temporarily unavailable.',
+      disabled: true,
+      reason,
+    });
   }
 
   // Server-side Domain Authorization Validation
@@ -2165,7 +3162,8 @@ app.post('/api/chatbots/:id/chat', chatLimiter, asyncHandler(async (req, res) =>
       req.params.id,
       message,
       conversationId,
-      visitorInfo
+      visitorInfo,
+      Boolean(isPlayground || isTest)
     );
 
     res.json({
@@ -2186,13 +3184,13 @@ app.post('/api/chatbots/:id/chat', chatLimiter, asyncHandler(async (req, res) =>
 // ==========================================
 // CONVERSATIONS & INBOX ENDPOINTS
 // ==========================================
-app.get('/api/conversations', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/conversations', requireAuth, requirePermission('view_inbox'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbotId = req.query.chatbotId ? String(req.query.chatbotId) : undefined;
   const conversations = await ConversationRepo.findByTenant(req.user!.tenantId, chatbotId);
   res.json({ success: true, conversations });
 }));
 
-app.get('/api/conversations/:id/messages', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/conversations/:id/messages', requireAuth, requirePermission('view_inbox'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const conversation = await ConversationRepo.findById(req.params.id, req.user!.tenantId);
   if (!conversation) {
     return res.status(404).json({ success: false, error: 'Conversation not found' });
@@ -2202,7 +3200,7 @@ app.get('/api/conversations/:id/messages', requireAuth, asyncHandler(async (req:
   res.json({ success: true, messages });
 }));
 
-app.post('/api/conversations/:id/messages', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/conversations/:id/messages', requireAuth, requirePermission('take_over_conversation'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { content } = req.body || {};
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'Message content is required' });
@@ -2224,7 +3222,7 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncHandler(async (req
   res.json({ success: true, message });
 }));
 
-app.patch('/api/conversations/:id/status', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.patch('/api/conversations/:id/status', requireAuth, requirePermission('take_over_conversation'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { status } = req.body || {};
   const validStatuses = ['active', 'human_takeover', 'resolved', 'closed'];
   if (!status || !validStatuses.includes(status)) {
@@ -2239,7 +3237,7 @@ app.patch('/api/conversations/:id/status', requireAuth, asyncHandler(async (req:
   res.json({ success: true, conversation: updated });
 }));
 
-app.patch('/api/conversations/:id/assign', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.patch('/api/conversations/:id/assign', requireAuth, requirePermission('take_over_conversation'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { assignedTo, assignedToName } = req.body || {};
   const updated = await ConversationRepo.assignConversation(
     req.params.id,
@@ -2255,7 +3253,7 @@ app.patch('/api/conversations/:id/assign', requireAuth, asyncHandler(async (req:
   res.json({ success: true, conversation: updated });
 }));
 
-app.delete('/api/conversations/:id', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.delete('/api/conversations/:id', requireAuth, requirePermission('take_over_conversation'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const deleted = await ConversationRepo.delete(req.params.id, req.user!.tenantId);
   if (!deleted) {
     return res.status(404).json({ success: false, error: 'Conversation not found' });
@@ -2263,20 +3261,70 @@ app.delete('/api/conversations/:id', requireAuth, asyncHandler(async (req: Authe
   res.json({ success: true, id: req.params.id });
 }));
 
+app.post('/api/conversations/:id/report', requireAuth, requirePermission('view_inbox'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const convId = req.params.id;
+  const { reason } = req.body || {};
+  const tenantId = req.user!.tenantId;
+  const userEmail = req.user!.email;
+
+  if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'A reason is required to report a conversation.' });
+  }
+
+  const db = getDb();
+  const cRes = await db.execute({ sql: `SELECT * FROM conversations WHERE id = ? AND tenant_id = ? LIMIT 1;`, args: [convId, tenantId] });
+  if (cRes.rows.length === 0) {
+    return res.status(404).json({ success: false, error: 'Conversation not found.' });
+  }
+
+  const conv = cRes.rows[0];
+  const modId = 'mod_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+  const now = new Date().toISOString();
+
+  await db.execute({
+    sql: `INSERT INTO moderation_queue (id, item_type, tenant_id, resource_id, resource_title, content_snippet, reason, status, flagged_source, flagged_by, created_at) VALUES (?, 'flagged_conversation', ?, ?, ?, ?, ?, 'pending_review', 'agent_report', ?, ?);`,
+    args: [modId, tenantId, convId, `Conversation with ${conv.visitor_name || conv.visitor_email || 'Visitor'}`, String(conv.last_message || ''), reason.trim(), userEmail, now],
+  });
+
+  res.json({ success: true, message: 'Conversation successfully reported for content moderation.' });
+}));
+
+// ==========================================
+// SUPPORT TICKETS ENDPOINTS
+// ==========================================
+app.get('/api/tickets', requireAuth, requirePermission('view_inbox'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const tickets = await TicketRepo.getTickets(req.user!.tenantId);
+  res.json({ success: true, tickets });
+}));
+
+app.patch('/api/tickets/:id', requireAuth, requirePermission('view_inbox'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { status, priority, assigneeId, note } = req.body || {};
+  const updated = await TicketRepo.updateTicket(req.user!.tenantId, req.params.id, {
+    status,
+    priority,
+    assigneeId,
+    note,
+  });
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Ticket not found' });
+  }
+  res.json({ success: true, ticket: updated });
+}));
+
 // ==========================================
 // TEAM & ROLE MANAGEMENT ENDPOINTS
 // ==========================================
-app.get('/api/team/members', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/team/members', requireAuth, requirePermission('manage_team'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const members = await TeamRepo.getTeamMembers(req.user!.tenantId);
   res.json({ success: true, members });
 }));
 
-app.get('/api/team/invites', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/team/invites', requireAuth, requirePermission('manage_team'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const invites = await TeamRepo.getPendingInvites(req.user!.tenantId);
   res.json({ success: true, invites });
 }));
 
-app.post('/api/team/invites', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/team/invites', requireAuth, requirePermission('manage_team'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { email, role = 'Agent' } = req.body || {};
   if (!email || typeof email !== 'string' || !email.includes('@')) {
     return res.status(400).json({ success: false, error: 'A valid email address is required.' });
@@ -2291,6 +3339,14 @@ app.post('/api/team/invites', requireAuth, requireTenantAdminAuth, asyncHandler(
     req.user!.name
   );
 
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'team_member_invited',
+    targetType: 'invite',
+    metadata: { email, role: validRole },
+  });
+
   res.json({
     success: true,
     invite,
@@ -2298,7 +3354,7 @@ app.post('/api/team/invites', requireAuth, requireTenantAdminAuth, asyncHandler(
   });
 }));
 
-app.delete('/api/team/invites/:id', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.delete('/api/team/invites/:id', requireAuth, requirePermission('manage_team'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const success = await TeamRepo.cancelInvite(req.params.id, req.user!.tenantId);
   if (!success) {
     return res.status(404).json({ success: false, error: 'Invitation not found or already processed.' });
@@ -2306,7 +3362,7 @@ app.delete('/api/team/invites/:id', requireAuth, requireTenantAdminAuth, asyncHa
   res.json({ success: true, message: 'Invitation cancelled successfully.' });
 }));
 
-app.patch('/api/team/members/:id/role', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.patch('/api/team/members/:id/role', requireAuth, requirePermission('manage_team'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { role } = req.body || {};
   if (!role || !['Admin', 'Agent'].includes(role)) {
     return res.status(400).json({ success: false, error: 'Valid role (Admin or Agent) is required.' });
@@ -2316,14 +3372,29 @@ app.patch('/api/team/members/:id/role', requireAuth, requireTenantAdminAuth, asy
   const userId = req.params.id.startsWith('tm_') ? req.params.id.replace('tm_', '') : req.params.id;
 
   await TeamRepo.updateMemberRole(userId, req.user!.tenantId, role as any);
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'team_member_role_changed',
+    targetType: 'user',
+    targetId: userId,
+    metadata: { role },
+  });
   res.json({ success: true, message: `Member role updated to ${role}.` });
 }));
 
-app.delete('/api/team/members/:id', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.delete('/api/team/members/:id', requireAuth, requirePermission('manage_team'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const userId = req.params.id.startsWith('tm_') ? req.params.id.replace('tm_', '') : req.params.id;
 
   try {
     await TeamRepo.removeMember(userId, req.user!.tenantId);
+    await AuditEventsRepo.logEvent({
+      tenantId: req.user!.tenantId,
+      actorId: req.user!.id,
+      action: 'team_member_removed',
+      targetType: 'user',
+      targetId: userId,
+    });
     res.json({ success: true, message: 'Team member removed from workspace.' });
   } catch (err: any) {
     res.status(400).json({ success: false, error: err.message || 'Failed to remove team member.' });
@@ -2333,12 +3404,12 @@ app.delete('/api/team/members/:id', requireAuth, requireTenantAdminAuth, asyncHa
 // ==========================================
 // INTEGRATIONS MARKETPLACE ENDPOINTS
 // ==========================================
-app.get('/api/integrations', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/integrations', requireAuth, requirePermission('manage_integrations'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const integrations = await IntegrationRepo.getIntegrations(req.user!.tenantId);
   res.json({ success: true, integrations });
 }));
 
-app.post('/api/integrations/:id/connect', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/integrations/:id/connect', requireAuth, requirePermission('manage_integrations'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const integrationId = req.params.id as any;
   const { config } = req.body || {};
 
@@ -2354,6 +3425,14 @@ app.post('/api/integrations/:id/connect', requireAuth, asyncHandler(async (req: 
     config || {}
   );
 
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'integration_connected',
+    targetType: 'integration',
+    targetId: integrationId,
+  });
+
   res.json({
     success: true,
     integration: result,
@@ -2361,13 +3440,20 @@ app.post('/api/integrations/:id/connect', requireAuth, asyncHandler(async (req: 
   });
 }));
 
-app.post('/api/integrations/:id/disconnect', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/integrations/:id/disconnect', requireAuth, requirePermission('manage_integrations'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const integrationId = req.params.id as any;
   await IntegrationRepo.disconnect(req.user!.tenantId, integrationId);
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'integration_disconnected',
+    targetType: 'integration',
+    targetId: integrationId,
+  });
   res.json({ success: true, message: `Disconnected integration successfully.` });
 }));
 
-app.post('/api/integrations/:id/test', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/integrations/:id/test', requireAuth, requirePermission('manage_integrations'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const integrationId = req.params.id;
 
   // Webhook / other integration handshake
@@ -2381,13 +3467,13 @@ app.post('/api/integrations/:id/test', requireAuth, asyncHandler(async (req: Aut
 // ==========================================
 // LEADS ENDPOINTS
 // ==========================================
-app.get('/api/leads', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/leads', requireAuth, requirePermission('view_inbox'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbotId = req.query.chatbotId ? String(req.query.chatbotId) : undefined;
   const leads = await LeadRepo.findByTenant(req.user!.tenantId, chatbotId);
   res.json({ success: true, leads });
 }));
 
-app.delete('/api/leads/:id', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.delete('/api/leads/:id', requireAuth, requirePermission('take_over_conversation'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const deleted = await LeadRepo.delete(req.params.id, req.user!.tenantId);
   if (!deleted) {
     return res.status(404).json({ success: false, error: 'Lead not found' });
@@ -2417,13 +3503,28 @@ app.post('/api/chatbots/:id/leads', asyncHandler(async (req, res) => {
     });
   }
 
+  const leadName = name ? String(name).slice(0, 100) : 'Website Visitor';
+  const leadEmail = email.toLowerCase().trim();
+
+  // Find or create contact using contact identity
+  const { contactId } = await ContactRepo.findOrCreateContact(bot.tenantId, {
+    name: leadName,
+    email: leadEmail,
+  });
+
+  // Sync to HubSpot using contact identity (mapping repeat visitors to one CRM contact)
+  await HubspotSyncService.syncContact(bot.tenantId, {
+    name: leadName,
+    email: leadEmail,
+  });
+
   const lead = await LeadRepo.create({
     id: 'lead_' + Date.now(),
     chatbotId: bot.id,
     tenantId: bot.tenantId,
     conversationId: conversationId || 'conv_' + Date.now(),
-    name: name ? String(name).slice(0, 100) : 'Website Visitor',
-    email: email.toLowerCase().trim(),
+    name: leadName,
+    email: leadEmail,
     phone: phone ? String(phone).slice(0, 50) : undefined,
     company: company ? String(company).slice(0, 100) : undefined,
     firstQuestion: firstQuestion ? String(firstQuestion).slice(0, 500) : undefined,
@@ -2432,12 +3533,13 @@ app.post('/api/chatbots/:id/leads', asyncHandler(async (req, res) => {
 
   if (conversationId) {
     await ConversationRepo.updateVisitorInfo(conversationId, {
-      visitorName: name ? String(name).slice(0, 100) : undefined,
-      visitorEmail: email.toLowerCase().trim(),
+      visitorName: leadName,
+      visitorEmail: leadEmail,
       visitorLocation: location ? String(location).slice(0, 100) : undefined,
       visitorBrowser: browser ? String(browser).slice(0, 100) : undefined,
       pageUrl: pageUrl ? String(pageUrl).slice(0, 500) : undefined,
     });
+    await ConversationRepo.updateContactId(conversationId, contactId);
   }
 
   res.json({ success: true, lead });
@@ -2446,7 +3548,7 @@ app.post('/api/chatbots/:id/leads', asyncHandler(async (req, res) => {
 // ==========================================
 // TENANT SETTINGS & BYOK (BRING YOUR OWN KEY) ENDPOINTS
 // ==========================================
-app.get('/api/tenant/byok', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/tenant/byok', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const tenant = await UserRepo.findTenantById(req.user!.tenantId);
   if (!tenant) {
     return res.status(404).json({ success: false, error: 'Tenant workspace not found' });
@@ -2471,7 +3573,7 @@ app.get('/api/tenant/byok', requireAuth, asyncHandler(async (req: AuthenticatedR
   });
 }));
 
-app.post('/api/tenant/byok', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/tenant/byok', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { apiKey, provider = 'gemini' } = req.body || {};
   const tenant = await UserRepo.findTenantById(req.user!.tenantId);
   if (!tenant) {
@@ -2508,7 +3610,7 @@ app.post('/api/tenant/byok', requireAuth, asyncHandler(async (req: Authenticated
   });
 }));
 
-app.delete('/api/tenant/byok', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.delete('/api/tenant/byok', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   await UserRepo.updateTenantByok(req.user!.tenantId, null, 'gemini');
   res.json({
     success: true,
@@ -2516,7 +3618,7 @@ app.delete('/api/tenant/byok', requireAuth, asyncHandler(async (req: Authenticat
   });
 }));
 
-app.post('/api/tenant/byok/test', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/tenant/byok/test', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { apiKey, provider = 'gemini' } = req.body || {};
   let keyToTest = apiKey;
 
@@ -2558,9 +3660,233 @@ app.post('/api/tenant/byok/test', requireAuth, asyncHandler(async (req: Authenti
 }));
 
 // ==========================================
+// DISCOUNT CODE POLICIES & AUDIT LOGS ENDPOINTS
+// ==========================================
+app.get('/api/tenant/discount-policy', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const policy = await PolicyRepo.getPolicy(req.user!.tenantId);
+  res.json({ success: true, policy });
+}));
+
+app.post('/api/tenant/discount-policy', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { maxPercent, maxPerConversation, requiresApprovalAbove } = req.body || {};
+  const updated = await PolicyRepo.updatePolicy(req.user!.tenantId, {
+    maxPercent: maxPercent !== undefined ? Number(maxPercent) : undefined,
+    maxPerConversation: maxPerConversation !== undefined ? Number(maxPerConversation) : undefined,
+    requiresApprovalAbove: requiresApprovalAbove !== undefined ? Number(requiresApprovalAbove) : undefined,
+  });
+
+  await TenantAuditRepo.log({
+    tenantId: req.user!.tenantId,
+    action: 'DISCOUNT_POLICY_UPDATE',
+    targetResource: 'DISCOUNT_CODE_POLICY',
+    targetId: req.user!.tenantId,
+    details: updated,
+    status: 'success',
+  });
+
+  res.json({ success: true, policy: updated, message: 'Discount code guardrail policies updated successfully.' });
+}));
+
+app.get('/api/tenant/audit-logs', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const logs = await TenantAuditRepo.getLogs(req.user!.tenantId, 100);
+  res.json({ success: true, auditLogs: logs });
+}));
+
+app.get('/api/tenant/audit-events', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const action = req.query.action ? String(req.query.action) : undefined;
+  const actorId = req.query.actorId ? String(req.query.actorId) : undefined;
+  const limit = Math.min(Number(req.query.limit) || 100, 200);
+
+  const events = await AuditEventsRepo.getEvents(req.user!.tenantId, { action, actorId, limit });
+  res.json({ success: true, events });
+}));
+
+app.post('/api/tenant/export-data', requireAuth, requireOwner, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const db = getDb();
+
+  const tenantRes = await db.execute({ sql: `SELECT * FROM tenants WHERE id = ?;`, args: [tenantId] });
+  const tenant = tenantRes.rows[0] || null;
+
+  const chatbots = await ChatbotRepo.findByTenant(tenantId);
+  const knowledgeSources = await KnowledgeRepo.findSourcesByTenant(tenantId);
+  const conversations = await ConversationRepo.findByTenant(tenantId);
+  const conversationExportData = [];
+  for (const conv of conversations) {
+    const messages = await ConversationRepo.findMessagesByConversation(conv.id);
+    conversationExportData.push({ ...conv, messages });
+  }
+  const tickets = await TicketRepo.getTickets(tenantId);
+  const teamMembers = await TeamRepo.getTeamMembers(tenantId);
+
+  const exportPayload = {
+    exportedAt: new Date().toISOString(),
+    tenant,
+    chatbots,
+    knowledgeSources,
+    conversations: conversationExportData,
+    tickets,
+    teamMembers,
+  };
+
+  await AuditEventsRepo.logEvent({
+    tenantId,
+    actorId: req.user!.id,
+    action: 'export_tenant_data',
+    targetType: 'tenant',
+    targetId: tenantId,
+    metadata: { sizeBytes: JSON.stringify(exportPayload).length },
+  });
+
+  try {
+    const emailId = newId('eml');
+    const now = new Date().toISOString();
+    await db.execute({
+      sql: `INSERT INTO transactional_emails (id, to_email, subject, body, type, created_at) VALUES (?, ?, ?, ?, ?, ?);`,
+      args: [
+        emailId,
+        req.user!.email,
+        'Your Workspace Data Export is Ready',
+        `Hello ${req.user!.name},\n\nYour requested data export for workspace "${tenant ? (tenant as any).name : tenantId}" has been successfully generated.\n\nYou can download your complete workspace data package directly from the Settings view.\n\nBest regards,\nAI Support Team`,
+        'data_export',
+        now,
+      ],
+    });
+  } catch (err) {
+    console.error('Failed to record export email notification:', err);
+  }
+
+  res.json({
+    success: true,
+    message: 'Data export package generated successfully. A download link has also been emailed to your account.',
+    exportData: exportPayload,
+  });
+}));
+
+app.post('/api/tenant/delete-workspace', requireAuth, requireOwner, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const { workspaceName } = req.body || {};
+
+  const db = getDb();
+  const tenantRes = await db.execute({ sql: `SELECT * FROM tenants WHERE id = ?;`, args: [tenantId] });
+  const tenant = tenantRes.rows[0];
+  if (!tenant) {
+    return res.status(404).json({ success: false, error: 'Workspace not found.' });
+  }
+
+  const actualName = String((tenant as any).name || '');
+  if (!workspaceName || workspaceName.trim() !== actualName.trim()) {
+    return res.status(400).json({ success: false, error: `Workspace name confirmation does not match "${actualName}".` });
+  }
+
+  const now = new Date().toISOString();
+  await db.execute({
+    sql: `UPDATE tenants SET deleted_at = ? WHERE id = ?;`,
+    args: [now, tenantId],
+  });
+
+  await AuditEventsRepo.logEvent({
+    tenantId,
+    actorId: req.user!.id,
+    action: 'workspace_soft_deleted',
+    targetType: 'tenant',
+    targetId: tenantId,
+    metadata: { name: actualName, deletedAt: now },
+  });
+
+  res.clearCookie('accessToken');
+  res.clearCookie('token');
+
+  res.json({
+    success: true,
+    message: 'Workspace soft-deleted successfully. It will be permanently purged after a 30-day grace period.',
+  });
+}));
+
+// Workspace Profile
+app.get('/api/tenant/profile', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const profile = await SettingsRepo.getWorkspaceProfile(req.user!.tenantId);
+  res.json({ success: true, profile });
+}));
+
+app.post('/api/tenant/profile', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { name, logoUrl, timezone } = req.body || {};
+  const profile = await SettingsRepo.updateWorkspaceProfile(req.user!.tenantId, { name, logoUrl, timezone });
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'settings_changed',
+    targetType: 'workspace_profile',
+    metadata: { name, timezone },
+  });
+  res.json({ success: true, profile, message: 'Workspace profile updated successfully.' });
+}));
+
+// Notifications
+app.get('/api/tenant/notifications', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const notifications = await SettingsRepo.getNotifications(req.user!.tenantId);
+  res.json({ success: true, notifications });
+}));
+
+app.post('/api/tenant/notifications', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { newTicketAlert, integrationDisconnectedAlert, usageNearLimitAlert, emailNotificationsEnabled } = req.body || {};
+  const notifications = await SettingsRepo.updateNotifications(req.user!.tenantId, {
+    newTicketAlert,
+    integrationDisconnectedAlert,
+    usageNearLimitAlert,
+    emailNotificationsEnabled,
+  });
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'settings_changed',
+    targetType: 'notifications',
+    metadata: { newTicketAlert, integrationDisconnectedAlert, usageNearLimitAlert, emailNotificationsEnabled },
+  });
+  res.json({ success: true, notifications, message: 'Notification preferences updated successfully.' });
+}));
+
+// API Keys
+app.get('/api/tenant/api-keys', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const apiKeys = await SettingsRepo.getApiKeys(req.user!.tenantId);
+  res.json({ success: true, apiKeys });
+}));
+
+app.post('/api/tenant/api-keys', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { name } = req.body || {};
+  const result = await SettingsRepo.createApiKey(req.user!.tenantId, name);
+  res.json({ success: true, ...result, message: 'API key created successfully. Save it now as it will not be shown again.' });
+}));
+
+app.delete('/api/tenant/api-keys/:id', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  await SettingsRepo.revokeApiKey(req.user!.tenantId, req.params.id);
+  res.json({ success: true, message: 'API key revoked successfully.' });
+}));
+
+// Webhooks
+app.get('/api/tenant/webhooks', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const webhooks = await SettingsRepo.getWebhooks(req.user!.tenantId);
+  res.json({ success: true, webhooks });
+}));
+
+app.post('/api/tenant/webhooks', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { name, url, secret } = req.body || {};
+  if (!url) {
+    return res.status(400).json({ success: false, error: 'Webhook URL is required.' });
+  }
+  const webhook = await SettingsRepo.createWebhook(req.user!.tenantId, { name, url, secret });
+  res.json({ success: true, webhook, message: 'Workflow webhook created successfully.' });
+}));
+
+app.delete('/api/tenant/webhooks/:id', requireAuth, requirePermission('manage_settings'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  await SettingsRepo.revokeWebhook(req.user!.tenantId, req.params.id);
+  res.json({ success: true, message: 'Webhook deleted successfully.' });
+}));
+
+// ==========================================
 // BILLING & PAYMENT METHOD ENFORCEMENT ENDPOINTS
 // ==========================================
-app.get('/api/billing/status', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/billing/status', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   let tenant = await UserRepo.findTenantById(req.user!.tenantId);
   if (!tenant) {
     return res.status(404).json({ success: false, error: 'Workspace tenant not found.' });
@@ -2601,7 +3927,7 @@ app.get('/api/billing/status', requireAuth, asyncHandler(async (req: Authenticat
   });
 }));
 
-app.post('/api/billing/payment-method', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/billing/payment-method', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { cardNumber, expMonth, expYear, cvc, nameOnCard, brand, autoUpgradePlan } = req.body || {};
 
   if (!cardNumber || typeof cardNumber !== 'string') {
@@ -2664,7 +3990,7 @@ app.post('/api/billing/payment-method', requireAuth, requireTenantAdminAuth, asy
   });
 }));
 
-app.delete('/api/billing/payment-method', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.delete('/api/billing/payment-method', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   await UserRepo.removePaymentMethod(req.user!.tenantId);
 
   // If on a paid plan, auto-downgrade to Free
@@ -2680,7 +4006,7 @@ app.delete('/api/billing/payment-method', requireAuth, requireTenantAdminAuth, a
   });
 }));
 
-app.post('/api/tenant/plan', requireAuth, requireTenantAdminAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/tenant/plan', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { plan } = req.body || {};
   const validPlans = ['Free', 'Pro', 'growth_pro', 'Ultra', 'Enterprise'];
   if (!plan || !validPlans.includes(plan)) {
@@ -2716,7 +4042,42 @@ app.post('/api/tenant/plan', requireAuth, requireTenantAdminAuth, asyncHandler(a
 
   const targetPlan = plan === 'growth_pro' ? 'Pro' : plan;
   await UserRepo.updateTenantPlan(req.user!.tenantId, targetPlan);
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'billing_plan_changed',
+    targetType: 'subscription',
+    metadata: { plan: targetPlan },
+  });
   res.json({ success: true, plan: targetPlan, message: `Workspace plan updated to ${targetPlan}` });
+}));
+
+// ==========================================
+// DISCOUNT CODES ENDPOINT
+// ==========================================
+app.post('/api/discounts/issue', requireAuth, requirePermission('issue_discount_code'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { discountPercent, codePrefix = 'SAVE' } = req.body || {};
+  const percent = Number(discountPercent) || 15;
+  const code = `${codePrefix}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+  await AuditEventsRepo.logEvent({
+    tenantId: req.user!.tenantId,
+    actorId: req.user!.id,
+    action: 'discount_code_issued',
+    targetType: 'discount_code',
+    metadata: { code, discountPercent: percent },
+  });
+
+  res.json({
+    success: true,
+    discountCode: {
+      code,
+      discountPercent: percent,
+      issuedBy: req.user!.name,
+      issuedAt: new Date().toISOString(),
+    },
+    message: `Discount code ${code} (${percent}%) issued successfully.`
+  });
 }));
 
 // ==========================================
@@ -2774,7 +4135,7 @@ app.post('/api/csat', asyncHandler(async (req, res) => {
 // ==========================================
 // ANALYTICS ENDPOINT
 // ==========================================
-app.get('/api/analytics', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.get('/api/analytics', requireAuth, requirePermission('view_inbox'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbotId = req.query.chatbotId ? String(req.query.chatbotId) : undefined;
   const analytics = await AnalyticsRepo.getSummaryForTenant(req.user!.tenantId, chatbotId);
   res.json({ success: true, analytics });
@@ -2821,6 +4182,15 @@ async function startServer() {
     }, 10 * 60 * 1000); // Check every 10 minutes
   } catch (err) {
     console.error('[TRIAL_CRON] Setup error:', err);
+  }
+
+  // Background Job Queue Worker
+  try {
+    const { JobService } = await import('./src/services/jobService');
+    JobService.startWorker();
+    console.log('[JOB_WORKER] Started polling for background jobs.');
+  } catch (err) {
+    console.error('[JOB_WORKER] Failed to start:', err);
   }
 
   if (process.env.VERCEL) {

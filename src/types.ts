@@ -1,6 +1,8 @@
+import { Role } from './config/permissions';
+
 export type TenantPlan = 'Free' | 'Pro' | 'growth_pro' | 'Ultra' | 'Enterprise';
 export type ChannelType = 'Website Widget' | 'WhatsApp' | 'Instagram DM' | 'Email' | 'website_widget' | 'whatsapp' | 'instagram_dm' | 'email';
-export type TeamRole = 'Admin' | 'Agent' | 'Owner';
+export type TeamRole = Role;
 
 export interface ByokConfig {
   hasCustomKey: boolean;
@@ -24,6 +26,8 @@ export interface Tenant {
   websiteUrl?: string;
   logoUrl?: string;
   byokConfig?: ByokConfig;
+  isDisabled?: boolean;
+  disabledReason?: string | null;
 }
 
 export interface UserProfile {
@@ -32,8 +36,10 @@ export interface UserProfile {
   email: string;
   displayName: string;
   tenantId: string;
-  role: 'owner' | 'admin' | 'agent' | 'Admin' | 'Agent' | 'Owner';
+  role: Role;
   avatarUrl?: string;
+  emailVerified?: boolean;
+  mfaEnabled?: boolean;
   createdAt?: string;
 }
 
@@ -43,7 +49,7 @@ export interface TeamMember {
   userId: string;
   name: string;
   email: string;
-  role: 'Admin' | 'Agent' | 'Owner';
+  role: Role;
   avatarUrl?: string;
   createdAt: string;
   lastActiveAt?: string;
@@ -53,7 +59,7 @@ export interface TeamInvite {
   id: string;
   tenantId: string;
   email: string;
-  role: 'Admin' | 'Agent';
+  role: Role;
   invitedBy: string;
   invitedByName?: string;
   status: 'pending' | 'accepted' | 'revoked';
@@ -87,8 +93,10 @@ export interface SupportTicket {
   ticketNumber: string;
   subject: string;
   description: string;
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+  priority: 'low' | 'medium' | 'high';
+  status: 'open' | 'pending' | 'resolved' | 'closed';
+  assigneeId?: string;
+  assigneeName?: string;
   customerEmail?: string;
   notes?: string[];
   createdAt: string;
@@ -130,22 +138,56 @@ export interface Chatbot {
   leadTitle?: string;
   humanOperatorOnline: boolean;
   status: 'active' | 'draft' | 'archived';
+  isDisabled?: boolean;
+  disabledReason?: string | null;
   knowledgeSourceIds?: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ChatbotVersionSnapshot {
+  name: string;
+  description?: string;
+  botType?: BotType;
+  websiteUrl?: string;
+  allowedDomains?: string[];
+  domainLockEnabled?: boolean;
+  channel?: ChannelType;
+  systemInstruction?: string;
+  tone?: BotTone;
+  primaryColor?: string;
+  textColor?: string;
+  avatar?: string;
+  greetingMessage?: string;
+  suggestedQuestions?: string[];
+  model?: BotModel;
+  fallbackMessage?: string;
+  collectLeadEmail?: boolean;
+  leadTitle?: string;
+  humanOperatorOnline?: boolean;
+  status?: 'active' | 'draft' | 'archived';
+}
+
+export interface ChatbotVersion {
+  id: string;
+  chatbotId: string;
+  snapshot: ChatbotVersionSnapshot;
+  createdBy: string;
+  createdAt: string;
 }
 
 export type KnowledgeType = 'url' | 'text' | 'faq' | 'pdf';
 
 export interface KnowledgeSource {
   id: string;
-  chatbotId: string;
+  chatbotId?: string;
+  chatbotIds: string[];
   tenantId: string;
   type: KnowledgeType;
   title: string;
   content: string;
   sourceUrl?: string;
-  status: 'indexed' | 'pending' | 'failed';
+  status: 'indexed' | 'pending' | 'processing' | 'failed';
   chunkCount: number;
   updatedAt: string;
 }
@@ -170,11 +212,22 @@ export interface Message {
   timestamp: string;
 }
 
+export interface Contact {
+  id: string;
+  tenantId: string;
+  externalId?: string;
+  name?: string;
+  email?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
 export interface Conversation {
   id: string;
   chatbotId: string;
   tenantId: string;
   visitorId: string;
+  contactId?: string;
   visitorName?: string;
   visitorEmail?: string;
   visitorLocation?: string;
@@ -192,6 +245,7 @@ export interface Conversation {
   resolvedBy?: 'ai' | 'human';
   toolsInvoked?: string[];
   botType?: BotType;
+  isTest?: boolean;
   createdAt: string;
 }
 
@@ -220,3 +274,22 @@ export interface VisitorLead {
   capturedAt: string;
   firstQuestion?: string;
 }
+
+export interface DiscountCodePolicy {
+  tenantId: string;
+  maxPercent: number;
+  maxPerConversation: number;
+  requiresApprovalAbove: number;
+}
+
+export interface TenantAuditLog {
+  id: string;
+  tenantId: string;
+  action: string;
+  targetResource?: string;
+  targetId?: string;
+  details: any;
+  status: 'success' | 'blocked' | 'pending';
+  createdAt: string;
+}
+

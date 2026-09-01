@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Conversation, Message, Chatbot, ChannelType, TeamMember } from '../../types';
+import { Conversation, Message, Chatbot, ChannelType, TeamMember, SupportTicket } from '../../types';
 import { MarkdownContent } from '../../lib/markdown';
 import {
   Inbox,
@@ -25,7 +25,8 @@ import {
   Users,
   ChevronDown,
   Wrench,
-  Star
+  Star,
+  ShieldAlert
 } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
 import { useAuth } from '../../context/AuthContext';
@@ -34,24 +35,28 @@ interface InboxViewProps {
   conversations: Conversation[];
   messages: Record<string, Message[]>;
   chatbots: Chatbot[];
+  tickets: SupportTicket[];
   onSendMessage: (conversationId: string, content: string, sender: 'agent' | 'visitor') => void;
   onToggleTakeover: (conversationId: string, isTakeover: boolean) => void;
   onResolveConversation: (conversationId: string) => void;
   onDeleteConversation?: (conversationId: string) => void;
   onAssignConversation?: (conversationId: string, teamMemberId: string, teamMemberName: string) => void;
+  onUpdateTicket: (ticketId: string, data: { status?: string; priority?: string; assigneeId?: string | null; note?: string }) => void;
 }
 
 export const InboxView: React.FC<InboxViewProps> = ({
   conversations,
   messages,
   chatbots,
+  tickets,
   onSendMessage,
   onToggleTakeover,
   onResolveConversation,
   onDeleteConversation,
   onAssignConversation,
+  onUpdateTicket,
 }) => {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const [selectedConvId, setSelectedConvId] = useState<string>(conversations[0]?.id || '');
   const [replyInput, setReplyInput] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'human_takeover' | 'resolved'>('all');
@@ -59,6 +64,45 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [assigning, setAssigning] = useState(false);
+
+  // Sub-tabs: 'chat' | 'tickets'
+  const [activeInboxTab, setActiveInboxTab] = useState<'chat' | 'tickets'>('chat');
+  const [ticketStatusFilter, setTicketStatusFilter] = useState<'all' | 'open' | 'pending' | 'resolved' | 'closed'>('all');
+  const [ticketPriorityFilter, setTicketPriorityFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
+  const [ticketAssigneeFilter, setTicketAssigneeFilter] = useState<string>('all');
+  const [ticketSearchQuery, setTicketSearchQuery] = useState('');
+  const [inspectingTicket, setInspectingTicket] = useState<SupportTicket | null>(null);
+  const [newNoteInput, setNewNoteInput] = useState('');
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState('');
+  const [isReporting, setIsReporting] = useState(false);
+  const [reportSuccessMsg, setReportSuccessMsg] = useState<string | null>(null);
+
+  const handleReportConversation = async () => {
+    if (!activeConv || !reportReason.trim()) return;
+    setIsReporting(true);
+    try {
+      const res = await fetch(`/api/conversations/${activeConv.id}/report`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reportReason.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setReportSuccessMsg('Conversation successfully reported for moderation review.');
+        setReportReason('');
+        setShowReportModal(false);
+        setTimeout(() => setReportSuccessMsg(null), 4000);
+      } else {
+        alert(data.error || 'Failed to report conversation.');
+      }
+    } catch (err: any) {
+      alert('Error reporting conversation: ' + err.message);
+    } finally {
+      setIsReporting(false);
+    }
+  };
 
   // Sync selected conversation if list updates
   useEffect(() => {
@@ -71,11 +115,10 @@ export const InboxView: React.FC<InboxViewProps> = ({
   useEffect(() => {
     const fetchMembers = async () => {
       try {
-        const currentToken = localStorage.getItem('auth_token') || token;
         const res = await fetch('/api/team/members', {
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
-            ...(currentToken ? { Authorization: `Bearer ${currentToken}` } : {}),
           },
         });
         const data = await res.json();
@@ -87,7 +130,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
       }
     };
     fetchMembers();
-  }, [token]);
+  }, []);
 
   const activeConv = conversations.find(c => c.id === selectedConvId) || conversations[0];
   const activeBot = chatbots.find(b => b.id === activeConv?.chatbotId) || chatbots[0];
@@ -100,12 +143,11 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
     setAssigning(true);
     try {
-      const currentToken = localStorage.getItem('auth_token') || token;
       const res = await fetch(`/api/conversations/${activeConv.id}/assign`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(currentToken ? { Authorization: `Bearer ${currentToken}` } : {}),
         },
         body: JSON.stringify({
           assignedTo: memberId || null,
@@ -184,6 +226,23 @@ export const InboxView: React.FC<InboxViewProps> = ({
     return true;
   });
 
+  const filteredTickets = (tickets || []).filter(t => {
+    if (ticketStatusFilter !== 'all' && t.status !== ticketStatusFilter) return false;
+    if (ticketPriorityFilter !== 'all' && t.priority !== ticketPriorityFilter) return false;
+    if (ticketAssigneeFilter === 'unassigned' && t.assigneeId) return false;
+    if (ticketAssigneeFilter !== 'all' && ticketAssigneeFilter !== 'unassigned' && t.assigneeId !== ticketAssigneeFilter) return false;
+    if (ticketSearchQuery) {
+      const q = ticketSearchQuery.toLowerCase();
+      return (
+        t.ticketNumber.toLowerCase().includes(q) ||
+        t.subject.toLowerCase().includes(q) ||
+        t.description.toLowerCase().includes(q) ||
+        (t.customerEmail && t.customerEmail.toLowerCase().includes(q))
+      );
+    }
+    return true;
+  });
+
   const handleSendReply = (e: React.FormEvent) => {
     e.preventDefault();
     if (!replyInput.trim() || !activeConv) return;
@@ -193,34 +252,209 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200 font-sans">
-      {/* Top Header */}
+      {/* Top Header & Sub-Tab Switcher */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white border border-zinc-200/90 rounded-3xl p-6 shadow-xs">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <div className="w-8 h-8 rounded-xl bg-zinc-950 text-white flex items-center justify-center">
               <Inbox className="w-4 h-4" />
             </div>
-            <h1 className="text-xl font-extrabold text-zinc-950 font-heading">Live Support & Multi-Channel Inbox</h1>
+            <h1 className="text-xl font-extrabold text-zinc-950 font-heading">Support Operations & Inbox</h1>
             <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-zinc-100 text-zinc-700 border border-zinc-200">
-              {conversations.length} {conversations.length === 1 ? 'Thread' : 'Threads'}
+              {conversations.length} Chats | {tickets.length} Tickets
             </span>
           </div>
           <p className="text-xs text-zinc-500 font-medium">
-            Monitor real-time visitor queries across Website, WhatsApp, Instagram, and Email with teammate assignment and human operator takeover.
+            Manage real-time customer conversations and support ticketing queues from a single unified workspace.
           </p>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Real-Time Sync Active</span>
-          </span>
+          <div className="bg-zinc-100 p-1 rounded-2xl flex items-center gap-1 border border-zinc-200">
+            <button
+              onClick={() => setActiveInboxTab('chat')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                activeInboxTab === 'chat'
+                  ? 'bg-zinc-950 text-white shadow-xs'
+                  : 'text-zinc-600 hover:text-zinc-950'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>Live Chat</span>
+            </button>
+            <button
+              onClick={() => setActiveInboxTab('tickets')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                activeInboxTab === 'tickets'
+                  ? 'bg-zinc-950 text-white shadow-xs'
+                  : 'text-zinc-600 hover:text-zinc-950'
+              }`}
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>Tickets ({tickets.filter(t => t.status === 'open' || t.status === 'pending').length})</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Main Inbox 3-Column Layout */}
-      <div className="bg-white border border-zinc-200/90 rounded-3xl shadow-xs overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[660px]">
-        {/* Column 1: Conversation List (4 Cols) */}
+      {/* Active Tab Content */}
+      {activeInboxTab === 'tickets' && (
+        <div className="bg-white border border-zinc-200/90 rounded-3xl shadow-xs p-6 space-y-6">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="relative flex-1 w-full">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+              <input
+                type="text"
+                placeholder="Search tickets by subject, #TKT, or customer email..."
+                value={ticketSearchQuery}
+                onChange={e => setTicketSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 rounded-2xl border border-zinc-200 text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-950/20 bg-zinc-50/50"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+              <select
+                value={ticketStatusFilter}
+                onChange={e => setTicketStatusFilter(e.target.value as any)}
+                className="px-3 py-2 rounded-xl border border-zinc-200 text-xs text-zinc-700 bg-white font-medium focus:outline-none"
+              >
+                <option value="all">Status: All</option>
+                <option value="open">Open</option>
+                <option value="pending">Pending</option>
+                <option value="resolved">Resolved</option>
+                <option value="closed">Closed</option>
+              </select>
+
+              <select
+                value={ticketPriorityFilter}
+                onChange={e => setTicketPriorityFilter(e.target.value as any)}
+                className="px-3 py-2 rounded-xl border border-zinc-200 text-xs text-zinc-700 bg-white font-medium focus:outline-none"
+              >
+                <option value="all">Priority: All</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+
+              <select
+                value={ticketAssigneeFilter}
+                onChange={e => setTicketAssigneeFilter(e.target.value)}
+                className="px-3 py-2 rounded-xl border border-zinc-200 text-xs text-zinc-700 bg-white font-medium focus:outline-none"
+              >
+                <option value="all">Assignee: All</option>
+                <option value="unassigned">Unassigned</option>
+                {teamMembers.map(m => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="border border-zinc-200 rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-bold uppercase tracking-wider text-[10px]">
+                    <th className="p-3.5">Ticket #</th>
+                    <th className="p-3.5">Subject & Description</th>
+                    <th className="p-3.5">Priority</th>
+                    <th className="p-3.5">Status</th>
+                    <th className="p-3.5">Assignee</th>
+                    <th className="p-3.5">Customer</th>
+                    <th className="p-3.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-200 bg-white">
+                  {filteredTickets.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="text-center py-12 text-zinc-400 font-medium">
+                        No support tickets found matching current filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredTickets.map(t => (
+                      <tr key={t.id} className="hover:bg-zinc-50/80 transition-colors">
+                        <td className="p-3.5 font-mono font-bold text-zinc-900 whitespace-nowrap">
+                          {t.ticketNumber}
+                        </td>
+                        <td className="p-3.5 max-w-xs">
+                          <div className="font-bold text-zinc-900 truncate">{t.subject}</div>
+                          <div className="text-zinc-500 text-[11px] truncate">{t.description}</div>
+                        </td>
+                        <td className="p-3.5 whitespace-nowrap">
+                          <select
+                            value={t.priority}
+                            onChange={e => onUpdateTicket(t.id, { priority: e.target.value as any })}
+                            className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border ${
+                              t.priority === 'high'
+                                ? 'bg-red-50 text-red-700 border-red-200'
+                                : t.priority === 'medium'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-zinc-100 text-zinc-700 border-zinc-200'
+                            }`}
+                          >
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                          </select>
+                        </td>
+                        <td className="p-3.5 whitespace-nowrap">
+                          <select
+                            value={t.status}
+                            onChange={e => onUpdateTicket(t.id, { status: e.target.value as any })}
+                            className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border ${
+                              t.status === 'open'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : t.status === 'pending'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : t.status === 'resolved'
+                                ? 'bg-sky-50 text-sky-700 border-sky-200'
+                                : 'bg-zinc-100 text-zinc-700 border-zinc-200'
+                            }`}
+                          >
+                            <option value="open">Open</option>
+                            <option value="pending">Pending</option>
+                            <option value="resolved">Resolved</option>
+                            <option value="closed">Closed</option>
+                          </select>
+                        </td>
+                        <td className="p-3.5 whitespace-nowrap">
+                          <select
+                            value={t.assigneeId || ''}
+                            onChange={e => onUpdateTicket(t.id, { assigneeId: e.target.value || null })}
+                            className="text-xs py-1 px-2 rounded-xl border border-zinc-200 text-zinc-800 bg-white font-medium"
+                          >
+                            <option value="">Unassigned</option>
+                            {teamMembers.map(m => (
+                              <option key={m.id} value={m.id}>{m.name}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-3.5 text-zinc-600 font-medium whitespace-nowrap">
+                          {t.customerEmail || 'Anonymous'}
+                        </td>
+                        <td className="p-3.5 text-right whitespace-nowrap">
+                          <MotionButton
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setInspectingTicket(t)}
+                          >
+                            View & Notes
+                          </MotionButton>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeInboxTab === 'chat' && (
+        <div className="bg-white border border-zinc-200/90 rounded-3xl shadow-xs overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[660px]">
+          {/* Column 1: Conversation List (4 Cols) */}
         <div className="lg:col-span-4 border-r border-zinc-200 flex flex-col bg-zinc-50/50">
           {/* Search & Filters */}
           <div className="p-3.5 border-b border-zinc-200 space-y-2.5 bg-white">
@@ -350,8 +584,22 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 </div>
               </div>
 
-              {/* Human Takeover Toggle */}
+              {/* Human Takeover Toggle & Report */}
               <div className="flex items-center gap-2">
+                {reportSuccessMsg && (
+                  <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-200">
+                    {reportSuccessMsg}
+                  </span>
+                )}
+                <button
+                  onClick={() => setShowReportModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-bold transition cursor-pointer font-heading border border-rose-200"
+                  title="Report suspicious visitor message or conversation to moderation queue"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  <span>Report</span>
+                </button>
+
                 <MotionButton
                   variant={activeConv.status === 'human_takeover' ? 'primary' : 'secondary'}
                   size="sm"
@@ -362,6 +610,60 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 </MotionButton>
               </div>
             </div>
+
+            {/* Report Conversation Modal */}
+            {showReportModal && (
+              <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl border border-zinc-200 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-rose-600">
+                      <ShieldAlert className="w-5 h-5" />
+                      <h3 className="text-sm font-extrabold text-zinc-950 font-heading">Report Suspicious Conversation</h3>
+                    </div>
+                    <button
+                      onClick={() => setShowReportModal(false)}
+                      className="text-zinc-400 hover:text-zinc-600 p-1 rounded-lg"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-zinc-600">
+                    This will flag the conversation with <span className="font-bold text-zinc-900">{activeConv.visitorName || 'Anonymous Visitor'}</span> for platform moderation review.
+                  </p>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-[11px] font-bold text-zinc-700">Reason for Reporting *</label>
+                    <textarea
+                      rows={3}
+                      required
+                      placeholder="e.g. Suspicious prompt injection, abuse, or policy violation..."
+                      value={reportReason}
+                      onChange={e => setReportReason(e.target.value)}
+                      className="w-full p-3 text-xs bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-hidden focus:border-zinc-900"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowReportModal(false)}
+                      className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-xs font-bold transition cursor-pointer font-heading"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isReporting || !reportReason.trim()}
+                      onClick={handleReportConversation}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer font-heading disabled:opacity-50"
+                    >
+                      {isReporting ? 'Submitting...' : 'Submit Report'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Chat Thread Messages */}
             <div className="flex-1 p-4 overflow-y-auto space-y-3.5 bg-zinc-50/30">
@@ -612,6 +914,102 @@ export const InboxView: React.FC<InboxViewProps> = ({
           </div>
         )}
       </div>
+      )}
+
+      {/* Ticket Details & Notes Modal */}
+      {inspectingTicket && (
+        <div className="fixed inset-0 z-50 bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-zinc-200 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-zinc-200 pb-3">
+              <div>
+                <span className="font-mono text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  {inspectingTicket.ticketNumber}
+                </span>
+                <h3 className="text-base font-extrabold text-zinc-950 mt-1">{inspectingTicket.subject}</h3>
+              </div>
+              <button
+                onClick={() => setInspectingTicket(null)}
+                className="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-500 hover:bg-zinc-200"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <span className="font-bold text-zinc-500 block mb-1">Description:</span>
+                <p className="text-zinc-800 bg-zinc-50 p-3 rounded-2xl border border-zinc-200 leading-relaxed">
+                  {inspectingTicket.description}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <span className="font-bold text-zinc-500 block mb-1">Customer Email:</span>
+                  <span className="text-zinc-900 font-medium">{inspectingTicket.customerEmail || 'N/A'}</span>
+                </div>
+                <div>
+                  <span className="font-bold text-zinc-500 block mb-1">Created At:</span>
+                  <span className="text-zinc-900 font-medium">{new Date(inspectingTicket.createdAt).toLocaleString()}</span>
+                </div>
+              </div>
+
+              <div>
+                <span className="font-bold text-zinc-500 block mb-1">Internal Notes & History:</span>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto bg-zinc-50 p-3 rounded-2xl border border-zinc-200">
+                  {inspectingTicket.notes && inspectingTicket.notes.length > 0 ? (
+                    inspectingTicket.notes.map((note, idx) => (
+                      <div key={idx} className="text-[11px] text-zinc-700 bg-white p-2 rounded-xl border border-zinc-200">
+                        • {note}
+                      </div>
+                    ))
+                  ) : (
+                    <span className="text-zinc-400 italic">No notes added yet.</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <label className="font-bold text-zinc-700 block text-xs">Add Internal Note:</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Type note or update details..."
+                    value={newNoteInput}
+                    onChange={e => setNewNoteInput(e.target.value)}
+                    className="flex-1 px-3 py-2 rounded-xl border border-zinc-200 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-950/20"
+                  />
+                  <MotionButton
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      if (!newNoteInput.trim()) return;
+                      onUpdateTicket(inspectingTicket.id, { note: newNoteInput.trim() });
+                      setInspectingTicket({
+                        ...inspectingTicket,
+                        notes: [...(inspectingTicket.notes || []), newNoteInput.trim()],
+                      });
+                      setNewNoteInput('');
+                    }}
+                  >
+                    Add Note
+                  </MotionButton>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-zinc-200">
+              <MotionButton
+                variant="secondary"
+                size="sm"
+                onClick={() => setInspectingTicket(null)}
+              >
+                Close
+              </MotionButton>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

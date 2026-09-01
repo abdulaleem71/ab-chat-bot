@@ -8,6 +8,16 @@ export interface UserRow {
   tenant_id: string;
   role: string;
   created_at: string;
+  avatar_url?: string | null;
+  last_active_at?: string | null;
+  email_verified?: number | null;
+  email_verification_token?: string | null;
+  email_verification_expires_at?: string | null;
+  password_reset_token?: string | null;
+  password_reset_expires_at?: string | null;
+  mfa_enabled?: number | null;
+  mfa_secret?: string | null;
+  mfa_backup_codes_json?: string | null;
 }
 
 export interface TenantRow {
@@ -25,6 +35,8 @@ export interface TenantRow {
   payment_method_brand?: string | null;
   payment_method_last4?: string | null;
   payment_method_exp?: string | null;
+  is_disabled?: number | null;
+  disabled_reason?: string | null;
 }
 
 export interface OAuthAccountRow {
@@ -50,16 +62,7 @@ export class UserRepo {
       args: [provider, String(providerUserId)],
     });
     if (res.rows.length === 0) return null;
-    const r = res.rows[0];
-    return {
-      id: String(r.id),
-      email: String(r.email),
-      password_hash: String(r.password_hash),
-      name: String(r.name),
-      tenant_id: String(r.tenant_id),
-      role: String(r.role),
-      created_at: String(r.created_at),
-    };
+    return this.mapUserRow(res.rows[0]);
   }
 
   static async linkOAuthAccount(userId: string, provider: string, providerUserId: string, email: string): Promise<void> {
@@ -101,16 +104,7 @@ export class UserRepo {
       args: [email],
     });
     if (res.rows.length === 0) return null;
-    const r = res.rows[0];
-    return {
-      id: String(r.id),
-      email: String(r.email),
-      password_hash: String(r.password_hash),
-      name: String(r.name),
-      tenant_id: String(r.tenant_id),
-      role: String(r.role),
-      created_at: String(r.created_at),
-    };
+    return this.mapUserRow(res.rows[0]);
   }
 
   static async findUserById(id: string): Promise<UserRow | null> {
@@ -120,16 +114,7 @@ export class UserRepo {
       args: [id],
     });
     if (res.rows.length === 0) return null;
-    const r = res.rows[0];
-    return {
-      id: String(r.id),
-      email: String(r.email),
-      password_hash: String(r.password_hash),
-      name: String(r.name),
-      tenant_id: String(r.tenant_id),
-      role: String(r.role),
-      created_at: String(r.created_at),
-    };
+    return this.mapUserRow(res.rows[0]);
   }
 
   static async createUser(user: UserRow): Promise<UserRow> {
@@ -164,6 +149,8 @@ export class UserRepo {
       payment_method_brand: r.payment_method_brand ? String(r.payment_method_brand) : null,
       payment_method_last4: r.payment_method_last4 ? String(r.payment_method_last4) : null,
       payment_method_exp: r.payment_method_exp ? String(r.payment_method_exp) : null,
+      is_disabled: r.is_disabled ? Number(r.is_disabled) : 0,
+      disabled_reason: r.disabled_reason ? String(r.disabled_reason) : null,
     };
   }
 
@@ -274,6 +261,111 @@ export class UserRepo {
     await db.execute({
       sql: `UPDATE users SET password_hash = ? WHERE id = ?;`,
       args: [newPasswordHash, userId],
+    });
+  }
+
+  static async updateUserProfile(userId: string, name: string, avatarUrl?: string): Promise<void> {
+    const db = getDb();
+    if (avatarUrl !== undefined) {
+      await db.execute({
+        sql: `UPDATE users SET name = ?, avatar_url = ? WHERE id = ?;`,
+        args: [name, avatarUrl, userId],
+      });
+    } else {
+      await db.execute({
+        sql: `UPDATE users SET name = ? WHERE id = ?;`,
+        args: [name, userId],
+      });
+    }
+  }
+
+  static async setEmailVerificationToken(userId: string, token: string, expiresAt: string): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE users SET email_verification_token = ?, email_verification_expires_at = ? WHERE id = ?;`,
+      args: [token, expiresAt, userId],
+    });
+  }
+
+  static async verifyUserEmail(userId: string): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE users SET email_verified = 1, email_verification_token = NULL, email_verification_expires_at = NULL WHERE id = ?;`,
+      args: [userId],
+    });
+  }
+
+  static async setPasswordResetToken(userId: string, token: string, expiresAt: string): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE users SET password_reset_token = ?, password_reset_expires_at = ? WHERE id = ?;`,
+      args: [token, expiresAt, userId],
+    });
+  }
+
+  static async findUserByVerificationToken(token: string): Promise<UserRow | null> {
+    const db = getDb();
+    const res = await db.execute({
+      sql: `SELECT * FROM users WHERE email_verification_token = ? LIMIT 1;`,
+      args: [token],
+    });
+    if (res.rows.length === 0) return null;
+    return this.mapUserRow(res.rows[0]);
+  }
+
+  static async findUserByPasswordResetToken(token: string): Promise<UserRow | null> {
+    const db = getDb();
+    const res = await db.execute({
+      sql: `SELECT * FROM users WHERE password_reset_token = ? LIMIT 1;`,
+      args: [token],
+    });
+    if (res.rows.length === 0) return null;
+    return this.mapUserRow(res.rows[0]);
+  }
+
+  private static mapUserRow(r: any): UserRow {
+    return {
+      id: String(r.id),
+      email: String(r.email),
+      password_hash: String(r.password_hash),
+      name: String(r.name),
+      tenant_id: String(r.tenant_id),
+      role: String(r.role),
+      created_at: String(r.created_at),
+      avatar_url: r.avatar_url ? String(r.avatar_url) : null,
+      last_active_at: r.last_active_at ? String(r.last_active_at) : null,
+      email_verified: r.email_verified !== undefined ? Number(r.email_verified) : 1,
+      email_verification_token: r.email_verification_token ? String(r.email_verification_token) : null,
+      email_verification_expires_at: r.email_verification_expires_at ? String(r.email_verification_expires_at) : null,
+      password_reset_token: r.password_reset_token ? String(r.password_reset_token) : null,
+      password_reset_expires_at: r.password_reset_expires_at ? String(r.password_reset_expires_at) : null,
+      mfa_enabled: r.mfa_enabled !== undefined ? Number(r.mfa_enabled) : 0,
+      mfa_secret: r.mfa_secret ? String(r.mfa_secret) : null,
+      mfa_backup_codes_json: r.mfa_backup_codes_json ? String(r.mfa_backup_codes_json) : null,
+    };
+  }
+
+  static async updateUserMfa(userId: string, enabled: number, secretEncrypted: string | null, backupCodesJson: string | null): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE users SET mfa_enabled = ?, mfa_secret = ?, mfa_backup_codes_json = ? WHERE id = ?;`,
+      args: [enabled, secretEncrypted, backupCodesJson, userId],
+    });
+  }
+
+  static async updateMfaBackupCodes(userId: string, backupCodesJson: string): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE users SET mfa_backup_codes_json = ? WHERE id = ?;`,
+      args: [backupCodesJson, userId],
+    });
+  }
+
+  static async clearPasswordResetToken(userId: string): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE users SET password_reset_token = NULL, password_reset_expires_at = NULL WHERE id = ?;`,
+      args: [userId],
     });
   }
 }

@@ -45,7 +45,7 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
   onClose,
   onRefreshList,
 }) => {
-  const { adminToken } = useAdminAuth();
+  useAdminAuth();
   const [data, setData] = useState<AdminChatbotDetail | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,14 +78,12 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
   const [isRegeneratingKey, setIsRegeneratingKey] = useState<boolean>(false);
 
   const fetchDetail = useCallback(async () => {
-    if (!chatbotId || !adminToken) return;
+    if (!chatbotId) return;
     try {
       setIsLoading(true);
       setError(null);
       const res = await fetch(`/api/admin/chatbots/${chatbotId}`, {
-        headers: {
-          Authorization: `Bearer ${adminToken}`,
-        },
+        credentials: 'include',
       });
 
       if (!res.ok) {
@@ -114,7 +112,7 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
     } finally {
       setIsLoading(false);
     }
-  }, [chatbotId, adminToken]);
+  }, [chatbotId]);
 
   useEffect(() => {
     if (chatbotId) {
@@ -144,14 +142,14 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
   };
 
   const handleToggleStatus = async (newStatus: 'active' | 'draft' | 'archived') => {
-    if (!chatbotId || !adminToken) return;
+    if (!chatbotId) return;
     try {
       setIsUpdatingStatus(true);
       const res = await fetch(`/api/admin/chatbots/${chatbotId}/status`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({ status: newStatus }),
       });
@@ -170,7 +168,7 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
   };
 
   const handleRegenerateKey = async () => {
-    if (!chatbotId || !adminToken) return;
+    if (!chatbotId) return;
     if (!window.confirm('Are you sure you want to regenerate the embed secret key? Any existing embedded widgets without the new key may require updates.')) {
       return;
     }
@@ -178,9 +176,7 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
       setIsRegeneratingKey(true);
       const res = await fetch(`/api/admin/chatbots/${chatbotId}/regenerate-key`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${adminToken}`,
-        },
+        credentials: 'include',
       });
       const json = await res.json();
       if (!res.ok || !json.success) {
@@ -211,15 +207,15 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
   };
 
   const handleSaveDomainSettings = async () => {
-    if (!chatbotId || !adminToken) return;
+    if (!chatbotId) return;
     try {
       setIsSavingDomains(true);
       setError(null);
       const res = await fetch(`/api/admin/chatbots/${chatbotId}/domain-lock`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({
           domainLockEnabled,
@@ -242,15 +238,15 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
   };
 
   const handleSaveConfig = async () => {
-    if (!chatbotId || !adminToken) return;
+    if (!chatbotId) return;
     try {
       setIsSavingConfig(true);
       setError(null);
       const res = await fetch(`/api/admin/chatbots/${chatbotId}/config`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({
           name: botName,

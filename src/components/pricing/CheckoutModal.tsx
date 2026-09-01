@@ -41,7 +41,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   initialBillingCycle = 'annual',
   onSuccess,
 }) => {
-  const { tenant, switchPlan, token, refreshTenant } = useAuth();
+  const { tenant, switchPlan, refreshTenant } = useAuth();
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>(initialBillingCycle);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isCompleted, setIsCompleted] = useState(false);
@@ -91,10 +91,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setIsProcessing(true);
 
     try {
-      const savedToken = token || localStorage.getItem('auth_token');
       const authHeaders = {
         'Content-Type': 'application/json',
-        ...(savedToken ? { Authorization: `Bearer ${savedToken}` } : {}),
       };
 
       // 1. If paid plan and need to save a card
@@ -109,6 +107,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
         const cardRes = await fetch('/api/billing/payment-method', {
           method: 'POST',
+          credentials: 'include',
           headers: authHeaders,
           body: JSON.stringify({
             cardNumber: cleanCard,
@@ -128,6 +127,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         // 2. Switching with card already on file or to Free
         const planRes = await fetch('/api/tenant/plan', {
           method: 'POST',
+          credentials: 'include',
           headers: authHeaders,
           body: JSON.stringify({ plan: planId }),
         });

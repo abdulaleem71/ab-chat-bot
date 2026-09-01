@@ -5,7 +5,6 @@ import { AdminLogin } from './components/AdminLogin';
 import { AdminSidebar, AdminTab } from './components/AdminSidebar';
 import { AdminHeader } from './components/AdminHeader';
 import { CommandCenterOverview } from './components/CommandCenterOverview';
-import { LiveActivityFeed } from './components/LiveActivityFeed';
 import { UserDirectoryView } from './components/UserDirectoryView';
 import { ChatbotDirectoryView } from './components/ChatbotDirectoryView';
 import { WebsiteDomainCenterView } from './components/WebsiteDomainCenterView';
@@ -14,6 +13,7 @@ import { ProductAnalyticsView } from './components/ProductAnalyticsView';
 import { ConversionFunnelView } from './components/ConversionFunnelView';
 import { UserIntelligenceView } from './components/UserIntelligenceView';
 import { SystemAlertsView } from './components/SystemAlertsView';
+import { ContentModerationView } from './components/ContentModerationView';
 import { AuditLogsView } from './components/AuditLogsView';
 import { OverviewMetrics } from './repositories/adminOverviewRepo';
 import { AlertCircle, RefreshCw } from 'lucide-react';
@@ -23,7 +23,7 @@ interface AdminAppProps {
 }
 
 const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
-  const { adminToken } = useAdminAuth();
+  const { isAuthenticated } = useAdminAuth();
   const [currentTab, setCurrentTab] = useState<AdminTab>('overview');
   const [metrics, setMetrics] = useState<OverviewMetrics | null>(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState<boolean>(true);
@@ -32,13 +32,11 @@ const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
   const [lastUpdated, setLastUpdated] = useState<string>('');
 
   const fetchOverviewMetrics = useCallback(async () => {
-    if (!adminToken) return;
+    if (!isAuthenticated) return;
     try {
       setError(null);
       const res = await fetch('/api/admin/overview', {
-        headers: {
-          Authorization: `Bearer ${adminToken}`,
-        },
+        credentials: 'include',
       });
 
       if (!res.ok) {
@@ -61,7 +59,7 @@ const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
     } finally {
       setIsLoadingMetrics(false);
     }
-  }, [adminToken]);
+  }, [isAuthenticated]);
 
   // Initial load
   useEffect(() => {
@@ -81,8 +79,6 @@ const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
     switch (tab) {
       case 'overview':
         return 'Command Center';
-      case 'activity':
-        return 'Live Activity Feed';
       case 'users':
         return 'User Directory';
       case 'chatbots':
@@ -99,6 +95,8 @@ const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
         return 'User Intelligence';
       case 'alerts':
         return 'System Alerts';
+      case 'moderation':
+        return 'Content Moderation & Safety';
       case 'audit':
         return 'Administrative Audit Logs';
       default:
@@ -110,8 +108,8 @@ const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
     switch (tab) {
       case 'overview':
         return 'Real-time performance indicators, platform health, and live telemetry';
-      case 'activity':
-        return 'Real-time stream of all platform events, tenant activities, and security actions';
+      case 'conversations':
+        return 'Real-time platform activity stream and historical conversation transcripts';
       default:
         return 'Administrative management interface';
     }
@@ -173,14 +171,6 @@ const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
                 />
               )}
 
-              {currentTab === 'activity' && (
-                <LiveActivityFeed
-                  metrics={metrics}
-                  isLoading={isLoadingMetrics}
-                  onRefresh={fetchOverviewMetrics}
-                />
-              )}
-
               {currentTab === 'users' && (
                 <UserDirectoryView />
               )}
@@ -195,7 +185,11 @@ const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
 
               {currentTab === 'conversations' && (
                 <div className="p-6">
-                  <ConversationLogsView />
+                  <ConversationLogsView
+                    metrics={metrics}
+                    isLoadingOverview={isLoadingMetrics}
+                    onRefreshOverview={fetchOverviewMetrics}
+                  />
                 </div>
               )}
 
@@ -220,6 +214,12 @@ const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
               {currentTab === 'alerts' && (
                 <div className="p-6">
                   <SystemAlertsView />
+                </div>
+              )}
+
+              {currentTab === 'moderation' && (
+                <div className="p-6">
+                  <ContentModerationView />
                 </div>
               )}
 

@@ -27,6 +27,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // MFA challenge state
+  const [requiresMfa, setRequiresMfa] = useState(false);
+  const [mfaChallengeToken, setMfaChallengeToken] = useState('');
+  const [mfaChallengeUserId, setMfaChallengeUserId] = useState('');
+  const [mfaChallengeCode, setMfaChallengeCode] = useState('');
+
   const modalContainerRef = useRef<HTMLDivElement>(null);
   useClickOutside(modalContainerRef, () => {
     if (isOpen) onClose();
@@ -71,7 +77,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
     setErrorMsg('');
     try {
       if (mode === 'signin') {
-        await login(email, password);
+        const result = await login(email, password);
+        if (result && result.requireMfa) {
+          setRequiresMfa(true);
+          setMfaChallengeToken(result.mfaToken);
+          setMfaChallengeUserId(result.userId);
+          setIsLoading(false);
+          return;
+        }
         setSuccessMsg('Successfully signed in!');
         setTimeout(() => {
           setSuccessMsg('');
@@ -116,6 +129,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Action failed. Please check your inputs.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleVerifyMfaSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mfaChallengeCode) return;
+    setIsLoading(true);
+    setErrorMsg('');
+    try {
+      const res = await fetch('/api/auth/mfa/verify-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          mfaToken: mfaChallengeToken,
+          userId: mfaChallengeUserId,
+          code: mfaChallengeCode,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSuccessMsg('Two-factor authentication verified successfully!');
+        setTimeout(() => {
+          setSuccessMsg('');
+          onClose();
+          window.location.reload();
+        }, 1000);
+      } else {
+        setErrorMsg(data.error || 'Invalid verification code or backup code.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Network error.');
     } finally {
       setIsLoading(false);
     }
@@ -169,6 +216,48 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
                   <h3 className="text-base font-extrabold text-black font-heading">{successMsg}</h3>
                   <p className="text-xs text-zinc-500 font-medium">Updating account status...</p>
                 </div>
+              ) : requiresMfa ? (
+                <form onSubmit={handleVerifyMfaSubmit} className="space-y-6">
+                  {errorMsg && (
+                    <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 text-xs font-medium rounded-xl">
+                      {errorMsg}
+                    </div>
+                  )}
+                  <div className="text-center space-y-2">
+                    <div className="w-12 h-12 rounded-2xl bg-black text-white flex items-center justify-center mx-auto text-xl shadow-inner">🛡️</div>
+                    <h3 className="text-base font-bold text-zinc-900 font-heading">Two-Factor Authentication Required</h3>
+                    <p className="text-xs text-zinc-500">Enter the 6-digit code from your authenticator app, or use one of your backup recovery codes.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-700 mb-1 font-heading text-center">Verification Code / Backup Code</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="123456 or Backup Code"
+                      value={mfaChallengeCode}
+                      onChange={e => setMfaChallengeCode(e.target.value)}
+                      className="w-full text-center tracking-wider text-base px-3.5 py-3 border border-zinc-200 rounded-xl focus:border-black focus:outline-hidden font-mono font-bold bg-white"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setRequiresMfa(false)}
+                      className="w-1/2 py-3 bg-zinc-100 text-zinc-700 rounded-xl text-xs font-bold hover:bg-zinc-200 transition cursor-pointer"
+                    >
+                      Back to Sign In
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="w-1/2 py-3 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition cursor-pointer disabled:opacity-50"
+                    >
+                      {isLoading ? 'Verifying...' : 'Verify Code'}
+                    </button>
+                  </div>
+                </form>
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-4">
                   {errorMsg && (

@@ -10,13 +10,12 @@ interface AuthContextType {
   switchPlan: (plan: TenantPlan) => Promise<void> | void;
   isAuthenticated: boolean;
   isLoading: boolean;
-  logout: () => void;
+  logout: () => Promise<void>;
   login: (email: string, password?: string) => Promise<any>;
   loginWithOAuth: (provider: 'google' | 'github') => Promise<any>;
   register: (email: string, password?: string, name?: string, companyName?: string) => Promise<any>;
   requestPasswordReset: (email: string) => Promise<any>;
   resetPassword: (email: string, newPassword: string, resetToken?: string) => Promise<any>;
-  token: string | null;
   refreshTenant: () => Promise<void>;
 }
 
@@ -25,68 +24,63 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [tenant, setTenant] = useState<Tenant>(INITIAL_TENANT);
   const [user, setUser] = useState<UserProfile>(INITIAL_USER);
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'));
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(localStorage.getItem('auth_token')));
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Restore user session on mount if token exists
-  useEffect(() => {
-    const savedToken = localStorage.getItem('auth_token');
-    if (savedToken) {
-      fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${savedToken}` },
-      })
-        .then(res => {
-          if (res.ok) return res.json();
-          throw new Error('Invalid token');
-        })
-        .then(data => {
-          if (data.success && data.user) {
-            setUser({
-              uid: data.user.id || data.user.uid,
-              id: data.user.id || data.user.uid,
-              displayName: data.user.name || data.user.email.split('@')[0],
-              email: data.user.email,
-              role: data.user.role || 'Admin',
-              tenantId: data.user.tenantId,
-            });
-            if (data.tenant) {
-              setTenant(prev => ({
-                ...prev,
-                id: data.tenant.id,
-                name: data.tenant.name,
-                ownerEmail: data.tenant.ownerEmail,
-                plan: data.tenant.plan || prev.plan,
-                byokConfig: data.tenant.byokConfig,
-              }));
-            }
-            setToken(savedToken);
-            setIsAuthenticated(true);
-          } else {
-            localStorage.removeItem('auth_token');
-            setToken(null);
-            setIsAuthenticated(false);
+  const verifySession = async () => {
+    try {
+      let res = await fetch('/api/auth/me', { credentials: 'include' });
+      if (res.status === 401) {
+        const refreshRes = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
+        if (refreshRes.ok) {
+          res = await fetch('/api/auth/me', { credentials: 'include' });
+        }
+      }
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.user) {
+          setUser({
+            uid: data.user.id || data.user.uid,
+            id: data.user.id || data.user.uid,
+            displayName: data.user.name || data.user.email.split('@')[0],
+            email: data.user.email,
+            role: data.user.role || 'Admin',
+            tenantId: data.user.tenantId,
+            emailVerified: data.user.emailVerified ?? true,
+            mfaEnabled: data.user.mfaEnabled ?? false,
+            avatarUrl: data.user.avatarUrl,
+          });
+          if (data.tenant) {
+            setTenant(prev => ({
+              ...prev,
+              id: data.tenant.id,
+              name: data.tenant.name,
+              ownerEmail: data.tenant.ownerEmail,
+              plan: data.tenant.plan || prev.plan,
+              byokConfig: data.tenant.byokConfig,
+            }));
           }
-        })
-        .catch(() => {
-          localStorage.removeItem('auth_token');
-          setToken(null);
+          setIsAuthenticated(true);
+        } else {
           setIsAuthenticated(false);
-        })
-        .finally(() => setIsLoading(false));
-    } else {
+        }
+      } else {
+        setIsAuthenticated(false);
+      }
+    } catch {
       setIsAuthenticated(false);
+    } finally {
       setIsLoading(false);
     }
+  };
+
+  useEffect(() => {
+    verifySession();
   }, []);
 
   const refreshTenant = async () => {
-    const savedToken = token || localStorage.getItem('auth_token');
-    if (!savedToken) return;
     try {
-      const res = await fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${savedToken}` },
-      });
+      const res = await fetch('/api/auth/me', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.tenant) {
@@ -107,28 +101,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const switchPlan = async (plan: TenantPlan) => {
     setTenant(prev => ({ ...prev, plan }));
-    const savedToken = token || localStorage.getItem('auth_token');
-    if (savedToken) {
-      try {
-        await fetch('/api/tenant/plan', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${savedToken}`,
-          },
-          body: JSON.stringify({ plan }),
-        });
-      } catch (err) {
-        console.warn('Failed to sync plan switch to backend:', err);
-      }
+    try {
+      await fetch('/api/tenant/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ plan }),
+      });
+    } catch (err) {
+      console.warn('Failed to sync plan switch to backend:', err);
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('active_tenant');
-    localStorage.removeItem('active_user');
-    setToken(null);
+  const logout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch {
+      // ignore
+    }
     setIsAuthenticated(false);
     setTenant({
       id: '',
@@ -150,7 +140,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginWithOAuth = async (provider: 'google' | 'github'): Promise<any> => {
-    // 1. Fetch Provider Auth URL
     const callbackPath = `/api/auth/${provider}/callback`;
     const redirectUri = `${window.location.origin}${callbackPath}`;
     
@@ -161,14 +150,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!res.ok || !urlData.success || !urlData.url) {
         throw new Error(
           urlData.error || 
-          `${provider === 'google' ? 'Google' : 'GitHub'} OAuth is not configured. Please set the required credentials in your environment variables.`
+          `${provider === 'google' ? 'Google' : 'GitHub'} OAuth is not configured.`
         );
       }
     } catch (fetchErr: any) {
       throw new Error(fetchErr.message || `Failed to initiate ${provider} login.`);
     }
 
-    // 2. Open Popup Window (Directly to Provider's Authorization URL)
     const width = 600;
     const height = 700;
     const left = window.screenX + (window.outerWidth - width) / 2;
@@ -181,50 +169,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     if (!popup || popup.closed || typeof popup.closed === 'undefined') {
-      throw new Error(
-        `Popup window was blocked by your browser. Please allow popups for ${window.location.hostname} to complete ${provider === 'google' ? 'Google' : 'GitHub'} sign-in.`
-      );
+      throw new Error(`Popup window was blocked by your browser.`);
     }
 
-    // 3. Await postMessage signal or popup closure
     return new Promise((resolve, reject) => {
       let isCompleted = false;
 
       const messageListener = (event: MessageEvent) => {
-        // Validate payload
         if (!event.data || typeof event.data !== 'object') return;
 
         if (event.data.type === 'OAUTH_AUTH_SUCCESS') {
           isCompleted = true;
           cleanup();
-
-          const { token: receivedToken, user: receivedUser, tenant: receivedTenant } = event.data;
-          if (receivedToken) {
-            localStorage.setItem('auth_token', receivedToken);
-            setToken(receivedToken);
-          }
-          if (receivedUser) {
-            setUser({
-              uid: receivedUser.id || receivedUser.uid,
-              id: receivedUser.id || receivedUser.uid,
-              displayName: receivedUser.name || receivedUser.email.split('@')[0],
-              email: receivedUser.email,
-              role: receivedUser.role || 'Admin',
-              tenantId: receivedUser.tenantId,
-              avatarUrl: receivedUser.avatarUrl,
-            });
-          }
-          if (receivedTenant) {
-            setTenant(prev => ({
-              ...prev,
-              id: receivedTenant.id,
-              name: receivedTenant.name,
-              ownerEmail: receivedTenant.ownerEmail,
-              plan: receivedTenant.plan || prev.plan,
-            }));
-          }
-          setIsAuthenticated(true);
-          resolve(event.data);
+          verifySession().then(() => {
+            resolve(event.data);
+          });
         } else if (event.data.type === 'OAUTH_AUTH_ERROR') {
           isCompleted = true;
           cleanup();
@@ -257,32 +216,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ email, password: password || 'password' }),
     });
     const data = await res.json();
     if (!res.ok || !data.success) {
       throw new Error(data.error || 'Authentication failed');
     }
-    localStorage.setItem('auth_token', data.token);
-    setToken(data.token);
-    setUser({
-      uid: data.user.id || data.user.uid,
-      id: data.user.id || data.user.uid,
-      displayName: data.user.name || data.user.email.split('@')[0],
-      email: data.user.email,
-      role: data.user.role || 'Admin',
-      tenantId: data.user.tenantId,
-    });
-    if (data.tenant) {
-      setTenant(prev => ({
-        ...prev,
-        id: data.tenant.id,
-        name: data.tenant.name,
-        ownerEmail: data.tenant.ownerEmail,
-        plan: data.tenant.plan || prev.plan,
-      }));
-    }
-    setIsAuthenticated(true);
+    await verifySession();
     return data;
   };
 
@@ -290,32 +231,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ email, password: password || 'password', name, companyName }),
     });
     const data = await res.json();
     if (!res.ok || !data.success) {
       throw new Error(data.error || 'Registration failed');
     }
-    localStorage.setItem('auth_token', data.token);
-    setToken(data.token);
-    setUser({
-      uid: data.user.id || data.user.uid,
-      id: data.user.id || data.user.uid,
-      displayName: data.user.name || data.user.email.split('@')[0],
-      email: data.user.email,
-      role: data.user.role || 'Admin',
-      tenantId: data.user.tenantId,
-    });
-    if (data.tenant) {
-      setTenant(prev => ({
-        ...prev,
-        id: data.tenant.id,
-        name: data.tenant.name,
-        ownerEmail: data.tenant.ownerEmail,
-        plan: data.tenant.plan || prev.plan,
-      }));
-    }
-    setIsAuthenticated(true);
+    await verifySession();
     return data;
   };
 
@@ -361,7 +284,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         register,
         requestPasswordReset,
         resetPassword,
-        token,
         refreshTenant,
       }}
     >
@@ -377,4 +299,3 @@ export const useAuth = () => {
   }
   return context;
 };
-

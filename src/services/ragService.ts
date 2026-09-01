@@ -29,7 +29,7 @@ export class RagService {
     if (chunks.length === 0 && botWebsiteUrl && tenantId) {
       try {
         const { KnowledgeService } = await import('./knowledgeService');
-        await KnowledgeService.scrapeAndIngestUrl(chatbotId, tenantId, botWebsiteUrl);
+        await KnowledgeService.scrapeAndIngestUrl(tenantId, botWebsiteUrl, [chatbotId]);
         chunks = await KnowledgeRepo.findChunksByBot(chatbotId);
       } catch (err: any) {
         console.warn(`[WARN] On-demand scrape attempt failed for ${botWebsiteUrl}:`, err.message);

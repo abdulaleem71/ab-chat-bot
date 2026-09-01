@@ -240,11 +240,26 @@ export const BillingDashboardView: React.FC<BillingDashboardViewProps> = ({
   const messagesUsed = currentPlan === 'Free' ? 280 : currentPlan === 'Pro' ? 2450 : currentPlan === 'Ultra' ? 18340 : 42100;
   const messagesPercentage = Math.min(100, Math.round((messagesUsed / activePlanConfig.messagesQuota) * 100));
 
+  const tokensUsed = messagesUsed * 125;
+  const tokensLimit = activePlanConfig.messagesQuota * 15;
+  const tokensPercentage = Math.min(100, Math.round((tokensUsed / tokensLimit) * 100));
+
+  const conversationsUsed = Math.min(activePlanConfig.messagesQuota, Math.round(messagesUsed / 3));
+  const conversationsLimit = activePlanConfig.messagesQuota;
+  const conversationsPercentage = Math.min(100, Math.round((conversationsUsed / conversationsLimit) * 100));
+
   const botsUsed = Math.min(chatbotsCount, activePlanConfig.botsQuota);
   const botsPercentage = Math.min(100, Math.round((botsUsed / activePlanConfig.botsQuota) * 100));
 
   const knowledgeSourcesUsed = currentPlan === 'Free' ? 1 : 4;
   const teamSeatsUsed = 1;
+  const seatsPercentage = Math.min(100, Math.round((teamSeatsUsed / activePlanConfig.seatsQuota) * 100));
+
+  const getProgressColor = (pct: number) => {
+    if (pct > 95) return 'bg-rose-500';
+    if (pct > 80) return 'bg-amber-500';
+    return 'bg-zinc-950 dark:bg-white';
+  };
 
   // Calculated next billing date (e.g. 1 month from current date)
   const nextBillingDate = 'September 27, 2026';
@@ -802,7 +817,61 @@ VAT ID: US948271049 • receipts@nomadschat.com
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {/* Token Consumption Quota Progress */}
+          <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/70 dark:border-zinc-700/60 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-zinc-900 dark:text-white font-heading flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-zinc-700 dark:text-zinc-300" />
+                  Token Consumption
+                </span>
+                <span className={`text-[11px] font-extrabold font-mono ${tokensPercentage > 95 ? 'text-rose-600' : tokensPercentage > 80 ? 'text-amber-600' : 'text-zinc-700 dark:text-zinc-300'}`}>
+                  {tokensPercentage}%
+                </span>
+              </div>
+              <div className="w-full bg-zinc-200 dark:bg-zinc-700 rounded-full h-2 overflow-hidden mb-2">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${tokensPercentage}%` }}
+                  transition={{ duration: 0.8, ease: 'easeOut' }}
+                  className={`h-full rounded-full ${getProgressColor(tokensPercentage)}`}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
+              <span>{tokensUsed.toLocaleString()} tokens</span>
+              <span>limit: {tokensLimit.toLocaleString()}</span>
+            </div>
+          </div>
+
+          {/* Conversation Count Quota Progress */}
+          <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/70 dark:border-zinc-700/60 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-zinc-900 dark:text-white font-heading flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-zinc-700 dark:text-zinc-300" />
+                  Conversations
+                </span>
+                <span className={`text-[11px] font-extrabold font-mono ${conversationsPercentage > 95 ? 'text-rose-600' : conversationsPercentage > 80 ? 'text-amber-600' : 'text-zinc-700 dark:text-zinc-300'}`}>
+                  {conversationsPercentage}%
+                </span>
+              </div>
+              <div className="w-full bg-zinc-200 dark:bg-zinc-700 rounded-full h-2 overflow-hidden mb-2">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${conversationsPercentage}%` }}
+                  transition={{ duration: 0.8, ease: 'easeOut' }}
+                  className={`h-full rounded-full ${getProgressColor(conversationsPercentage)}`}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
+              <span>{conversationsUsed.toLocaleString()} active</span>
+              <span>of {conversationsLimit.toLocaleString()}</span>
+            </div>
+          </div>
+
           {/* Messages Quota Progress */}
           <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/70 dark:border-zinc-700/60 flex flex-col justify-between">
             <div>
@@ -811,7 +880,7 @@ VAT ID: US948271049 • receipts@nomadschat.com
                   <MessageSquare className="w-3.5 h-3.5 text-zinc-700 dark:text-zinc-300" />
                   AI Messages
                 </span>
-                <span className="text-[11px] font-extrabold text-zinc-700 dark:text-zinc-300 font-mono">
+                <span className={`text-[11px] font-extrabold font-mono ${messagesPercentage > 95 ? 'text-rose-600' : messagesPercentage > 80 ? 'text-amber-600' : 'text-zinc-700 dark:text-zinc-300'}`}>
                   {messagesPercentage}%
                 </span>
               </div>
@@ -820,9 +889,7 @@ VAT ID: US948271049 • receipts@nomadschat.com
                   initial={{ width: 0 }}
                   animate={{ width: `${messagesPercentage}%` }}
                   transition={{ duration: 0.8, ease: 'easeOut' }}
-                  className={`h-full rounded-full ${
-                    messagesPercentage > 85 ? 'bg-rose-500' : messagesPercentage > 60 ? 'bg-amber-500' : 'bg-zinc-950 dark:bg-white'
-                  }`}
+                  className={`h-full rounded-full ${getProgressColor(messagesPercentage)}`}
                 />
               </div>
             </div>
@@ -840,7 +907,7 @@ VAT ID: US948271049 • receipts@nomadschat.com
                   <Bot className="w-3.5 h-3.5 text-zinc-700 dark:text-zinc-300" />
                   Chatbots Deployed
                 </span>
-                <span className="text-[11px] font-extrabold text-zinc-700 dark:text-zinc-300 font-mono">
+                <span className={`text-[11px] font-extrabold font-mono ${botsPercentage > 95 ? 'text-rose-600' : botsPercentage > 80 ? 'text-amber-600' : 'text-zinc-700 dark:text-zinc-300'}`}>
                   {botsPercentage}%
                 </span>
               </div>
@@ -849,7 +916,7 @@ VAT ID: US948271049 • receipts@nomadschat.com
                   initial={{ width: 0 }}
                   animate={{ width: `${botsPercentage}%` }}
                   transition={{ duration: 0.8, ease: 'easeOut' }}
-                  className="h-full rounded-full bg-zinc-950 dark:bg-white"
+                  className={`h-full rounded-full ${getProgressColor(botsPercentage)}`}
                 />
               </div>
             </div>
@@ -889,19 +956,21 @@ VAT ID: US948271049 • receipts@nomadschat.com
                   <Users className="w-3.5 h-3.5 text-zinc-700 dark:text-zinc-300" />
                   Operator Seats
                 </span>
-                <span className="text-[11px] font-extrabold text-zinc-700 dark:text-zinc-300 font-mono">
-                  {teamSeatsUsed} / {activePlanConfig.seatsQuota}
+                <span className={`text-[11px] font-extrabold font-mono ${seatsPercentage > 95 ? 'text-rose-600' : seatsPercentage > 80 ? 'text-amber-600' : 'text-zinc-700 dark:text-zinc-300'}`}>
+                  {seatsPercentage}%
                 </span>
               </div>
               <div className="w-full bg-zinc-200 dark:bg-zinc-700 rounded-full h-2 overflow-hidden mb-2">
-                <div
-                  className="h-full rounded-full bg-zinc-950 dark:bg-white"
-                  style={{ width: `${(teamSeatsUsed / activePlanConfig.seatsQuota) * 100}%` }}
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${seatsPercentage}%` }}
+                  transition={{ duration: 0.8, ease: 'easeOut' }}
+                  className={`h-full rounded-full ${getProgressColor(seatsPercentage)}`}
                 />
               </div>
             </div>
             <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
-              <span>1 seat assigned</span>
+              <span>{teamSeatsUsed} seat assigned</span>
               <span>{activePlanConfig.seatsQuota} max</span>
             </div>
           </div>

@@ -32,6 +32,17 @@ export interface AdminUserDetail {
     name: string;
     ownerEmail: string;
     plan: string;
+    creditBalance: number;
+    paymentStatus: string;
+    failedPaymentsCount: number;
+    retryAttempts: number;
+    lastPaymentError?: string | null;
+    dunningSince?: string | null;
+    paymentMethodBrand?: string | null;
+    paymentMethodLast4?: string | null;
+    paymentMethodExp?: string | null;
+    isDisabled?: boolean;
+    disabledReason?: string | null;
     createdAt: string;
   } | null;
   chatbots: Array<{
@@ -222,7 +233,7 @@ export class AdminUserRepo {
     let tenant: AdminUserDetail['tenant'] = null;
     if (tenantId) {
       const tRes = await db.execute({
-        sql: `SELECT id, name, owner_email, plan, created_at FROM tenants WHERE id = ? LIMIT 1;`,
+        sql: `SELECT id, name, owner_email, plan, credit_balance, payment_status, failed_payments_count, retry_attempts, last_payment_error, dunning_since, payment_method_brand, payment_method_last4, payment_method_exp, is_disabled, disabled_reason, created_at FROM tenants WHERE id = ? LIMIT 1;`,
         args: [tenantId],
       });
       if (tRes.rows.length > 0) {
@@ -231,7 +242,18 @@ export class AdminUserRepo {
           id: String(tr.id),
           name: String(tr.name),
           ownerEmail: String(tr.owner_email),
-          plan: String(tr.plan),
+          plan: String(tr.plan || 'Pro'),
+          creditBalance: Number(tr.credit_balance || 0),
+          paymentStatus: String(tr.payment_status || 'active'),
+          failedPaymentsCount: Number(tr.failed_payments_count || 0),
+          retryAttempts: Number(tr.retry_attempts || 0),
+          lastPaymentError: tr.last_payment_error ? String(tr.last_payment_error) : null,
+          dunningSince: tr.dunning_since ? String(tr.dunning_since) : null,
+          paymentMethodBrand: tr.payment_method_brand ? String(tr.payment_method_brand) : 'Visa',
+          paymentMethodLast4: tr.payment_method_last4 ? String(tr.payment_method_last4) : '4242',
+          paymentMethodExp: tr.payment_method_exp ? String(tr.payment_method_exp) : '12/28',
+          isDisabled: Number(tr.is_disabled) === 1,
+          disabledReason: tr.disabled_reason ? String(tr.disabled_reason) : null,
           createdAt: String(tr.created_at),
         };
       }
@@ -268,7 +290,7 @@ export class AdminUserRepo {
         db.execute({ sql: `SELECT COUNT(*) as count FROM conversations WHERE chatbot_id = ?;`, args: [botId] }),
         db.execute({ sql: `SELECT COUNT(*) as count FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE chatbot_id = ?);`, args: [botId] }),
         db.execute({ sql: `SELECT COUNT(*) as count FROM leads WHERE chatbot_id = ?;`, args: [botId] }),
-        db.execute({ sql: `SELECT COUNT(*) as count FROM knowledge_sources WHERE chatbot_id = ?;`, args: [botId] }),
+        db.execute({ sql: `SELECT COUNT(DISTINCT ks.id) as count FROM knowledge_sources ks JOIN chatbot_knowledge_sources cks ON ks.id = cks.knowledge_source_id WHERE cks.chatbot_id = ?;`, args: [botId] }),
       ]);
 
       const cCount = Number(cRes.rows[0]?.count || 0);

@@ -28,7 +28,7 @@ interface LeadDetailModalProps {
 }
 
 export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ leadId, onClose }) => {
-  const { adminToken } = useAdminAuth();
+  useAdminAuth();
   const [data, setData] = useState<{ lead: LeadItem; messages: any[] } | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -38,12 +38,9 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ leadId, onClos
     if (!leadId) return;
     setIsLoading(true);
     setError(null);
-    const token = adminToken || localStorage.getItem('nomads_admin_token') || localStorage.getItem('nomadschat_admin_token') || '';
 
     fetch(`/api/admin/funnel/leads/${leadId}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
+      credentials: 'include',
     })
       .then(async (res) => {
         const contentType = res.headers.get('content-type');
@@ -60,7 +57,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ leadId, onClos
       .finally(() => {
         setIsLoading(false);
       });
-  }, [leadId, adminToken]);
+  }, [leadId]);
 
   if (!leadId) return null;
 

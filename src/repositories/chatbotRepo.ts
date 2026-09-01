@@ -190,6 +190,8 @@ export class ChatbotRepo {
       leadTitle: String(r.lead_title || ''),
       humanOperatorOnline: Number(r.human_operator_online) === 1,
       status: (r.status || 'active') as any,
+      isDisabled: Number(r.is_disabled) === 1,
+      disabledReason: r.disabled_reason ? String(r.disabled_reason) : null,
       createdAt: String(r.created_at),
       updatedAt: String(r.updated_at),
     };
