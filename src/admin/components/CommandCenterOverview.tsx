@@ -18,17 +18,22 @@ import {
   Database,
   Cpu,
   Layers,
+  RotateCw,
 } from 'lucide-react';
 
 interface CommandCenterOverviewProps {
   metrics: OverviewMetrics | null;
   isLoading: boolean;
+  errorMessage?: string | null;
+  onRefresh?: () => void;
   onNavigateTab: (tab: any) => void;
 }
 
 export const CommandCenterOverview: React.FC<CommandCenterOverviewProps> = ({
   metrics,
   isLoading,
+  errorMessage,
+  onRefresh,
   onNavigateTab,
 }) => {
   if (isLoading && !metrics) {
@@ -45,7 +50,19 @@ export const CommandCenterOverview: React.FC<CommandCenterOverviewProps> = ({
       <div className="p-8 text-center text-zinc-500 bg-white border border-zinc-200 rounded-2xl max-w-lg mx-auto my-12 shadow-2xs">
         <AlertCircle className="w-8 h-8 mx-auto mb-2 text-rose-500" />
         <p className="text-sm font-bold text-zinc-900 font-heading">Unable to retrieve real-time metrics</p>
-        <p className="text-xs text-zinc-500 mt-1 font-body">Please verify database connectivity and administrator permissions.</p>
+        <p className="text-xs text-zinc-500 mt-1 font-body">
+          {errorMessage || 'Please verify database connectivity and administrator permissions.'}
+        </p>
+        {onRefresh && (
+          <button
+            id="admin-metrics-retry-btn"
+            onClick={onRefresh}
+            className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-zinc-900 hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
+          >
+            <RotateCw className="w-3.5 h-3.5" />
+            Retry Metrics Query
+          </button>
+        )}
       </div>
     );
   }

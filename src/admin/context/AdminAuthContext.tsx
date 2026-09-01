@@ -17,23 +17,43 @@ export const AdminAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [admin, setAdmin] = useState<AdminUser | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  const getStoredToken = () => {
+    return (
+      localStorage.getItem('nomads_admin_token') ||
+      localStorage.getItem('nomadschat_admin_token') ||
+      localStorage.getItem('token') ||
+      ''
+    );
+  };
+
   const fetchCurrentAdmin = async () => {
     try {
+      const storedToken = getStoredToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (storedToken) {
+        headers['Authorization'] = `Bearer ${storedToken}`;
+      }
+
       let res = await fetch('/api/admin/auth/me', {
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
       });
 
       if (res.status === 401 || res.status === 403) {
         const refreshRes = await fetch('/api/admin/auth/refresh', {
           method: 'POST',
           credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
         });
         if (refreshRes.ok) {
+          const refreshData = await refreshRes.json();
+          if (refreshData.token) {
+            localStorage.setItem('nomads_admin_token', refreshData.token);
+            headers['Authorization'] = `Bearer ${refreshData.token}`;
+          }
           res = await fetch('/api/admin/auth/me', {
             credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
           });
         }
       }
@@ -79,6 +99,9 @@ export const AdminAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       const data = await res.json();
       if (data.success && data.admin) {
+        if (data.token) {
+          localStorage.setItem('nomads_admin_token', data.token);
+        }
         setAdmin(data.admin);
         return { success: true };
       } else {
@@ -93,14 +116,20 @@ export const AdminAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const logout = async () => {
     try {
+      const storedToken = getStoredToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (storedToken) headers['Authorization'] = `Bearer ${storedToken}`;
+
       await fetch('/api/admin/auth/logout', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
       });
     } catch {
       // Ignore logout request failure
     }
+    localStorage.removeItem('nomads_admin_token');
+    localStorage.removeItem('nomadschat_admin_token');
     setAdmin(null);
   };
 
@@ -114,7 +143,7 @@ export const AdminAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         admin,
         isLoading,
         isAuthenticated: Boolean(admin),
-        adminToken: localStorage.getItem('nomads_admin_token') || localStorage.getItem('nomadschat_admin_token') || 'cookie_session',
+        adminToken: getStoredToken() || 'cookie_session',
         login,
         logout,
         refreshAdmin,

@@ -643,6 +643,41 @@ export async function initDb(): Promise<void> {
       );
     `);
 
+    // Create Admin Audit Logs Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS admin_audit_logs (
+        id TEXT PRIMARY KEY,
+        admin_id TEXT NOT NULL,
+        admin_email TEXT NOT NULL,
+        action TEXT NOT NULL,
+        target_resource TEXT,
+        target_id TEXT,
+        ip_address TEXT,
+        user_agent TEXT,
+        details_json TEXT,
+        status TEXT NOT NULL DEFAULT 'success',
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    // Create System Alerts Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS system_alerts (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        category TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        metadata_json TEXT,
+        created_at TEXT NOT NULL,
+        acknowledged_at TEXT,
+        resolved_at TEXT,
+        resolved_by TEXT
+      );
+    `);
+
     // Create Performance Indexes
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_chatbots_tenant ON chatbots(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_ks_bot ON knowledge_sources(chatbot_id);`);
@@ -655,6 +690,12 @@ export async function initDb(): Promise<void> {
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_support_tickets_tenant ON support_tickets(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_tenant_audit_tenant ON tenant_audit_logs(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_tenant_audit_created ON tenant_audit_logs(created_at);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_audit_admin ON admin_audit_logs(admin_email);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_audit_created ON admin_audit_logs(created_at);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_audit_action ON admin_audit_logs(action);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_alerts_status ON system_alerts(status);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_alerts_severity ON system_alerts(severity);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_alerts_created ON system_alerts(created_at);`);
 
     // Column Migration for website_url
     try {

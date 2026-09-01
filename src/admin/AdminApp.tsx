@@ -35,8 +35,19 @@ const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
     if (!isAuthenticated) return;
     try {
       setError(null);
+      const token =
+        localStorage.getItem('nomads_admin_token') ||
+        localStorage.getItem('nomadschat_admin_token') ||
+        localStorage.getItem('token');
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const res = await fetch('/api/admin/overview', {
         credentials: 'include',
+        headers,
       });
 
       if (!res.ok) {
@@ -167,6 +178,8 @@ const AdminShell: React.FC<AdminAppProps> = ({ onReturnToUserApp }) => {
                 <CommandCenterOverview
                   metrics={metrics}
                   isLoading={isLoadingMetrics}
+                  errorMessage={error}
+                  onRefresh={fetchOverviewMetrics}
                   onNavigateTab={(tab) => setCurrentTab(tab)}
                 />
               )}

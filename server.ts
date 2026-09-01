@@ -92,6 +92,8 @@ try {
 ensureDbInitialized().then(async () => {
   console.log('✅ Persistent database schema initialized successfully.');
   try {
+    await AdminAuditRepo.ensureTable().catch(() => {});
+    await AdminAlertsRepo.ensureTable().catch(() => {});
     await AdminAuthService.ensureAdminAccountsExist();
   } catch (adminInitErr: any) {
     console.warn('⚠️ Admin accounts provisioning notice:', adminInitErr.message || adminInitErr);
@@ -278,7 +280,18 @@ export interface AdminAuthenticatedRequest extends express.Request {
 }
 
 export function requireAdminAuth(req: AdminAuthenticatedRequest, res: express.Response, next: express.NextFunction) {
-  const token = req.cookies?.adminAccessToken || req.cookies?.adminToken || req.cookies?.accessToken;
+  // Extract token from Bearer header, x-admin-token, cookies, or query
+  const authHeader = req.headers.authorization;
+  let bearerToken: string | undefined;
+  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+    bearerToken = authHeader.substring(7).trim();
+  }
+
+  const customHeaderToken = typeof req.headers['x-admin-token'] === 'string' ? req.headers['x-admin-token'] : undefined;
+  const cookieToken = req.cookies?.adminAccessToken || req.cookies?.adminToken || req.cookies?.accessToken || req.cookies?.token;
+  const queryToken = typeof req.query?.admin_token === 'string' ? req.query.admin_token : undefined;
+
+  const token = bearerToken || customHeaderToken || cookieToken || queryToken;
   const verifiedAdmin = AdminAuthService.verifyAdminToken(token, JWT_SECRET);
 
   if (!verifiedAdmin) {
@@ -541,6 +554,27 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
     sameSite: 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
+
+  // If this user is also an authorized administrator, issue adminAccessToken cookie as well
+  if (AdminAuthService.isAuthorizedAdminEmail(user.email)) {
+    const adminToken = AdminAuthService.generateAdminToken(
+      {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: 'super_admin',
+        createdAt: user.created_at,
+      },
+      JWT_SECRET,
+      '7d'
+    );
+    res.cookie('adminAccessToken', adminToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+  }
 
   res.json({
     success: true,
@@ -1240,6 +1274,15 @@ app.post('/api/admin/auth/login', authLimiter, asyncHandler(async (req, res) => 
     return res.status(401).json(result);
   }
 
+  if (result.token) {
+    res.cookie('adminAccessToken', result.token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 12 * 60 * 60 * 1000,
+    });
+  }
+
   res.json(result);
 }));
 
@@ -1265,6 +1308,8 @@ app.post('/api/admin/auth/logout', requireAdminAuth, asyncHandler(async (req: Ad
     userAgent,
   });
 
+  res.clearCookie('adminAccessToken');
+  res.clearCookie('adminToken');
   res.json({ success: true, message: 'Admin session terminated successfully.' });
 }));
 

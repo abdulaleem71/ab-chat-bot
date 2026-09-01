@@ -102,23 +102,29 @@ export class AdminAuthService {
   /**
    * Verifies an incoming Admin JWT token and confirms the email is still in the admin whitelist
    */
-  static verifyAdminToken(token: string, jwtSecret: string): AdminUser | null {
+  static verifyAdminToken(token?: string | null, jwtSecret?: string): AdminUser | null {
+    if (!token || typeof token !== 'string') return null;
     try {
-      const decoded = jwt.verify(token, jwtSecret) as any;
-      if (!decoded || !decoded.isAdmin || !decoded.email) {
+      const secret = jwtSecret || process.env.JWT_SECRET || 'dev_secret_key_nomads_chat';
+      const decoded = jwt.verify(token, secret) as any;
+      if (!decoded || !decoded.email) {
         return null;
       }
 
       if (!this.isAuthorizedAdminEmail(decoded.email)) {
-        console.warn(`[SECURITY ALERT] Denied admin access: ${decoded.email} is no longer in admin whitelist`);
+        console.warn(`[SECURITY ALERT] Denied admin access: ${decoded.email} is not in admin whitelist`);
         return null;
       }
 
+      let role: 'super_admin' | 'security_admin' | 'ops_admin' = decoded.role === 'admin' || decoded.isAdmin ? (decoded.role || 'super_admin') : 'super_admin';
+      if (decoded.email.toLowerCase().includes('security')) role = 'security_admin';
+      else if (decoded.email.toLowerCase().includes('ops')) role = 'ops_admin';
+
       return {
-        id: decoded.id,
-        email: decoded.email,
+        id: decoded.id || ('usr_admin_' + decoded.email.replace(/[^a-zA-Z0-9]/g, '_')),
+        email: decoded.email.toLowerCase(),
         name: decoded.name || 'Administrator',
-        role: decoded.role || 'super_admin',
+        role,
         createdAt: decoded.createdAt || new Date().toISOString(),
       };
     } catch {
