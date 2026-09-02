@@ -215,7 +215,13 @@ interface AuthenticatedRequest extends express.Request {
 }
 
 function requireAuth(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
-  const token = req.cookies?.accessToken || req.cookies?.token;
+  const authHeader = req.headers.authorization;
+  let bearerToken: string | undefined;
+  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+    bearerToken = authHeader.substring(7).trim();
+  }
+
+  const token = bearerToken || req.cookies?.accessToken || req.cookies?.token;
   if (!token) {
     return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
   }
@@ -449,6 +455,14 @@ app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res) => {
     JWT_SECRET,
     { expiresIn: '7d' }
   );
+
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
 
   res.json({
     success: true,
@@ -887,6 +901,14 @@ const handleGoogleCallback = async (req: express.Request, res: express.Response)
       avatarUrl: googleUser.picture,
     });
 
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
     return res.send(OAuthService.renderCallbackHtml({
       success: true,
       provider: 'google',
@@ -990,6 +1012,14 @@ const handleGithubCallback = async (req: express.Request, res: express.Response)
       email: githubUser.email,
       name: githubUser.name,
       avatarUrl: githubUser.avatarUrl,
+    });
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
     return res.send(OAuthService.renderCallbackHtml({
@@ -1259,6 +1289,71 @@ app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedReque
       },
     } : null,
   });
+}));
+
+// ==========================================
+// USER LOGOUT & SESSION REFRESH ENDPOINTS
+// ==========================================
+app.all(['/api/auth/logout', '/auth/logout'], (req, res) => {
+  const cookieOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax' as const,
+    path: '/',
+  };
+
+  res.clearCookie('token', cookieOptions);
+  res.clearCookie('accessToken', cookieOptions);
+  res.clearCookie('adminAccessToken', cookieOptions);
+  res.clearCookie('adminToken', cookieOptions);
+  res.clearCookie('refreshToken', cookieOptions);
+
+  // Clear without options fallback as well
+  res.clearCookie('token');
+  res.clearCookie('accessToken');
+  res.clearCookie('adminAccessToken');
+  res.clearCookie('adminToken');
+  res.clearCookie('refreshToken');
+
+  res.json({ success: true, message: 'User logged out successfully.' });
+});
+
+app.post(['/api/auth/refresh', '/auth/refresh'], asyncHandler(async (req, res) => {
+  const authHeader = req.headers.authorization;
+  let bearerToken: string | undefined;
+  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+    bearerToken = authHeader.substring(7).trim();
+  }
+  const token = bearerToken || req.cookies?.accessToken || req.cookies?.token;
+  if (!token) {
+    return res.status(401).json({ success: false, error: 'No active session token found' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const user = await UserRepo.findUserById(decoded.id);
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'User account not found' });
+    }
+
+    const newToken = jwt.sign(
+      { id: user.id, email: user.email, name: user.name, tenantId: user.tenant_id, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.cookie('token', newToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.json({ success: true, token: newToken });
+  } catch {
+    return res.status(401).json({ success: false, error: 'Session expired. Please sign in again.' });
+  }
 }));
 
 // ==========================================

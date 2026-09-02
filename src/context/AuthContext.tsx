@@ -27,16 +27,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  const getStoredToken = () => {
+    return localStorage.getItem('auth_token') || localStorage.getItem('token') || '';
+  };
+
   const verifySession = async () => {
     try {
-      let res = await fetch('/api/auth/me', { credentials: 'include' });
-      if (res.status === 401) {
-        const refreshRes = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
-        if (refreshRes.ok) {
-          res = await fetch('/api/auth/me', { credentials: 'include' });
-        }
+      const storedToken = getStoredToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (storedToken) {
+        headers['Authorization'] = `Bearer ${storedToken}`;
       }
-      if (res.ok) {
+
+      let res = await fetch('/api/auth/me', { credentials: 'include', headers });
+      if (res.status === 401) {
+        // Clean up stale local tokens if server rejected session
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('token');
+        setIsAuthenticated(false);
+        setUser({
+          uid: '',
+          id: '',
+          displayName: '',
+          email: '',
+          role: 'member',
+          tenantId: '',
+          createdAt: '',
+        } as any);
+      } else if (res.ok) {
         const data = await res.json();
         if (data.success && data.user) {
           setUser({
@@ -80,7 +98,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshTenant = async () => {
     try {
-      const res = await fetch('/api/auth/me', { credentials: 'include' });
+      const storedToken = getStoredToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (storedToken) {
+        headers['Authorization'] = `Bearer ${storedToken}`;
+      }
+      const res = await fetch('/api/auth/me', { credentials: 'include', headers });
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.tenant) {
@@ -102,9 +125,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const switchPlan = async (plan: TenantPlan) => {
     setTenant(prev => ({ ...prev, plan }));
     try {
+      const storedToken = getStoredToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (storedToken) {
+        headers['Authorization'] = `Bearer ${storedToken}`;
+      }
       await fetch('/api/tenant/plan', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         credentials: 'include',
         body: JSON.stringify({ plan }),
       });
@@ -115,10 +143,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      const storedToken = getStoredToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (storedToken) {
+        headers['Authorization'] = `Bearer ${storedToken}`;
+      }
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+      });
     } catch {
       // ignore
     }
+
+    // Completely purge local and session storage auth tokens
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('token');
+    localStorage.removeItem('nomads_admin_token');
+    localStorage.removeItem('nomadschat_admin_token');
+
     setIsAuthenticated(false);
     setTenant({
       id: '',
@@ -181,6 +225,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (event.data.type === 'OAUTH_AUTH_SUCCESS') {
           isCompleted = true;
           cleanup();
+          if (event.data.token) {
+            localStorage.setItem('auth_token', event.data.token);
+            localStorage.setItem('token', event.data.token);
+          }
           verifySession().then(() => {
             resolve(event.data);
           });
@@ -223,6 +271,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!res.ok || !data.success) {
       throw new Error(data.error || 'Authentication failed');
     }
+    if (data.token) {
+      localStorage.setItem('auth_token', data.token);
+      localStorage.setItem('token', data.token);
+    }
     await verifySession();
     return data;
   };
@@ -237,6 +289,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const data = await res.json();
     if (!res.ok || !data.success) {
       throw new Error(data.error || 'Registration failed');
+    }
+    if (data.token) {
+      localStorage.setItem('auth_token', data.token);
+      localStorage.setItem('token', data.token);
     }
     await verifySession();
     return data;
