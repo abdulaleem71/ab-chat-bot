@@ -42,6 +42,38 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   const [editingLinksSourceId, setEditingLinksSourceId] = useState<string | null>(null);
   const [tempLinksBotIds, setTempLinksBotIds] = useState<string[]>([]);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const handleLoadSampleKnowledge = async () => {
+    if (isLoading) return;
+    const targetBots = selectedChatbotIds.length > 0 ? selectedChatbotIds : chatbots.map(b => b.id);
+    if (targetBots.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please create or select at least one chatbot first.' });
+      return;
+    }
+    setIsLoading(true);
+    setStatusMessage(null);
+    try {
+      await onAddSource({
+        type: 'faq',
+        title: 'FAQ: Business Hours & Support Channels',
+        content: 'Question: What are your support hours and how can I reach the team?\nAnswer: Our AI assistant is available 24/7. Human support operators are online Monday through Friday, 8:00 AM to 6:00 PM EST via live chat and email at support@nomadschat.com.',
+        chatbotIds: targetBots,
+      });
+      await onAddSource({
+        type: 'text',
+        title: 'Product Overview & Widget Installation Guide',
+        content: 'NomadsChat is an enterprise AI customer support platform. To embed the live widget on any HTML website, simply paste the single script tag before the closing </body> tag. Features include RAG citations, lead capture, and instant human operator takeover.',
+        chatbotIds: targetBots,
+      });
+      setStatusMessage({ type: 'success', text: 'Loaded 2 sample knowledge documents into your tenant RAG database!' });
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: 'Failed to load sample knowledge documents.' });
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setStatusMessage(null), 4000);
+    }
+  };
 
   const toggleTargetBot = (botId: string) => {
     setSelectedChatbotIds(prev =>
@@ -464,23 +496,74 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
       </div>
 
       {/* Indexed Sources List */}
-      <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Tenant Knowledge Sources ({knowledgeSources.length})</h3>
-            <p className="text-xs text-zinc-500 font-medium font-body">All knowledge sources in your tenant and their linked chatbots</p>
+            <h3 className="text-sm font-extrabold text-zinc-900 font-heading">
+              Tenant Knowledge Sources ({knowledgeSources.length})
+            </h3>
+            <p className="text-xs text-zinc-500 font-medium font-body">
+              All knowledge sources in your tenant and their linked chatbots
+            </p>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <MotionButton
+              type="button"
+              variant="outline"
+              size="xs"
+              leftIcon={<Sparkles className="w-3.5 h-3.5 text-indigo-600" />}
+              onClick={handleLoadSampleKnowledge}
+              disabled={isLoading}
+              title="Load pre-made FAQs & documentation to test RAG"
+            >
+              Load Sample Pack
+            </MotionButton>
           </div>
         </div>
 
+        {/* Search Bar */}
+        {knowledgeSources.length > 0 && (
+          <div className="relative">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search knowledge sources by title, url, or content..."
+              className="w-full px-3.5 py-2 text-xs bg-zinc-50/70 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-body"
+            />
+          </div>
+        )}
+
         {knowledgeSources.length === 0 ? (
-          <div className="text-center py-10 border-2 border-dashed border-zinc-200 rounded-2xl space-y-2">
+          <div className="text-center py-10 border-2 border-dashed border-zinc-200 rounded-2xl space-y-3">
             <Globe className="w-8 h-8 text-zinc-300 mx-auto" />
-            <p className="text-xs font-bold text-zinc-700 font-heading">No knowledge sources trained yet</p>
-            <p className="text-[11px] text-zinc-400 font-body">Scrape a website URL, paste HTML source, or add FAQ pairs above to teach your AI bots.</p>
+            <div>
+              <p className="text-xs font-bold text-zinc-700 font-heading">No knowledge sources trained yet</p>
+              <p className="text-[11px] text-zinc-400 font-body max-w-md mx-auto mt-0.5">
+                Scrape a website URL, paste HTML source, or click below to load pre-made sample FAQs into your RAG engine.
+              </p>
+            </div>
+            <MotionButton
+              type="button"
+              variant="primary"
+              size="sm"
+              shimmer
+              leftIcon={<Sparkles className="w-3.5 h-3.5" />}
+              onClick={handleLoadSampleKnowledge}
+              disabled={isLoading}
+            >
+              Load Sample Knowledge Pack
+            </MotionButton>
           </div>
         ) : (
           <div className="divide-y divide-zinc-100">
-            {knowledgeSources.map(source => {
+            {knowledgeSources
+              .filter(s =>
+                s.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                (s.sourceUrl && s.sourceUrl.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                (s.content && s.content.toLowerCase().includes(searchQuery.toLowerCase()))
+              )
+              .map(source => {
               const linkedBots = chatbots.filter(b => source.chatbotIds?.includes(b.id));
               const isEditingLinks = editingLinksSourceId === source.id;
 

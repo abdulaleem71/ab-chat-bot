@@ -30,11 +30,14 @@ import { ExpiredTrialModal } from './components/pricing/ExpiredTrialModal';
 import { CheckoutModal } from './components/pricing/CheckoutModal';
 import { AdminApp } from './admin/AdminApp';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { ToastProvider, useToast } from './context/ToastContext';
+import { CommandPalette } from './components/common/CommandPalette';
 import { Chatbot, KnowledgeSource, Conversation, Message, SupportTicket, VisitorLead, GroundingSource, AnalyticsSummary, TenantPlan } from './types';
 import { MessageSquare, X, AlertCircle, Loader2 } from 'lucide-react';
 
 function DashboardContent() {
   const { isAuthenticated, tenant, switchPlan } = useAuth();
+  const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [chatbots, setChatbots] = useState<Chatbot[]>([]);
   const [selectedBot, setSelectedBot] = useState<Chatbot | null>(null);
@@ -48,7 +51,8 @@ function DashboardContent() {
   // Effective current bot for preview and views
   const activeBot = selectedBot || (chatbots.length > 0 ? chatbots[0] : null);
 
-  // Modals & Floating preview & Mobile Menu
+  // Modals & Floating preview & Mobile Menu & Command Palette
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isBotEditorOpen, setIsBotEditorOpen] = useState(false);
   const [editingBot, setEditingBot] = useState<Partial<Chatbot> | null>(null);
   const [isWidgetModalOpen, setIsWidgetModalOpen] = useState(false);
@@ -257,9 +261,11 @@ function DashboardContent() {
         if (updated) {
           setChatbots(prev => prev.map(b => (b.id === updated.id ? updated : b)));
           if (selectedBot?.id === updated.id) setSelectedBot(updated);
+          showToast(`Successfully updated "${updated.name}" settings!`, 'success');
         }
       } catch (e) {
         console.log('Error updating chatbot:', e);
+        showToast('Failed to update chatbot.', 'error');
       }
     } else {
       try {
@@ -274,9 +280,11 @@ function DashboardContent() {
         if (newBot) {
           setChatbots(prev => [newBot, ...prev]);
           setSelectedBot(newBot);
+          showToast(`Created new assistant "${newBot.name}"!`, 'success');
         }
       } catch (e) {
         console.log('Error creating chatbot:', e);
+        showToast('Failed to create chatbot.', 'error');
       }
     }
   };
@@ -315,9 +323,11 @@ function DashboardContent() {
           }
           return remaining;
         });
+        showToast(`Chatbot "${bot.name}" has been deleted.`, 'info');
       }
     } catch (e) {
       console.log('Error deleting chatbot:', e);
+      showToast('Failed to delete chatbot.', 'error');
     }
   };
 
@@ -520,6 +530,7 @@ function DashboardContent() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
       />
 
       <VerificationBanner />
@@ -548,6 +559,10 @@ function DashboardContent() {
                     setIsMobileMenuOpen(false);
                   }}
                   unreadCount={unreadCount}
+                  onOpenCommandPalette={() => {
+                    setIsMobileMenuOpen(false);
+                    setIsCommandPaletteOpen(true);
+                  }}
                 />
               </div>
             </div>
@@ -558,7 +573,12 @@ function DashboardContent() {
         {/* Desktop Sidebar (Only for authenticated tenant session) */}
         {isAuthenticated && (
           <div className="hidden lg:block shrink-0">
-            <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} unreadCount={unreadCount} />
+            <Sidebar
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              unreadCount={unreadCount}
+              onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+            />
           </div>
         )}
 
@@ -855,6 +875,30 @@ function DashboardContent() {
         monthlyPrice={checkoutTargetPlan.monthlyPrice}
         annualPrice={checkoutTargetPlan.annualPrice}
       />
+
+      {/* Global Command Palette (Cmd+K) */}
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onNavigate={(tab) => {
+          setActiveTab(tab);
+          setIsCommandPaletteOpen(false);
+        }}
+        chatbots={chatbots}
+        onSelectBotForTest={(bot) => {
+          setSelectedBot(bot);
+          setActiveTab('playground');
+          setIsCommandPaletteOpen(false);
+        }}
+        onOpenCreateBot={() => {
+          setIsCommandPaletteOpen(false);
+          handleCreateBot();
+        }}
+        onOpenEmbedModal={() => {
+          setIsCommandPaletteOpen(false);
+          handleOpenEmbedModal();
+        }}
+      />
     </div>
   );
 }
@@ -1040,7 +1084,9 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <DashboardContent />
+      <ToastProvider>
+        <DashboardContent />
+      </ToastProvider>
     </AuthProvider>
   );
 }

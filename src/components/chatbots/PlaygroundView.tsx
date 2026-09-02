@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Chatbot, Message, GroundingSource } from '../../types';
 import { MarkdownContent } from '../../lib/markdown';
-import { Send, Bot, User, Sparkles, BookOpen, RotateCcw, ShieldCheck, CheckCircle2, ChevronRight, Loader2, ExternalLink, Layers, Code } from 'lucide-react';
+import { Send, Bot, User, Sparkles, BookOpen, RotateCcw, ShieldCheck, CheckCircle2, ChevronRight, Loader2, ExternalLink, Layers, Code, Copy, Check } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
 import { getModelDisplayName } from '../../config/models';
 import { telemetry } from '../../lib/telemetry';
@@ -28,8 +28,15 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeSources, setActiveSources] = useState<GroundingSource[]>([]);
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const handleCopyMessage = (msgId: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedMsgId(msgId);
+    setTimeout(() => setCopiedMsgId(null), 2500);
+  };
 
   useEffect(() => {
     if (selectedBot) {
@@ -281,7 +288,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
                 )}
 
                 <div
-                  className={`max-w-[85%] rounded-2xl p-4 text-xs shadow-2xs ${
+                  className={`max-w-[85%] rounded-2xl p-4 text-xs shadow-2xs relative group ${
                     msg.sender === 'visitor'
                       ? 'bg-zinc-950 text-white rounded-tr-xs font-medium'
                       : 'bg-white border border-zinc-200/80 text-zinc-900 rounded-tl-xs'
@@ -289,8 +296,42 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
                 >
                   <MarkdownContent content={msg.content} />
 
+                  {msg.sender === 'bot' && (
+                    <div className="mt-2.5 pt-2 border-t border-zinc-100 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-zinc-400 font-mono">
+                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        {msg.sourcesUsed && msg.sourcesUsed.length > 0 && (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200">
+                            <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                            Grounded RAG
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyMessage(msg.id, msg.content)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-zinc-400 hover:text-zinc-700 rounded-md hover:bg-zinc-100 cursor-pointer flex items-center gap-1 text-[10px] font-medium"
+                        title="Copy response"
+                      >
+                        {copiedMsgId === msg.id ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-600" />
+                            <span className="text-emerald-600 font-bold">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Copy</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
                   {msg.sourcesUsed && msg.sourcesUsed.length > 0 && (
-                    <div className="mt-3 pt-2.5 border-t border-zinc-100 space-y-1">
+                    <div className="mt-2 pt-2 border-t border-zinc-100 space-y-1">
                       <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block font-heading">
                         Citations & Sources:
                       </span>

@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { NomadsLogo } from '../common/NomadsLogo';
 import { MotionButton } from '../common/MotionButton';
-import { Bot, Sparkles, Building2, ChevronDown, Bell, Code, LogIn, LogOut, UserPlus, CreditCard, ShieldCheck, Menu, Settings } from 'lucide-react';
+import { Bot, Sparkles, Building2, ChevronDown, Bell, Code, LogIn, LogOut, UserPlus, CreditCard, ShieldCheck, Menu, Settings, Search, Command } from 'lucide-react';
 
 interface NavbarProps {
   onOpenWidgetModal: () => void;
@@ -12,9 +12,17 @@ interface NavbarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   onToggleMobileMenu?: () => void;
+  onOpenCommandPalette?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onOpenWidgetModal, onOpenAuthModal, activeTab, setActiveTab, onToggleMobileMenu }) => {
+export const Navbar: React.FC<NavbarProps> = ({
+  onOpenWidgetModal,
+  onOpenAuthModal,
+  activeTab,
+  setActiveTab,
+  onToggleMobileMenu,
+  onOpenCommandPalette,
+}) => {
   const { tenant, user, switchPlan, isAuthenticated, logout } = useAuth();
   const [showOrgDropdown, setShowOrgDropdown] = useState(false);
   const [showUserDropdown, setShowUserDropdown] = useState(false);
@@ -133,7 +141,24 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenWidgetModal, onOpenAuthMod
       </div>
 
       {/* Right: Marketing Links (logged-out only) & Auth / Account Menu */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2.5 sm:gap-3">
+        {/* Search / Command Palette button for logged in user */}
+        {hasActiveSession && onOpenCommandPalette && (
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={onOpenCommandPalette}
+            className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-zinc-100/90 hover:bg-zinc-200/80 border border-zinc-200/80 rounded-xl text-xs text-zinc-500 hover:text-zinc-900 transition cursor-pointer shadow-2xs font-body"
+            title="Search or jump to command (Cmd+K)"
+          >
+            <Search className="w-3.5 h-3.5 text-zinc-400" />
+            <span className="font-medium">Quick search...</span>
+            <kbd className="text-[10px] font-mono bg-white border border-zinc-300 px-1.5 py-0.5 rounded-md text-zinc-600 font-bold shadow-2xs">
+              ⌘K
+            </kbd>
+          </motion.button>
+        )}
+
         {/* Marketing shell links (only appear on logged-out pages) */}
         {!hasActiveSession && (
           <>

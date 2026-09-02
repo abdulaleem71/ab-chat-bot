@@ -7,6 +7,7 @@ import { SecurityService } from '../../services/securityService';
 import { MotionButton } from '../common/MotionButton';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { GEMINI_CONFIG } from '../../config/models';
+import { BOT_TEMPLATES, BotTemplate } from '../../data/botTemplates';
 
 interface BotEditorModalProps {
   bot: Partial<Chatbot> | null;
@@ -320,6 +321,53 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
 
           {activeTab === 'general' && (
             <>
+              {/* Starter Templates Picker */}
+              <div className="bg-zinc-50 border border-zinc-200/90 rounded-2xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-zinc-900 flex items-center gap-1.5 font-heading">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                    Quick Starter Templates
+                  </span>
+                  <span className="text-[10px] text-zinc-500 font-medium">Click to prefill AI persona & rules</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {BOT_TEMPLATES.map(tmpl => (
+                    <button
+                      key={tmpl.id}
+                      type="button"
+                      onClick={() => {
+                        setFormData(prev => ({
+                          ...prev,
+                          name: tmpl.name,
+                          description: tmpl.description,
+                          systemInstruction: tmpl.systemPrompt,
+                          tone: (tmpl.tone.charAt(0).toUpperCase() + tmpl.tone.slice(1)) as BotTone,
+                          avatar: tmpl.avatar,
+                          primaryColor: tmpl.primaryColor,
+                          greetingMessage: tmpl.greetingMessage,
+                          fallbackMessage: tmpl.fallbackMessage,
+                          suggestedQuestions: tmpl.starterQuestions,
+                          model: tmpl.model as BotModel,
+                        }));
+                        setVersionSuccessMessage(`Loaded "${tmpl.name}" template configuration!`);
+                        setTimeout(() => setVersionSuccessMessage(null), 3000);
+                      }}
+                      className="p-2.5 bg-white border border-zinc-200 hover:border-zinc-900 rounded-xl text-left transition-all cursor-pointer group shadow-2xs hover:shadow-xs"
+                    >
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className="text-base">{tmpl.avatar}</span>
+                        <span className="text-[11px] font-bold text-zinc-900 group-hover:text-black truncate font-heading">
+                          {tmpl.name}
+                        </span>
+                      </div>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-600 block">
+                        {tmpl.badge}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-zinc-800 mb-1">Chatbot Name</label>
                 <input
