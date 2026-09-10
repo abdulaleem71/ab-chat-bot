@@ -7,15 +7,18 @@ export type ButtonVariant =
   | 'secondary'
   | 'outline'
   | 'ghost'
+  | 'destructive'
   | 'danger'
   | 'emerald'
   | 'glow'
   | 'dark'
-  | 'zinc';
+  | 'zinc'
+  | 'brand';
 
 export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'icon-sm' | 'icon-md' | 'icon-lg';
 
 export interface MotionButtonProps extends Omit<HTMLMotionProps<'button'>, 'size'> {
+  type?: 'button' | 'submit' | 'reset';
   variant?: ButtonVariant;
   size?: ButtonSize;
   isLoading?: boolean;
@@ -32,6 +35,7 @@ export interface MotionButtonProps extends Omit<HTMLMotionProps<'button'>, 'size
 export const MotionButton = forwardRef<HTMLButtonElement, MotionButtonProps>(
   (
     {
+      type = 'button',
       variant = 'primary',
       size = 'md',
       isLoading = false,
@@ -84,6 +88,10 @@ export const MotionButton = forwardRef<HTMLButtonElement, MotionButtonProps>(
         'bg-white hover:bg-zinc-50 text-zinc-900 border border-zinc-300 hover:border-zinc-950 shadow-2xs focus-visible:ring-2 focus-visible:ring-zinc-950',
       ghost:
         'bg-transparent hover:bg-zinc-100 text-zinc-700 hover:text-zinc-950 border border-transparent',
+      destructive:
+        'bg-rose-600 hover:bg-rose-700 text-white shadow-xs hover:shadow-rose-500/25 border border-rose-600 focus-visible:ring-2 focus-visible:ring-rose-500',
+      brand:
+        'bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs hover:shadow-indigo-500/25 border border-indigo-600 focus-visible:ring-2 focus-visible:ring-indigo-500',
       danger:
         'bg-rose-600 hover:bg-rose-700 text-white shadow-xs hover:shadow-rose-500/25 border border-rose-700 focus-visible:ring-2 focus-visible:ring-rose-500',
       emerald:
@@ -118,6 +126,7 @@ export const MotionButton = forwardRef<HTMLButtonElement, MotionButtonProps>(
     return (
       <motion.button
         ref={ref}
+        type={type}
         disabled={disabled || isLoading}
         onClick={handleButtonClick}
         whileHover={

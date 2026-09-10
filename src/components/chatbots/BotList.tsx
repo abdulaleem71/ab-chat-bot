@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Chatbot } from '../../types';
 import { Bot, Plus, Settings, MessageSquare, Code, ShieldCheck, Trash2, Globe, AlertTriangle, Search, BookOpen } from 'lucide-react';
-import { MotionButton } from '../common/MotionButton';
-import { ConfirmDialog } from '../common/ConfirmDialog';
+import { Button, MotionButton, Badge, EmptyState, ConfirmDialog, BotListSkeleton } from '../common';
 import { getModelDisplayName } from '../../config/models';
 
 interface BotListProps {
   chatbots: Chatbot[];
+  isLoading?: boolean;
   onOpenCreateModal: () => void;
   onEditBot: (bot: Chatbot) => void;
   onTestBot: (bot: Chatbot) => void;
@@ -18,6 +18,7 @@ interface BotListProps {
 
 export const BotList: React.FC<BotListProps> = ({
   chatbots,
+  isLoading = false,
   onOpenCreateModal,
   onEditBot,
   onTestBot,
@@ -109,27 +110,28 @@ export const BotList: React.FC<BotListProps> = ({
       </div>
 
       {/* Grid of Chatbots */}
-      {filteredBots.length === 0 ? (
-        <div className="bg-white border border-dashed border-zinc-300 rounded-3xl p-12 text-center space-y-4">
-          <div className="w-12 h-12 bg-zinc-100 rounded-2xl flex items-center justify-center mx-auto text-zinc-500">
-            <Bot className="w-6 h-6" />
-          </div>
-          <div>
-            <h3 className="text-base font-bold text-zinc-900 font-heading">No Chatbots Found</h3>
-            <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 font-body">
-              {searchQuery ? 'No chatbots match your current search criteria.' : 'Create your first custom AI Assistant to get started.'}
-            </p>
-          </div>
-          <MotionButton
-            variant="primary"
-            size="md"
-            shimmer
-            leftIcon={<Plus className="w-4 h-4" />}
-            onClick={onOpenCreateModal}
-          >
-            Create New Chatbot
-          </MotionButton>
-        </div>
+      {isLoading ? (
+        <BotListSkeleton count={6} />
+      ) : filteredBots.length === 0 ? (
+        <EmptyState
+          icon={<Bot className="w-6 h-6 text-zinc-700" />}
+          badge={searchQuery || statusFilter !== 'all' ? 'Filtered Search' : 'Getting Started'}
+          title={chatbots.length === 0 ? 'No Chatbots Created Yet' : 'No Chatbots Found'}
+          description={
+            chatbots.length === 0
+              ? 'Create your first custom AI Assistant to ground documentation and deploy live.'
+              : `No chatbots match your search criteria. Try a different keyword or reset filters.`
+          }
+          actionLabel={chatbots.length === 0 ? 'Create New Chatbot' : 'Reset Filters'}
+          onAction={
+            chatbots.length === 0
+              ? onOpenCreateModal
+              : () => {
+                  setSearchQuery('');
+                  setStatusFilter('all');
+                }
+          }
+        />
       ) : (
         <motion.div
           variants={containerVariants}
@@ -159,10 +161,14 @@ export const BotList: React.FC<BotListProps> = ({
                         <h3 className="text-xs sm:text-sm font-extrabold text-zinc-900 group-hover:text-black transition truncate max-w-[140px] font-heading">
                           {bot.name}
                         </h3>
-                        <span className="bg-zinc-100 text-zinc-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase flex items-center gap-1 font-mono">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <Badge
+                          variant={bot.status === 'active' ? 'success' : 'secondary'}
+                          size="sm"
+                          dot
+                          pulse={bot.status === 'active'}
+                        >
                           {bot.status}
-                        </span>
+                        </Badge>
                       </div>
                       {bot.websiteUrl && (
                         <p className="text-[11px] text-zinc-400 truncate flex items-center gap-1 mt-0.5 font-mono">
@@ -179,6 +185,7 @@ export const BotList: React.FC<BotListProps> = ({
                     onClick={() => onEditBot(bot)}
                     className="p-1.5 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-xl transition cursor-pointer"
                     title="Bot Settings"
+                    aria-label={`Configure settings for ${bot.name}`}
                   >
                     <Settings className="w-4 h-4" />
                   </motion.button>
@@ -231,6 +238,7 @@ export const BotList: React.FC<BotListProps> = ({
                   onClick={() => onTrainBot(bot)}
                   className="p-2 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 border border-zinc-200 rounded-xl transition cursor-pointer"
                   title="Knowledge Base Documents"
+                  aria-label={`Knowledge base documents for ${bot.name}`}
                 >
                   <BookOpen className="w-4 h-4" />
                 </motion.button>
@@ -242,6 +250,7 @@ export const BotList: React.FC<BotListProps> = ({
                     onClick={() => setDeletingBot(bot)}
                     className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 border border-red-100 rounded-xl transition cursor-pointer"
                     title="Delete Chatbot"
+                    aria-label={`Delete chatbot ${bot.name}`}
                   >
                     <Trash2 className="w-4 h-4" />
                   </motion.button>

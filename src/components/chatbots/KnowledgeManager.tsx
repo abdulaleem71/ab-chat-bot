@@ -1,28 +1,68 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Chatbot, KnowledgeSource } from '../../types';
-import { Globe, FileText, HelpCircle, Plus, Trash2, CheckCircle2, Sparkles, Loader2, Link2, ExternalLink, Laptop, Code, Check } from 'lucide-react';
+import {
+  Globe,
+  FileText,
+  HelpCircle,
+  Plus,
+  Trash2,
+  CheckCircle2,
+  Sparkles,
+  Loader2,
+  Link2,
+  ExternalLink,
+  Laptop,
+  Code,
+  Check,
+  Bot,
+  BookOpen,
+  AlertTriangle,
+  Layers,
+  Eye,
+  Search,
+  Zap,
+  BarChart3,
+  Database,
+  Upload,
+} from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import { EmptyState, KnowledgeEmptyState } from '../common/EmptyState';
+import { KnowledgeChunkRowSkeleton, KnowledgeChunkRowsSkeleton } from '../common/SkeletonLoader';
+import { ChunkInspectionDrawer } from './ChunkInspectionDrawer';
+import { SearchQuerySimulator } from './SearchQuerySimulator';
+import { IngestionProgressBar, IngestionStep } from './IngestionProgressBar';
+import { KnowledgeOnboardingCards } from './KnowledgeOnboardingCards';
+import { extractChunksFromSource, calculateSourceMetrics } from '../../lib/chunkUtils';
+import { parseKnowledgeFile } from '../../lib/fileUploadUtils';
 
 interface KnowledgeManagerProps {
   chatbots: Chatbot[];
+  selectedBot?: Chatbot | null;
+  onSelectBot?: (bot: Chatbot) => void;
   knowledgeSources: KnowledgeSource[];
+  isFetchingSources?: boolean;
   onAddSource: (source: Partial<KnowledgeSource> & { chatbotIds: string[] }) => Promise<void>;
   onScrapeUrl: (url: string, chatbotIds: string[]) => Promise<void>;
   onIngestHtml?: (html: string, url?: string, title?: string, chatbotIds?: string[]) => Promise<void>;
   onUpdateSourceLinks: (sourceId: string, chatbotIds: string[]) => Promise<void>;
   onDeleteSource: (sourceId: string) => Promise<void>;
+  onCreateBot?: () => void;
 }
 
 export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   chatbots = [],
+  selectedBot,
+  onSelectBot,
   knowledgeSources = [],
+  isFetchingSources = false,
   onAddSource,
   onScrapeUrl,
   onIngestHtml,
   onUpdateSourceLinks,
   onDeleteSource,
+  onCreateBot,
 }) => {
   const [activeTab, setActiveTab] = useState<'url' | 'local' | 'faq' | 'text'>('url');
   const [inputUrl, setInputUrl] = useState('');
@@ -34,15 +74,53 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
   const [docTitle, setDocTitle] = useState('');
   const [docContent, setDocContent] = useState('');
 
-  // Multi-select chatbots for new source (default to all chatbots)
-  const [selectedChatbotIds, setSelectedChatbotIds] = useState<string[]>(chatbots.map(b => b.id));
+  // Chunk Inspection Drawer State
+  const [selectedSourceForInspection, setSelectedSourceForInspection] = useState<KnowledgeSource | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+  // Granular Ingestion Progression State
+  const [ingestionStep, setIngestionStep] = useState<IngestionStep | null>(null);
+  const [ingestingUrl, setIngestingUrl] = useState<string>('');
+
+  // Search Simulator Query State
+  const [simulatorInitialQuery, setSimulatorInitialQuery] = useState<string>('');
+
+  // Multi-select chatbots for new source (default to activeBot or all chatbots)
+  const [selectedChatbotIds, setSelectedChatbotIds] = useState<string[]>(() => {
+    if (selectedBot) return [selectedBot.id];
+    return chatbots.map(b => b.id);
+  });
+
+  // Keep selected target bots in sync with activeBot and chatbots list
+  useEffect(() => {
+    if (selectedChatbotIds.length === 0 && chatbots.length > 0) {
+      if (selectedBot) {
+        setSelectedChatbotIds([selectedBot.id]);
+      } else {
+        setSelectedChatbotIds(chatbots.map(b => b.id));
+      }
+    }
+  }, [chatbots, selectedBot]);
+
   const [isLoading, setIsLoading] = useState(false);
   const [deletingSource, setDeletingSource] = useState<KnowledgeSource | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [editingLinksSourceId, setEditingLinksSourceId] = useState<string | null>(null);
   const [tempLinksBotIds, setTempLinksBotIds] = useState<string[]>([]);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [urlError, setUrlError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const handleOpenDrawer = (source: KnowledgeSource) => {
+    setSelectedSourceForInspection(source);
+    setIsDrawerOpen(true);
+  };
+
+  const handleTestChunkInSimulator = (queryText: string) => {
+    setSimulatorInitialQuery(queryText);
+    // Scroll to top simulator smoothly
+    window.scrollTo({ top: 120, behavior: 'smooth' });
+  };
 
   const handleLoadSampleKnowledge = async () => {
     if (isLoading) return;
@@ -53,6 +131,13 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
     }
     setIsLoading(true);
     setStatusMessage(null);
+    setIngestionStep('connecting');
+    setIngestingUrl('Sample Knowledge Pack (FAQs & Docs)');
+
+    const t1 = setTimeout(() => setIngestionStep('parsing'), 200);
+    const t2 = setTimeout(() => setIngestionStep('sanitizing'), 450);
+    const t3 = setTimeout(() => setIngestionStep('chunking'), 700);
+
     try {
       await onAddSource({
         type: 'faq',
@@ -66,8 +151,20 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         content: 'NomadsChat is an enterprise AI customer support platform. To embed the live widget on any HTML website, simply paste the single script tag before the closing </body> tag. Features include RAG citations, lead capture, and instant human operator takeover.',
         chatbotIds: targetBots,
       });
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      setIngestionStep('ready');
       setStatusMessage({ type: 'success', text: 'Loaded 2 sample knowledge documents into your tenant RAG database!' });
+      setTimeout(() => {
+        setIngestionStep(null);
+        setIngestingUrl('');
+      }, 2500);
     } catch (err: any) {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      setIngestionStep(null);
       setStatusMessage({ type: 'error', text: 'Failed to load sample knowledge documents.' });
     } finally {
       setIsLoading(false);
@@ -81,17 +178,43 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
     );
   };
 
-  const handleScrape = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const url = inputUrl.trim();
+  const executeScrapeUrl = async (targetUrl: string) => {
+    const url = targetUrl.trim();
     if (!url || isLoading) return;
-    if (selectedChatbotIds.length === 0) {
-      setStatusMessage({ type: 'error', text: 'Please select at least one chatbot to link this knowledge source to.' });
+    setUrlError(null);
+    setStatusMessage(null);
+
+    const targetBots = selectedChatbotIds.length > 0 ? selectedChatbotIds : chatbots.map(b => b.id);
+    if (targetBots.length === 0) {
+      const errText = 'Please select at least one chatbot to link this knowledge source to.';
+      setUrlError(errText);
+      setStatusMessage({ type: 'error', text: errText });
+      return;
+    }
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      const errText = 'Invalid URL format: URL must begin with http:// or https:// (e.g., https://example.com)';
+      setUrlError(errText);
+      setStatusMessage({ type: 'error', text: errText });
+      return;
+    }
+
+    const nonHtmlFileRegex = /\.(png|jpe?g|gif|webp|svg|bmp|ico|pdf|zip|tar|gz|7z|mp4|mov|avi|wmv|mp3|wav|ogg|flac|exe|dmg|bin|iso)(\?.*)?$/i;
+    if (nonHtmlFileRegex.test(url)) {
+      const ext = url.match(nonHtmlFileRegex)?.[1] || 'binary';
+      const errText = `Non-HTML resource detected (.${ext}). URL scraping only supports HTML web pages and text documents.`;
+      setUrlError(errText);
+      setStatusMessage({ type: 'error', text: errText });
       return;
     }
 
     setIsLoading(true);
-    setStatusMessage(null);
+    setIngestionStep('connecting');
+    setIngestingUrl(url);
+
+    const step1 = setTimeout(() => setIngestionStep('parsing'), 300);
+    const step2 = setTimeout(() => setIngestionStep('sanitizing'), 650);
+    const step3 = setTimeout(() => setIngestionStep('chunking'), 1000);
 
     const isLocal = url.includes('localhost') || url.includes('127.0.0.1') || url.includes('0.0.0.0');
 
@@ -100,10 +223,19 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         const localRes = await fetch(url, { mode: 'cors' });
         if (localRes.ok) {
           const html = await localRes.text();
-          await onIngestHtml(html, url, `Local Page: ${url}`, selectedChatbotIds);
+          await onIngestHtml(html, url, `Local Page: ${url}`, targetBots);
+          clearTimeout(step1);
+          clearTimeout(step2);
+          clearTimeout(step3);
+          setIngestionStep('ready');
           setInputUrl('');
+          setUrlError(null);
           setStatusMessage({ type: 'success', text: `Successfully fetched local page from ${url} and indexed RAG chunks!` });
           setIsLoading(false);
+          setTimeout(() => {
+            setIngestionStep(null);
+            setIngestingUrl('');
+          }, 2500);
           return;
         }
       } catch (clientErr) {
@@ -112,24 +244,45 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
     }
 
     try {
-      await onScrapeUrl(url, selectedChatbotIds);
+      await onScrapeUrl(url, targetBots);
+      clearTimeout(step1);
+      clearTimeout(step2);
+      clearTimeout(step3);
+      setIngestionStep('ready');
       setInputUrl('');
+      setUrlError(null);
       setStatusMessage({ type: 'success', text: 'URL successfully crawled, parsed into Markdown, and indexed into RAG knowledge chunks!' });
+      setTimeout(() => {
+        setIngestionStep(null);
+        setIngestingUrl('');
+      }, 2500);
     } catch (err: any) {
+      clearTimeout(step1);
+      clearTimeout(step2);
+      clearTimeout(step3);
+      setIngestionStep(null);
       if (isLocal) {
+        const localErr = 'Remote cloud servers cannot reach your desktop localhost directly. Use the "Localhost & HTML Source" tab below to paste your local site HTML or text in 1 click!';
+        setUrlError(localErr);
         setStatusMessage({
           type: 'error',
-          text: 'Remote cloud servers cannot reach your desktop localhost directly. Use the "Localhost & HTML Source" tab below to paste your local site HTML or text in 1 click!',
+          text: localErr,
         });
         setActiveTab('local');
         setLocalUrl(url);
       } else {
-        setStatusMessage({ type: 'error', text: err.message || 'Failed to crawl website URL. Ensure it is accessible.' });
+        const diagnosticError = err.message || 'URL unreachable: connection failed. Ensure the server is online and accessible.';
+        setUrlError(diagnosticError);
+        setStatusMessage({ type: 'error', text: diagnosticError });
       }
     } finally {
       setIsLoading(false);
-      setTimeout(() => setStatusMessage(null), 6000);
     }
+  };
+
+  const handleScrape = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeScrapeUrl(inputUrl);
   };
 
   const handleIngestRawHtml = async (e: React.FormEvent) => {
@@ -141,13 +294,28 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
     }
     setIsLoading(true);
     setStatusMessage(null);
+    setIngestionStep('parsing');
+    setIngestingUrl(localUrl || 'Raw HTML Document');
+
+    const step1 = setTimeout(() => setIngestionStep('sanitizing'), 300);
+    const step2 = setTimeout(() => setIngestionStep('chunking'), 600);
 
     try {
       await onIngestHtml(rawHtmlContent.trim(), localUrl.trim() || undefined, htmlDocTitle.trim() || undefined, selectedChatbotIds);
+      clearTimeout(step1);
+      clearTimeout(step2);
+      setIngestionStep('ready');
       setRawHtmlContent('');
       setHtmlDocTitle('');
       setStatusMessage({ type: 'success', text: 'Website HTML successfully converted to structured Markdown chunks and indexed!' });
+      setTimeout(() => {
+        setIngestionStep(null);
+        setIngestingUrl('');
+      }, 2500);
     } catch (err: any) {
+      clearTimeout(step1);
+      clearTimeout(step2);
+      setIngestionStep(null);
       setStatusMessage({ type: 'error', text: err.message || 'Failed to ingest HTML content.' });
     } finally {
       setIsLoading(false);
@@ -164,6 +332,8 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
     }
     setIsLoading(true);
     setStatusMessage(null);
+    setIngestionStep('chunking');
+    setIngestingUrl(`FAQ: ${faqQuestion.trim().slice(0, 35)}...`);
 
     try {
       await onAddSource({
@@ -172,10 +342,16 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         content: `Question: ${faqQuestion.trim()}\nAnswer: ${faqAnswer.trim()}`,
         chatbotIds: selectedChatbotIds,
       });
+      setIngestionStep('ready');
       setFaqQuestion('');
       setFaqAnswer('');
       setStatusMessage({ type: 'success', text: 'FAQ Q&A pair successfully indexed into knowledge base.' });
+      setTimeout(() => {
+        setIngestionStep(null);
+        setIngestingUrl('');
+      }, 2500);
     } catch (err: any) {
+      setIngestionStep(null);
       setStatusMessage({ type: 'error', text: 'Error adding FAQ pair.' });
     } finally {
       setIsLoading(false);
@@ -192,6 +368,10 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
     }
     setIsLoading(true);
     setStatusMessage(null);
+    setIngestionStep('parsing');
+    setIngestingUrl(docTitle.trim());
+
+    const step1 = setTimeout(() => setIngestionStep('chunking'), 300);
 
     try {
       await onAddSource({
@@ -200,14 +380,139 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         content: docContent.trim(),
         chatbotIds: selectedChatbotIds,
       });
+      clearTimeout(step1);
+      setIngestionStep('ready');
       setDocTitle('');
       setDocContent('');
       setStatusMessage({ type: 'success', text: 'Document successfully indexed and chunked for grounded AI retrieval.' });
+      setTimeout(() => {
+        setIngestionStep(null);
+        setIngestingUrl('');
+      }, 2500);
     } catch (err: any) {
+      clearTimeout(step1);
+      setIngestionStep(null);
       setStatusMessage({ type: 'error', text: 'Error indexing document.' });
     } finally {
       setIsLoading(false);
       setTimeout(() => setStatusMessage(null), 4000);
+    }
+  };
+
+  const [tab4IsDragging, setTab4IsDragging] = useState(false);
+  const [tab4FileError, setTab4FileError] = useState<string | null>(null);
+  const tab4FileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleTab4ProcessFile = async (file: File) => {
+    setTab4FileError(null);
+    try {
+      const parsed = await parseKnowledgeFile(file);
+      if (!parsed.content || parsed.content.length < 5) {
+        setTab4FileError('File contains insufficient readable text.');
+        return;
+      }
+      setDocTitle(parsed.title);
+      setDocContent(parsed.content);
+      setStatusMessage({
+        type: 'success',
+        text: `Loaded "${parsed.fileName}" (${parsed.formattedSize}, ~${parsed.estimatedChunks} chunks). Ready to index!`,
+      });
+    } catch (err: any) {
+      setTab4FileError(err?.message || 'Could not parse the selected file.');
+    }
+  };
+
+  const handleTab4Drop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setTab4IsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await handleTab4ProcessFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleQuickCrawlFromCard = async (url: string) => {
+    setInputUrl(url);
+    await executeScrapeUrl(url);
+  };
+
+  const handleQuickUploadDocumentFromCard = async (title: string, content: string) => {
+    const targetBots = selectedChatbotIds.length > 0 ? selectedChatbotIds : chatbots.map(b => b.id);
+    if (targetBots.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please select at least one chatbot to link this document to.' });
+      return;
+    }
+    setIsLoading(true);
+    setStatusMessage(null);
+    setIngestionStep('parsing');
+    setIngestingUrl(title);
+
+    const step1 = setTimeout(() => setIngestionStep('chunking'), 300);
+
+    try {
+      await onAddSource({
+        type: 'text',
+        title,
+        content,
+        chatbotIds: targetBots,
+      });
+      clearTimeout(step1);
+      setIngestionStep('ready');
+      setStatusMessage({ type: 'success', text: `Document "${title}" successfully ingested and indexed into RAG vectors!` });
+      setTimeout(() => {
+        setIngestionStep(null);
+        setIngestingUrl('');
+      }, 2500);
+    } catch (err: any) {
+      clearTimeout(step1);
+      setIngestionStep(null);
+      setStatusMessage({ type: 'error', text: err?.message || 'Error indexing document.' });
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setStatusMessage(null), 5000);
+    }
+  };
+
+  const handleQuickAddFaqFromCard = async (question: string, answer: string) => {
+    const targetBots = selectedChatbotIds.length > 0 ? selectedChatbotIds : chatbots.map(b => b.id);
+    if (targetBots.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please select at least one chatbot to link this FAQ to.' });
+      return;
+    }
+    setIsLoading(true);
+    setStatusMessage(null);
+    setIngestionStep('chunking');
+    setIngestingUrl(`FAQ: ${question.slice(0, 30)}...`);
+
+    try {
+      await onAddSource({
+        type: 'faq',
+        title: `FAQ: ${question}`,
+        content: `Question: ${question}\nAnswer: ${answer}`,
+        chatbotIds: targetBots,
+      });
+      setIngestionStep('ready');
+      setStatusMessage({ type: 'success', text: 'FAQ Q&A pair successfully indexed into knowledge base.' });
+      setTimeout(() => {
+        setIngestionStep(null);
+        setIngestingUrl('');
+      }, 2500);
+    } catch (err: any) {
+      setIngestionStep(null);
+      setStatusMessage({ type: 'error', text: err?.message || 'Error adding FAQ pair.' });
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setStatusMessage(null), 4000);
+    }
+  };
+
+  const handleSelectTabAndScroll = (tab: 'url' | 'local' | 'faq' | 'text') => {
+    setActiveTab(tab);
+    const formEl = document.getElementById('knowledge-ingestion-form');
+    if (formEl) {
+      formEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const firstInput = formEl.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea');
+      if (firstInput) firstInput.focus();
     }
   };
 
@@ -236,33 +541,103 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         </div>
       </div>
 
+      {/* RAG Vector Simulator & Test Search */}
+      <SearchQuerySimulator
+        knowledgeSources={knowledgeSources}
+        selectedBot={selectedBot}
+        onInspectSource={handleOpenDrawer}
+        initialQuery={simulatorInitialQuery}
+        onClearInitialQuery={() => setSimulatorInitialQuery('')}
+      />
+
+      {/* Ingestion Pipeline Stepper (Active during scraping & ingestion) */}
+      {ingestionStep && (
+        <IngestionProgressBar
+          currentStep={ingestionStep}
+          targetUrl={ingestingUrl}
+          error={urlError}
+        />
+      )}
+
       {/* Ingestion & Chatbot Association Form */}
-      <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs space-y-6">
+      <div id="knowledge-ingestion-form" className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs space-y-6">
         <div className="border-b border-zinc-200 pb-4">
-          <label className="block text-xs font-extrabold text-zinc-900 mb-2 font-heading uppercase tracking-wide">
-            1. Select Target Chatbots for New Knowledge Source ({selectedChatbotIds.length} of {chatbots.length} selected)
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {chatbots.map(bot => {
-              const isSelected = selectedChatbotIds.includes(bot.id);
-              return (
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <label className="block text-xs font-extrabold text-zinc-900 font-heading uppercase tracking-wide">
+              1. Target Assistants for New Knowledge ({selectedChatbotIds.length} of {chatbots.length} linked)
+            </label>
+            {chatbots.length > 0 && (
+              <div className="flex items-center gap-2">
                 <button
-                  key={bot.id}
                   type="button"
-                  onClick={() => toggleTargetBot(bot.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
-                    isSelected
-                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                      : 'bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100'
-                  }`}
+                  onClick={() => setSelectedChatbotIds(chatbots.map(b => b.id))}
+                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 cursor-pointer"
                 >
-                  <span>{bot.avatar || '🤖'}</span>
-                  <span>{bot.name}</span>
-                  {isSelected && <Check className="w-3.5 h-3.5 ml-0.5" />}
+                  Select All
                 </button>
-              );
-            })}
+                <span className="text-zinc-300">•</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedChatbotIds([])}
+                  className="text-[11px] font-bold text-zinc-500 hover:text-zinc-700 cursor-pointer"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
           </div>
+
+          {chatbots.length === 0 ? (
+            <div className="p-4 bg-zinc-50 border border-dashed border-zinc-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                  <Bot className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-zinc-900 font-heading">No AI Chatbots Created Yet</p>
+                  <p className="text-[11px] text-zinc-500 font-body">Create an assistant first to ground it with live web knowledge and FAQs.</p>
+                </div>
+              </div>
+              {onCreateBot && (
+                <MotionButton
+                  size="sm"
+                  variant="primary"
+                  leftIcon={<Plus className="w-3.5 h-3.5" />}
+                  onClick={onCreateBot}
+                >
+                  Create Chatbot
+                </MotionButton>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {chatbots.map(bot => {
+                const isSelected = selectedChatbotIds.includes(bot.id);
+                const isActive = selectedBot?.id === bot.id;
+                return (
+                  <button
+                    key={bot.id}
+                    type="button"
+                    onClick={() => toggleTargetBot(bot.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+                      isSelected
+                        ? 'bg-zinc-900 text-white border-zinc-900 shadow-xs'
+                        : 'bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100'
+                    }`}
+                  >
+                    <span>{bot.avatar || '🤖'}</span>
+                    <span>{bot.name}</span>
+                    {isActive && (
+                      <span className={`text-[9px] font-extrabold uppercase px-1 rounded-sm ${isSelected ? 'bg-zinc-700 text-zinc-200' : 'bg-zinc-200 text-zinc-600'}`}>
+                        Active
+                      </span>
+                    )}
+                    {isSelected && <Check className="w-3.5 h-3.5 ml-0.5" />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="flex border-b border-zinc-200 overflow-x-auto scrollbar-none gap-2">
@@ -343,13 +718,20 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
               <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Live Website URL</label>
               <div className="flex flex-col sm:flex-row gap-2">
                 <div className="relative flex-1">
-                  <Link2 className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Link2 className={`w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 transition-colors ${urlError ? 'text-red-500' : 'text-zinc-400'}`} />
                   <input
                     type="url"
                     value={inputUrl}
-                    onChange={e => setInputUrl(e.target.value)}
+                    onChange={e => {
+                      setInputUrl(e.target.value);
+                      if (urlError) setUrlError(null);
+                    }}
                     placeholder="https://example.com or https://company.com/services"
-                    className="w-full pl-9 pr-3.5 py-2.5 text-xs border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 font-medium font-body"
+                    className={`w-full pl-9 pr-3.5 py-2.5 text-xs border rounded-xl font-medium font-body transition-all ${
+                      urlError
+                        ? 'border-red-400 bg-red-50/20 text-red-950 focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100'
+                        : 'border-zinc-200 focus:outline-none focus:border-zinc-900 focus:ring-2 focus:ring-zinc-100'
+                    }`}
                     required
                   />
                 </div>
@@ -365,6 +747,38 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                   {isLoading ? 'Crawling Page...' : 'Scrape & Ingest'}
                 </MotionButton>
               </div>
+
+              {/* Inline Diagnostic Error Card */}
+              {urlError && (
+                <motion.div
+                  id="knowledge-url-inline-error"
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-2.5 p-3.5 bg-red-50/90 border border-red-200 rounded-2xl flex items-start gap-3 text-xs text-red-900 shadow-xs"
+                >
+                  <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 space-y-1">
+                    <p className="font-bold text-red-950 font-heading">
+                      {urlError}
+                    </p>
+                    {urlError.includes('timed out') && (
+                      <p className="text-[11px] text-red-800 font-normal">
+                        Diagnostic: The target server did not respond within the 5s timeout window. Verify the host is reachable or use the &ldquo;Localhost & HTML Source&rdquo; tab to paste the page markup directly.
+                      </p>
+                    )}
+                    {urlError.includes('Non-HTML') && (
+                      <p className="text-[11px] text-red-800 font-normal">
+                        Diagnostic: The server returned binary media rather than an HTML webpage. RAG indexing requires text documents or web pages.
+                      </p>
+                    )}
+                    {urlError.includes('DNS lookup failed') && (
+                      <p className="text-[11px] text-red-800 font-normal">
+                        Diagnostic: Domain name resolution failed. Check the hostname spelling or network connectivity.
+                      </p>
+                    )}
+                  </div>
+                </motion.div>
+              )}
             </div>
           </form>
         )}
@@ -459,6 +873,52 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
         {/* Tab 4: Text / Docs */}
         {activeTab === 'text' && (
           <form onSubmit={handleAddDoc} className="space-y-4">
+            {/* Drag & Drop File Helper Zone */}
+            <div>
+              <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">
+                Upload File or Drag & Drop (Optional)
+              </label>
+              <input
+                ref={tab4FileInputRef}
+                type="file"
+                accept=".pdf,.txt,.md,.markdown,.json,.csv,.docx,text/plain,application/pdf,text/markdown"
+                onChange={async e => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    await handleTab4ProcessFile(e.target.files[0]);
+                  }
+                }}
+                className="hidden"
+              />
+              <div
+                onDragOver={e => {
+                  e.preventDefault();
+                  setTab4IsDragging(true);
+                }}
+                onDragLeave={e => {
+                  e.preventDefault();
+                  setTab4IsDragging(false);
+                }}
+                onDrop={handleTab4Drop}
+                onClick={() => tab4FileInputRef.current?.click()}
+                className={`border border-dashed rounded-2xl p-4 text-center cursor-pointer transition flex flex-col items-center justify-center gap-1.5 ${
+                  tab4IsDragging
+                    ? 'border-indigo-500 bg-indigo-50/50'
+                    : 'border-zinc-200 bg-zinc-50/70 hover:bg-zinc-100/80'
+                }`}
+              >
+                <div className="flex items-center gap-2 text-xs font-bold text-zinc-800 font-heading">
+                  <Upload className="w-4 h-4 text-indigo-600" />
+                  <span>Drag & drop PDF, TXT, or Markdown file here, or <span className="text-indigo-600 underline">browse</span></span>
+                </div>
+                <span className="text-[10px] text-zinc-400 font-mono">
+                  Automatically extracts text, formats content, and calculates token volume
+                </span>
+              </div>
+              {tab4FileError && (
+                <p className="mt-1.5 text-[11px] text-red-600 font-medium">{tab4FileError}</p>
+              )}
+            </div>
+
             <div>
               <label className="block text-xs font-bold text-zinc-800 mb-1.5 font-heading">Document Title</label>
               <input
@@ -534,41 +994,59 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
           </div>
         )}
 
-        {knowledgeSources.length === 0 ? (
-          <div className="text-center py-10 border-2 border-dashed border-zinc-200 rounded-2xl space-y-3">
-            <Globe className="w-8 h-8 text-zinc-300 mx-auto" />
-            <div>
-              <p className="text-xs font-bold text-zinc-700 font-heading">No knowledge sources trained yet</p>
-              <p className="text-[11px] text-zinc-400 font-body max-w-md mx-auto mt-0.5">
-                Scrape a website URL, paste HTML source, or click below to load pre-made sample FAQs into your RAG engine.
-              </p>
+        {/* Active chunk indexing indicator */}
+        {isLoading && (
+          <div className="p-4 bg-indigo-50/60 border border-indigo-200/80 rounded-2xl mb-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-600"></span>
+              </span>
+              <span className="text-xs font-bold text-indigo-950 font-heading">
+                Extracting, Chunking & Indexing Embeddings...
+              </span>
             </div>
-            <MotionButton
-              type="button"
-              variant="primary"
-              size="sm"
-              shimmer
-              leftIcon={<Sparkles className="w-3.5 h-3.5" />}
-              onClick={handleLoadSampleKnowledge}
-              disabled={isLoading}
-            >
-              Load Sample Knowledge Pack
-            </MotionButton>
+            <KnowledgeChunkRowSkeleton className="bg-white/90 rounded-xl" />
           </div>
-        ) : (
-          <div className="divide-y divide-zinc-100">
-            {knowledgeSources
-              .filter(s =>
-                s.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                (s.sourceUrl && s.sourceUrl.toLowerCase().includes(searchQuery.toLowerCase())) ||
-                (s.content && s.content.toLowerCase().includes(searchQuery.toLowerCase()))
-              )
-              .map(source => {
-              const linkedBots = chatbots.filter(b => source.chatbotIds?.includes(b.id));
-              const isEditingLinks = editingLinksSourceId === source.id;
+        )}
 
-              return (
-                <div key={source.id} className="py-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 group hover:bg-zinc-50/70 p-3 rounded-2xl transition">
+        {isFetchingSources ? (
+          <KnowledgeChunkRowsSkeleton count={3} />
+        ) : knowledgeSources.length === 0 ? (
+          <KnowledgeOnboardingCards
+            onCrawlUrl={handleQuickCrawlFromCard}
+            onUploadDocument={handleQuickUploadDocumentFromCard}
+            onAddFaq={handleQuickAddFaqFromCard}
+            onLoadSamplePack={handleLoadSampleKnowledge}
+            onSelectTab={handleSelectTabAndScroll}
+            isLoading={isLoading}
+            selectedChatbotCount={selectedChatbotIds.length}
+          />
+        ) : (() => {
+          const filtered = knowledgeSources.filter(s =>
+            s.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (s.sourceUrl && s.sourceUrl.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (s.content && s.content.toLowerCase().includes(searchQuery.toLowerCase()))
+          );
+
+          if (filtered.length === 0) {
+            return (
+              <KnowledgeEmptyState
+                type="no-matches"
+                searchQuery={searchQuery}
+                onClearSearch={() => setSearchQuery('')}
+              />
+            );
+          }
+
+          return (
+            <div className="divide-y divide-zinc-100">
+              {filtered.map(source => {
+                const linkedBots = chatbots.filter(b => source.chatbotIds?.includes(b.id));
+                const isEditingLinks = editingLinksSourceId === source.id;
+
+                return (
+                  <div key={source.id} className="py-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 group hover:bg-zinc-50/70 p-3 rounded-2xl transition">
                   <div className="flex items-start gap-3 min-w-0 flex-1">
                     <div className="p-2.5 rounded-xl bg-zinc-100 text-zinc-800 shrink-0">
                       {source.type === 'url' ? (
@@ -581,24 +1059,37 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                     </div>
                     <div className="min-w-0 space-y-1.5 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="text-xs font-extrabold text-zinc-900 truncate font-heading">{source.title}</h4>
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase font-mono \${
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDrawer(source)}
+                          className="text-xs font-extrabold text-zinc-900 hover:text-indigo-600 truncate font-heading text-left transition cursor-pointer"
+                          title="Click to inspect all generated chunks"
+                        >
+                          {source.title}
+                        </button>
+                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase font-mono ${
                           source.status === 'indexed' ? 'bg-emerald-100 text-emerald-800' : 
                           source.status === 'failed' ? 'bg-red-100 text-red-800' :
                           'bg-amber-100 text-amber-800 animate-pulse'
                         }`}>
                           {source.status}
                         </span>
-                        <span className="text-[9px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-mono">
-                          {source.chunkCount || 1} Chunks
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDrawer(source)}
+                          className="text-[9px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-mono flex items-center gap-1 transition cursor-pointer"
+                          title="Click to view all chunks in inspection drawer"
+                        >
+                          <Layers className="w-3 h-3" />
+                          <span>{source.chunkCount || 1} Chunks</span>
+                        </button>
                       </div>
 
                       {source.sourceUrl && (
                         <a
                           href={source.sourceUrl}
                           target="_blank"
-                          rel="noreferrer"
+                          rel="noopener noreferrer"
                           className="text-[11px] text-indigo-600 hover:underline flex items-center gap-1 truncate font-mono"
                         >
                           <span className="truncate">{source.sourceUrl}</span>
@@ -681,21 +1172,46 @@ export const KnowledgeManager: React.FC<KnowledgeManagerProps> = ({
                     </div>
                   </div>
 
-                  <motion.button
-                    whileHover={{ scale: 1.15 }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => setDeletingSource(source)}
-                    className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition cursor-pointer shrink-0"
-                    title="Remove Source"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </motion.button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDrawer(source)}
+                      className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-zinc-700 hover:text-zinc-950 bg-zinc-100 hover:bg-zinc-200 transition flex items-center gap-1.5 cursor-pointer"
+                      title="Inspect chunks, character count & token weight"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Inspect Chunks</span>
+                    </button>
+
+                    <motion.button
+                      whileHover={{ scale: 1.15 }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => setDeletingSource(source)}
+                      className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition cursor-pointer"
+                      title="Remove Source"
+                      aria-label={`Remove knowledge source ${source.title || source.sourceUrl || 'source'}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </motion.button>
+                  </div>
                 </div>
               );
             })}
           </div>
-        )}
+        );
+      })()}
       </div>
+
+      {/* Chunk Inspection Slide-Over Drawer */}
+      <ChunkInspectionDrawer
+        source={selectedSourceForInspection}
+        isOpen={isDrawerOpen}
+        onClose={() => {
+          setIsDrawerOpen(false);
+          setSelectedSourceForInspection(null);
+        }}
+        onTestQuery={handleTestChunkInSimulator}
+      />
 
       {/* Delete Confirmation Modal */}
       <ConfirmDialog

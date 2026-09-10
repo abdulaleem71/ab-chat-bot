@@ -3,8 +3,57 @@ import { KnowledgeSource } from '../types';
 import { newId } from '../lib/ids';
 import dns from 'dns/promises';
 import ipaddr from 'ipaddr.js';
+import { GoogleGenAI } from '@google/genai';
 
 export class KnowledgeService {
+  /**
+   * Computes 768-dimensional vector embeddings for text chunks using Gemini text-embedding-004
+   */
+  static async computeChunkEmbeddings(chunks: string[]): Promise<(number[] | null)[]> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.warn('[Embedding Ingestion] GEMINI_API_KEY is not set. Skipping vector calculation.');
+      return chunks.map(() => null);
+    }
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const embeddings = await Promise.all(
+        chunks.map(async (chunk) => {
+          try {
+            const res = await ai.models.embedContent({
+              model: 'text-embedding-004',
+              contents: chunk.trim().slice(0, 8000),
+            });
+            const emb = res.embeddings;
+            if (Array.isArray(emb) && emb[0]?.values) {
+              return emb[0].values;
+            }
+            if ((emb as any)?.values && Array.isArray((emb as any).values)) {
+              return (emb as any).values;
+            }
+            return null;
+          } catch (err: any) {
+            console.warn('[Embedding Chunk Error]:', err.message || err);
+            return null;
+          }
+        })
+      );
+
+      return embeddings;
+    } catch (err: any) {
+      console.warn('[Embedding Pipeline Error]:', err.message || err);
+      return chunks.map(() => null);
+    }
+  }
+
   /**
    * Safe URL Fetching with SSRF Protection and Strict Manual Redirect Validation
    */
@@ -27,7 +76,7 @@ export class KnowledgeService {
       finalUrl = validatedUrl;
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
+      const timeout = setTimeout(() => controller.abort(), 5000);
 
       try {
         const res = await fetch(validatedUrl.toString(), {
@@ -60,6 +109,21 @@ export class KnowledgeService {
         break;
       } catch (err: any) {
         clearTimeout(timeout);
+        if (err.name === 'AbortError' || controller.signal.aborted) {
+          throw new Error('URL unreachable: connection timed out after 5s');
+        }
+        if (err.code === 'ENOTFOUND') {
+          throw new Error(`URL unreachable: domain could not be resolved (DNS lookup failed for ${finalUrl?.hostname || currentUrlStr})`);
+        }
+        if (err.code === 'ECONNREFUSED') {
+          throw new Error('URL unreachable: connection refused by remote server');
+        }
+        if (err.code === 'EHOSTUNREACH' || err.code === 'ENETUNREACH') {
+          throw new Error('URL unreachable: host or network is unreachable');
+        }
+        if (err.message && (err.message.startsWith('URL unreachable:') || err.message.startsWith('Access denied:') || err.message.startsWith('Non-HTML'))) {
+          throw err;
+        }
         throw new Error(`Failed to scrape URL: ${err.message || 'Network error'}`);
       }
     }
@@ -69,7 +133,33 @@ export class KnowledgeService {
     }
 
     if (!response.ok) {
-      throw new Error(`Target server returned HTTP status ${response.status}`);
+      if (response.status === 404) {
+        throw new Error('URL unreachable: remote server returned HTTP 404 Not Found');
+      }
+      if (response.status === 403) {
+        throw new Error('Access denied: remote server returned HTTP 403 Forbidden');
+      }
+      if (response.status === 401) {
+        throw new Error('Access denied: target URL requires authentication (HTTP 401 Unauthorized)');
+      }
+      if (response.status >= 500) {
+        throw new Error(`URL unreachable: remote server error (HTTP ${response.status})`);
+      }
+      throw new Error(`URL unreachable: target server returned HTTP status ${response.status}`);
+    }
+
+    const contentTypeHeader = response.headers.get('content-type') || '';
+    const mimeType = contentTypeHeader.split(';')[0].trim().toLowerCase();
+    const isHtmlOrText =
+      mimeType.includes('text/html') ||
+      mimeType.includes('application/xhtml+xml') ||
+      mimeType.includes('text/plain') ||
+      mimeType.includes('text/markdown') ||
+      mimeType.includes('application/xml') ||
+      mimeType === '';
+
+    if (!isHtmlOrText && mimeType) {
+      throw new Error(`Non-HTML resource detected (${mimeType}). URL scraping only supports HTML web pages and text documents.`);
     }
 
     const contentLength = response.headers.get('content-length');
@@ -118,7 +208,8 @@ export class KnowledgeService {
       updatedAt: new Date().toISOString(),
     };
 
-    return await KnowledgeRepo.createSourceWithChunks(source, chunks, chatbotIds);
+    const embeddings = await this.computeChunkEmbeddings(chunks);
+    return await KnowledgeRepo.createSourceWithChunks(source, chunks, chatbotIds, embeddings);
   }
 
   static async ingestRawHtml(
@@ -178,7 +269,8 @@ export class KnowledgeService {
       updatedAt: new Date().toISOString(),
     };
 
-    return await KnowledgeRepo.createSourceWithChunks(source, chunks, chatbotIds);
+    const embeddings = await this.computeChunkEmbeddings(chunks);
+    return await KnowledgeRepo.createSourceWithChunks(source, chunks, chatbotIds, embeddings);
   }
 
   static async ingestTextDocument(
@@ -206,7 +298,8 @@ export class KnowledgeService {
       updatedAt: new Date().toISOString(),
     };
 
-    return await KnowledgeRepo.createSourceWithChunks(source, chunks, chatbotIds);
+    const embeddings = await this.computeChunkEmbeddings(chunks);
+    return await KnowledgeRepo.createSourceWithChunks(source, chunks, chatbotIds, embeddings);
   }
 
   private static htmlToStructuredText(html: string): string {
@@ -283,7 +376,8 @@ export class KnowledgeService {
       updatedAt: new Date().toISOString(),
     };
 
-    return await KnowledgeRepo.createSourceWithChunks(source, chunks, [chatbotId]);
+    const embeddings = await this.computeChunkEmbeddings(chunks);
+    return await KnowledgeRepo.createSourceWithChunks(source, chunks, [chatbotId], embeddings);
   }
 
   private static decodeHtmlEntities(str: string): string {
@@ -511,7 +605,8 @@ export class KnowledgeService {
             updatedAt: new Date().toISOString(),
           };
 
-          await KnowledgeRepo.createSourceWithChunks(source, chunks, [chatbotId]);
+          const embeddings = await this.computeChunkEmbeddings(chunks);
+          await KnowledgeRepo.createSourceWithChunks(source, chunks, [chatbotId], embeddings);
           pagesCrawled.push(normalizedUrl);
         }
 
@@ -687,7 +782,13 @@ export class KnowledgeService {
       throw new Error('Access to local hostnames or cloud metadata endpoints is prohibited');
     }
 
-    const addresses = await dns.lookup(hostname, { all: true });
+    let addresses;
+    try {
+      addresses = await dns.lookup(hostname, { all: true });
+    } catch (dnsErr: any) {
+      throw new Error(`URL unreachable: domain could not be resolved (DNS lookup failed for ${hostname})`);
+    }
+
     for (const addr of addresses) {
       const parsedIp = ipaddr.parse(addr.address);
       const range = parsedIp.range();

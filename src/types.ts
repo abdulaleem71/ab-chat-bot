@@ -230,6 +230,8 @@ export interface Conversation {
   contactId?: string;
   visitorName?: string;
   visitorEmail?: string;
+  visitorPhone?: string;
+  visitorCompany?: string;
   visitorLocation?: string;
   visitorBrowser?: string;
   pageUrl?: string;
@@ -249,15 +251,34 @@ export interface Conversation {
   createdAt: string;
 }
 
+export interface CsatRatingDistribution {
+  stars: number; // 1 to 5
+  count: number;
+  percentage: number;
+}
+
+export interface TopQuestionItem {
+  rank: number;
+  question: string;
+  category: string;
+  count: number;
+  aiHandled: boolean;
+  status: 'grounded' | 'fallback_escalated' | 'needs_knowledge';
+  resolutionRate: number; // e.g. 96
+}
+
 export interface AnalyticsSummary {
   totalConversations: number;
   leadsCaptured: number;
-  aiResolutionRate: number; // Percentage, e.g. 92.5
+  aiResolutionRate: number; // Percentage, e.g. 84.5
+  humanTakeoverRate?: number; // Percentage, e.g. 15.5
   avgResponseTimeSec: number; // Seconds
   csatScore: number; // 1-5 scale, e.g. 4.8
+  csatDistribution?: CsatRatingDistribution[];
   totalMessages: number;
   humanTakeovers: number;
   topTopics: { topic: string; count: number }[];
+  topQuestions?: TopQuestionItem[];
   dailyTrends: { date: string; conversations: number; leads: number }[];
   toolsUsage?: { tool: string; count: number }[];
 }

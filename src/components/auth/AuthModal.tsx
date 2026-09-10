@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../../context/AuthContext';
 import { useClickOutside } from '../../hooks/useClickOutside';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { X, Sparkles, Mail, Lock, Building, ArrowRight, CheckCircle2, User, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
 
@@ -37,6 +38,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
   useClickOutside(modalContainerRef, () => {
     if (isOpen) onClose();
   });
+  useFocusTrap(modalContainerRef, isOpen, onClose);
 
   const handleGoogleAuth = async () => {
     setIsGoogleLoading(true);
@@ -174,6 +176,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/75 backdrop-blur-xs overflow-hidden">
           <motion.div
             ref={modalContainerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="auth-modal-title"
             initial={{ opacity: 0, scale: 0.95, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -185,6 +190,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
               whileHover={{ scale: 1.15, rotate: 90 }}
               whileTap={{ scale: 0.9 }}
               onClick={onClose}
+              aria-label="Close authentication modal"
               className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-white rounded-full hover:bg-zinc-800/60 transition z-10 cursor-pointer"
             >
               <X className="w-5 h-5" />
@@ -196,7 +202,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
               <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-700 flex items-center justify-center mx-auto mb-3 shadow-inner">
                 <Sparkles className="w-6 h-6 text-white" />
               </div>
-              <h2 className="text-xl font-extrabold tracking-tight font-heading">
+              <h2 id="auth-modal-title" className="text-xl font-extrabold tracking-tight font-heading">
                 {mode === 'signin' && 'Welcome back to NomadsChat'}
                 {mode === 'signup' && 'Start your 3-day Growth Pro trial'}
                 {mode === 'forgot' && 'Reset Your Workspace Password'}

@@ -1,8 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Chatbot, Message, GroundingSource } from '../../types';
-import { Send, Bot, Loader2, Sparkles, X, Minimize2, RotateCcw, ChevronDown, ChevronUp, ExternalLink, Check, AlertCircle, Image as ImageIcon, Paperclip, Wrench, ShieldAlert } from 'lucide-react';
+import { Send, Bot, Loader2, Sparkles, X, Minimize2, RotateCcw, ChevronDown, ChevronUp, ExternalLink, Check, AlertCircle, Image as ImageIcon, Paperclip, Wrench, ShieldAlert, Square } from 'lucide-react';
 import { MarkdownContent } from '../../lib/markdown';
+import { TypingIndicator } from '../common/TypingIndicator';
+import { GroundingSourceAccordion } from '../common/GroundingSourceAccordion';
+import { MessageActionButtons } from '../common/MessageActionButtons';
+import { streamChatResponse } from '../../lib/chatStream';
+import { getAccessibleTextColor } from '../../lib/colorUtils';
 
 interface EmbedChatWidgetProps {
   bot: Chatbot;
@@ -41,10 +46,31 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
 
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isTypingWaitingToken, setIsTypingWaitingToken] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
   const [attachedImageBase64, setAttachedImageBase64] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const activeStreamingMsgIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  const handleStopGenerating = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsLoading(false);
+    setIsTypingWaitingToken(false);
+    activeStreamingMsgIdRef.current = null;
+  };
 
   // Lead capture state
   const [hasSubmittedLead, setHasSubmittedLead] = useState(false);
@@ -235,6 +261,12 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
     const imgToSend = attachedImageBase64;
     setAttachedImageBase64(null);
 
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     const userMsg: Message = {
       id: 'usr_' + Date.now(),
       conversationId: conversationId || 'pending',
@@ -248,16 +280,17 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setIsLoading(true);
+    setIsTypingWaitingToken(true);
+    activeStreamingMsgIdRef.current = null;
 
     const meta = getVisitorMetadata();
+
     try {
-      const res = await fetch(`/api/chatbots/${bot.id}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await streamChatResponse(
+        bot.id,
+        {
           message: text || 'Please review the attached screenshot.',
           conversationId: conversationId || undefined,
-          conversationHistory: [...messages, userMsg],
           visitorInfo: {
             visitorId,
             email: leadEmail ? leadEmail.trim() : undefined,
@@ -267,41 +300,96 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
             pageUrl: meta.pageUrl,
             screenshotBase64: imgToSend || undefined,
           },
-        }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        if (res.status === 403 || errData.code === 'UNAUTHORIZED_DOMAIN') {
-          throw new Error(errData.error || 'Domain Unauthorized: This chatbot embed is locked and restricted to authorized domains.');
+        },
+        {
+          signal: abortController.signal,
+          onMetadata: metadata => {
+            if (metadata.conversationId) {
+              setConversationId(metadata.conversationId);
+              sessionStorage.setItem(storageKey, metadata.conversationId);
+            }
+          },
+          onDelta: chunk => {
+            setIsTypingWaitingToken(false);
+            setMessages(prev => {
+              const streamId = activeStreamingMsgIdRef.current;
+              if (streamId && prev.some(m => m.id === streamId)) {
+                return prev.map(m =>
+                  m.id === streamId ? { ...m, content: m.content + chunk } : m
+                );
+              } else {
+                const newStreamId = 'bot_stream_' + Date.now();
+                activeStreamingMsgIdRef.current = newStreamId;
+                return [
+                  ...prev,
+                  {
+                    id: newStreamId,
+                    conversationId: conversationId || 'conv',
+                    chatbotId: bot.id,
+                    sender: 'bot',
+                    content: chunk,
+                    timestamp: new Date().toISOString(),
+                  },
+                ];
+              }
+            });
+          },
+          onDone: result => {
+            if (result.conversationId) {
+              setConversationId(result.conversationId);
+              sessionStorage.setItem(storageKey, result.conversationId);
+            }
+            const streamId = activeStreamingMsgIdRef.current;
+            setMessages(prev => {
+              if (streamId && prev.some(m => m.id === streamId)) {
+                return prev.map(m =>
+                  m.id === streamId
+                    ? {
+                        ...m,
+                        content: result.reply || m.content,
+                        sourcesUsed: result.sourcesUsed,
+                        toolsInvoked: result.toolsInvoked,
+                      }
+                    : m
+                );
+              } else if (result.reply) {
+                return [
+                  ...prev,
+                  {
+                    id: 'bot_' + Date.now(),
+                    conversationId: result.conversationId || conversationId || 'conv',
+                    chatbotId: bot.id,
+                    sender: 'bot',
+                    content: result.reply,
+                    sourcesUsed: result.sourcesUsed,
+                    toolsInvoked: result.toolsInvoked,
+                    timestamp: new Date().toISOString(),
+                  },
+                ];
+              }
+              return prev;
+            });
+            setIsLoading(false);
+            setIsTypingWaitingToken(false);
+            activeStreamingMsgIdRef.current = null;
+          },
+          onError: err => {
+            console.error('Widget streaming error:', err);
+            setErrorMessage(err.message || 'Could not connect to the assistant. Please try again.');
+            setIsLoading(false);
+            setIsTypingWaitingToken(false);
+            activeStreamingMsgIdRef.current = null;
+          },
         }
-        throw new Error(errData.error || `Server returned HTTP ${res.status}`);
-      }
-
-      const data = await res.json();
-
-      if (data.conversationId) {
-        setConversationId(data.conversationId);
-        sessionStorage.setItem(storageKey, data.conversationId);
-      }
-
-      const botMsg: Message = {
-        id: 'bot_' + Date.now(),
-        conversationId: data.conversationId || conversationId || 'conv',
-        chatbotId: bot.id,
-        sender: 'bot',
-        content: data.reply || bot.fallbackMessage || "I'm not sure how to answer that yet.",
-        sourcesUsed: data.sourcesUsed || [],
-        toolsInvoked: data.toolsInvoked || [],
-        timestamp: new Date().toISOString(),
-      };
-
-      setMessages(prev => [...prev, botMsg]);
+      );
     } catch (err: any) {
-      console.log('Chat error:', err);
-      setErrorMessage('Could not connect to the assistant. Please try again.');
-    } finally {
+      if (err.name !== 'AbortError') {
+        console.error('Chat error:', err);
+        setErrorMessage(err.message || 'Could not connect to the assistant. Please try again.');
+      }
       setIsLoading(false);
+      setIsTypingWaitingToken(false);
+      activeStreamingMsgIdRef.current = null;
     }
   };
 
@@ -310,64 +398,80 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
   };
 
   const primaryColor = bot.primaryColor || '#09090b';
+  const primaryTextColor = bot.textColor || getAccessibleTextColor(primaryColor);
 
   return (
     <div
       id="nomadschat-widget-container"
-      className="flex flex-col h-full w-full bg-white text-zinc-900 overflow-hidden font-sans border border-zinc-200/80 shadow-2xl rounded-2xl md:rounded-3xl"
+      className={`flex flex-col h-full w-full bg-white text-zinc-900 overflow-hidden font-sans ${
+        isFloating
+          ? 'fixed inset-0 w-full h-[100dvh] max-h-[100dvh] rounded-none border-0 shadow-none z-50 sm:static sm:inset-auto sm:w-[380px] sm:h-[580px] sm:max-h-[580px] sm:rounded-3xl sm:border sm:border-zinc-200/80 sm:shadow-2xl'
+          : 'rounded-none sm:rounded-2xl md:rounded-3xl border-0 sm:border border-zinc-200/80 shadow-none sm:shadow-2xl'
+      }`}
     >
-      {/* Header */}
+      {/* Fixed Top Close Bar / Header */}
       <div
-        style={{ backgroundColor: primaryColor }}
-        className="px-4 py-3.5 text-white flex items-center justify-between shadow-xs shrink-0 select-none"
+        style={{ backgroundColor: primaryColor, color: primaryTextColor }}
+        className="px-3.5 sm:px-4 pt-2.5 pb-3 sm:py-3.5 flex flex-col shadow-xs shrink-0 select-none z-20 sticky top-0"
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="relative shrink-0">
-            <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur-xs flex items-center justify-center text-lg border border-white/20 shadow-inner">
-              {bot.avatar || '🤖'}
-            </div>
-            <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 border-2 border-white rounded-full" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <h3 className="font-bold text-xs sm:text-sm text-white truncate leading-tight">{bot.name}</h3>
-            </div>
-            <p className="text-[10px] text-white/80 font-medium truncate flex items-center gap-1">
-              <span>{bot.humanOperatorOnline ? 'AI Assistant • Live Online' : 'AI Assistant'}</span>
-              {detectedHost && (
-                <span className="bg-white/20 px-1.5 py-0.2 rounded-full text-[9px] font-normal text-white/90">
-                  • {detectedHost}
-                </span>
-              )}
-            </p>
-          </div>
-        </div>
+        {/* Mobile Drag/Close Top Sheet Indicator Handle */}
+        <div className="sm:hidden w-10 h-1 bg-white/35 rounded-full mx-auto mb-2 shrink-0 pointer-events-none" />
 
-        <div className="flex items-center gap-1 shrink-0">
-          <motion.button
-            whileHover={{ scale: 1.15, rotate: -45 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={handleResetChat}
-            className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
-            title="Reset Conversation"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </motion.button>
-          <motion.button
-            whileHover={{ scale: 1.15, rotate: 90 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={handleClose}
-            className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
-            title="Close Assistant"
-          >
-            {isFloating ? <X className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
-          </motion.button>
+        <div className="flex items-center justify-between w-full">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="relative shrink-0">
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/15 backdrop-blur-xs flex items-center justify-center text-base sm:text-lg border border-white/20 shadow-inner">
+                {bot.avatar || '🤖'}
+              </div>
+              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 border-2 border-white rounded-full" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h3 style={{ color: primaryTextColor }} className="font-bold text-xs sm:text-sm truncate leading-tight">{bot.name}</h3>
+              </div>
+              <p style={{ color: primaryTextColor, opacity: 0.85 }} className="text-[10px] font-medium truncate flex items-center gap-1">
+                <span>{bot.humanOperatorOnline ? 'AI Assistant • Live Online' : 'AI Assistant'}</span>
+                {detectedHost && (
+                  <span className="bg-white/20 px-1.5 py-0.2 rounded-full text-[9px] font-normal text-white/90">
+                    • {detectedHost}
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <motion.button
+              whileHover={{ scale: 1.15, rotate: -45 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={handleResetChat}
+              style={{ color: primaryTextColor }} className="p-2 sm:p-1.5 hover:opacity-80 rounded-xl transition cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center"
+              title="Reset Conversation"
+              aria-label="Reset Conversation"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.15, rotate: 90 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={handleClose}
+              style={{ color: primaryTextColor }} className="p-2 sm:p-1.5 hover:opacity-80 rounded-xl transition cursor-pointer min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] flex items-center justify-center bg-white/10 sm:bg-transparent"
+              title="Close Assistant"
+              aria-label="Close Assistant"
+            >
+              {isFloating ? <X className="w-5 h-5 sm:w-4 sm:h-4" /> : <Minimize2 className="w-5 h-5 sm:w-4 sm:h-4" />}
+            </motion.button>
+          </div>
         </div>
       </div>
 
       {/* Message Feed */}
       <div
         ref={messagesContainerRef}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
+        aria-label="Conversation messages"
         className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-zinc-50/60 scrollbar-thin"
       >
         <AnimatePresence initial={false}>
@@ -397,10 +501,10 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
                 )}
 
                 <div
-                  style={isUser ? { backgroundColor: primaryColor } : {}}
+                  style={isUser ? { backgroundColor: primaryColor, color: primaryTextColor } : {}}
                   className={`px-3.5 py-2.5 rounded-2xl shadow-xs text-xs sm:text-sm ${
                     isUser
-                      ? 'text-white rounded-br-xs'
+                      ? 'rounded-br-xs'
                       : isAgent
                       ? 'bg-amber-50/90 text-amber-950 border border-amber-200 rounded-bl-xs'
                       : 'bg-white text-zinc-900 border border-zinc-200/90 rounded-bl-xs'
@@ -420,7 +524,11 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
                   {isUser ? (
                     <p className="whitespace-pre-wrap">{msg.content}</p>
                   ) : (
-                    <MarkdownContent content={msg.content} />
+                    <MarkdownContent
+                      content={msg.content}
+                      isStreaming={isLoading && activeStreamingMsgIdRef.current === msg.id}
+                      sources={msg.sourcesUsed}
+                    />
                   )}
 
                   {/* Actions / Tools Invoked Badges */}
@@ -438,41 +546,33 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
                     </div>
                   )}
 
-                  {/* Grounding Source Citations */}
+                  {/* Grounding Source Citations Accordion */}
                   {!isUser && msg.sourcesUsed && msg.sourcesUsed.length > 0 && (
-                    <div className="mt-2.5 pt-2 border-t border-zinc-100">
-                      <button
-                        onClick={() => toggleSource(msg.id)}
-                        className="flex items-center gap-1 text-[11px] font-semibold text-zinc-500 hover:text-zinc-800 cursor-pointer transition"
-                      >
-                        <Sparkles className="w-3 h-3 text-indigo-500" />
-                        <span>{msg.sourcesUsed.length} Grounded Source{msg.sourcesUsed.length > 1 ? 's' : ''}</span>
-                        {expandedSources[msg.id] ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                      </button>
-
-                      {expandedSources[msg.id] && (
-                        <div className="mt-2 space-y-1.5">
-                          {msg.sourcesUsed.map((src, sIdx) => (
-                            <div key={sIdx} className="bg-zinc-50 p-2 rounded-lg border border-zinc-200 text-[11px] space-y-0.5">
-                              <div className="font-semibold text-zinc-800 flex items-center justify-between gap-1">
-                                <span className="truncate">{src.title || 'Knowledge Base Document'}</span>
-                              </div>
-                              {src.snippet && (
-                                <p className="text-[10px] text-zinc-500 line-clamp-2 leading-relaxed">
-                                  {src.snippet}
-                                </p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    <GroundingSourceAccordion sources={msg.sourcesUsed} variant="inline" />
                   )}
                 </div>
 
-                <span className="text-[9px] text-zinc-400 px-1 mt-0.5">
-                  {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
+                {/* Message Micro-Actions & Timestamp */}
+                <div className="flex items-center justify-between gap-2 px-1 mt-0.5 w-full">
+                  {!isUser && msg.content && (
+                    <MessageActionButtons
+                      messageId={msg.id}
+                      content={msg.content}
+                      isLatest={idx === messages.length - 1}
+                      isStreaming={isLoading && activeStreamingMsgIdRef.current === msg.id}
+                      onRegenerate={() => {
+                        const lastUserMsg = [...messages].reverse().find(m => m.sender === 'visitor');
+                        if (lastUserMsg) {
+                          setMessages(prev => prev.filter(m => m.id !== msg.id));
+                          handleSendMessage(lastUserMsg.content);
+                        }
+                      }}
+                    />
+                  )}
+                  <span className="text-[9px] text-zinc-400 ml-auto">
+                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
               </motion.div>
             );
           })}
@@ -515,12 +615,13 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
                 onClick={() => setShowLeadPrompt(false)}
                 className="text-zinc-400 hover:text-zinc-600 p-0.5 rounded cursor-pointer"
                 title="Dismiss"
+                aria-label="Dismiss lead capture prompt"
               >
                 <X className="w-3.5 h-3.5" />
               </motion.button>
             </div>
             <form onSubmit={handleLeadSubmit} className="space-y-1.5">
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                 <input
                   type="text"
                   placeholder="Your Name (optional)"
@@ -542,8 +643,8 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 disabled={isSubmittingLead || !leadEmail}
-                style={{ backgroundColor: primaryColor }}
-                className="w-full text-white text-[11px] font-bold py-1.5 rounded-lg shadow-xs transition hover:opacity-90 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1"
+                style={{ backgroundColor: primaryColor, color: primaryTextColor }}
+                className="w-full text-[11px] font-bold py-1.5 rounded-lg shadow-xs transition hover:opacity-90 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1"
               >
                 {isSubmittingLead ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                 <span>Save Contact Details</span>
@@ -553,14 +654,15 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
         )}
 
         {/* Typing Loading Indicator */}
-        {isLoading && (
-          <div className="flex items-center gap-2 max-w-[80%]">
-            <div className="bg-white border border-zinc-200 rounded-2xl rounded-bl-xs px-3.5 py-2.5 shadow-2xs flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-            </div>
-          </div>
+        {isLoading && isTypingWaitingToken && (
+          <TypingIndicator
+            botName={bot.name}
+            avatar={bot.avatar}
+            primaryColor={primaryColor}
+            compact
+            statusText="Thinking..."
+            onStop={handleStopGenerating}
+          />
         )}
 
         {/* Error message */}
@@ -573,7 +675,10 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
       </div>
 
       {/* Input Bar */}
-      <div className="p-3 bg-white border-t border-zinc-200 shrink-0">
+      <div
+        style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
+        className="p-3 sm:p-3.5 bg-white border-t border-zinc-200 shrink-0 select-none"
+      >
         {/* Attached image preview banner */}
         {attachedImageBase64 && (
           <div className="mb-2 p-1.5 bg-zinc-100 rounded-xl flex items-center justify-between gap-2 border border-zinc-200">
@@ -590,6 +695,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
               onClick={() => setAttachedImageBase64(null)}
               className="p-1 text-zinc-400 hover:text-zinc-600 rounded-md cursor-pointer"
               title="Remove attachment"
+              aria-label="Remove image attachment"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -615,6 +721,7 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
             onClick={() => fileInputRef.current?.click()}
             className="p-2 text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 rounded-xl transition cursor-pointer shrink-0"
             title="Attach screenshot or photo"
+            aria-label="Attach screenshot or photo"
           >
             <ImageIcon className="w-4 h-4" />
           </button>
@@ -623,25 +730,46 @@ export const EmbedChatWidget: React.FC<EmbedChatWidgetProps> = ({ bot, isFloatin
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
+            onFocus={() => {
+              // Smooth scroll to keep active message feed & input visible when mobile virtual keyboard opens
+              setTimeout(() => scrollToBottom(true), 150);
+            }}
             placeholder="Type your question..."
             disabled={isLoading}
-            className="flex-1 text-xs sm:text-sm px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:bg-white transition text-zinc-900 placeholder:text-zinc-400"
+            autoCapitalize="sentences"
+            autoCorrect="on"
+            className="flex-1 text-xs sm:text-sm px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-hidden focus:border-zinc-900 focus:bg-white transition text-zinc-900 placeholder:text-zinc-400 font-medium"
           />
-          <motion.button
-            type="submit"
-            whileHover={{ scale: 1.08 }}
-            whileTap={{ scale: 0.92 }}
-            disabled={(!input.trim() && !attachedImageBase64) || isLoading}
-            style={{ backgroundColor: primaryColor }}
-            className="text-white p-2 sm:p-2.5 rounded-xl transition hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
-            title="Send Message"
-          >
-            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          </motion.button>
+          {isLoading ? (
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.92 }}
+              onClick={handleStopGenerating}
+              className="text-white bg-rose-600 hover:bg-rose-700 p-2 sm:p-2.5 rounded-xl transition cursor-pointer shadow-xs shrink-0 flex items-center justify-center min-w-[38px] min-h-[38px]"
+              title="Stop Generating"
+              aria-label="Stop generating response"
+            >
+              <Square className="w-4 h-4 fill-current" />
+            </motion.button>
+          ) : (
+            <motion.button
+              type="submit"
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.92 }}
+              disabled={(!input.trim() && !attachedImageBase64)}
+              style={{ backgroundColor: primaryColor, color: primaryTextColor }}
+              className="p-2 sm:p-2.5 rounded-xl transition hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-xs shrink-0 flex items-center justify-center min-w-[38px] min-h-[38px]"
+              title="Send Message"
+              aria-label="Send message"
+            >
+              <Send className="w-4 h-4" />
+            </motion.button>
+          )}
         </form>
         <div className="flex items-center justify-between text-[10px] text-zinc-400 mt-2 px-1">
           <span>Powered by NomadsChat RAG</span>
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-1" role="status" aria-label="Assistant Status: Active">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
             Active
           </span>

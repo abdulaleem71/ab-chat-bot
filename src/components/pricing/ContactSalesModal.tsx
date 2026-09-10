@@ -1,23 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import {
-  X,
   Building2,
   ShieldCheck,
-  Sparkles,
   CheckCircle2,
-  Lock,
   ArrowRight,
   Mail,
   Phone,
   Clock,
-  Server,
-  FileCheck2,
-  Key,
-  Users,
   Copy,
   Check,
   Loader2,
 } from 'lucide-react';
+import { ModalDialog, Button, Input, Select, Badge } from '../common';
 
 interface ContactSalesModalProps {
   isOpen: boolean;
@@ -47,18 +41,11 @@ export const ContactSalesModal: React.FC<ContactSalesModalProps> = ({
   const [copiedRef, setCopiedRef] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Lock scroll
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
+    if (!isOpen) {
       setSubmitted(false);
       setErrorMessage('');
     }
-    return () => {
-      document.body.style.overflow = '';
-    };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -126,293 +113,244 @@ export const ContactSalesModal: React.FC<ContactSalesModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto bg-slate-950/70 backdrop-blur-md animate-in fade-in duration-200">
-      <div
-        className="relative w-full max-w-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden my-8"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="p-6 sm:p-8 border-b border-slate-100 dark:border-slate-800/80 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white relative">
-          <button
-            onClick={onClose}
-            aria-label="Close Contact Sales Dialog"
-            className="absolute top-5 right-5 p-2 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+    <ModalDialog
+      isOpen={isOpen}
+      onClose={onClose}
+      size="xl"
+      title="Talk with Our Enterprise Solutions Team"
+      description="Tailored message capacity, dedicated architecture, SOC 2 compliance packages, custom SLAs, and high-volume pricing quotes."
+      icon={<Building2 className="w-5 h-5 text-indigo-600" />}
+    >
+      {submitted ? (
+        <div className="text-center py-6 sm:py-8 space-y-6">
+          <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mx-auto text-emerald-600 animate-in zoom-in-50 duration-300">
+            <CheckCircle2 className="w-9 h-9" />
+          </div>
 
-          <div className="flex items-center gap-2 mb-3">
-            <span className="px-2.5 py-1 text-xs font-semibold uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full flex items-center gap-1.5">
-              <Building2 className="w-3.5 h-3.5" />
-              Enterprise Tier • Custom Solutions
+          <div className="space-y-2">
+            <h3 className="text-2xl font-bold text-zinc-950 font-heading">
+              Inquiry Received Successfully
+            </h3>
+            <p className="text-zinc-600 text-sm max-w-md mx-auto font-body">
+              Thank you, <span className="font-semibold text-zinc-900">{name}</span>. A Dedicated Solutions Architect has been assigned to your workspace inquiry and will reach out within <span className="font-semibold text-indigo-600">2 business hours</span>.
+            </p>
+          </div>
+
+          {/* Reference Card */}
+          <div className="max-w-md mx-auto bg-zinc-50 border border-zinc-200/80 rounded-2xl p-4 text-left font-body">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                Inquiry Reference Number
+              </span>
+              <button
+                type="button"
+                onClick={handleCopyRef}
+                className="flex items-center gap-1 text-xs text-indigo-600 hover:underline font-bold cursor-pointer"
+              >
+                {copiedRef ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-500" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    Copy Reference
+                  </>
+                )}
+              </button>
+            </div>
+            <div className="font-mono text-base font-bold text-zinc-950 tracking-wide">
+              {referenceId}
+            </div>
+            <div className="mt-3 pt-3 border-t border-zinc-200 text-xs text-zinc-500 flex items-center justify-between">
+              <span>Confirmation sent to: <strong className="text-zinc-800">{email}</strong></span>
+              <span className="flex items-center gap-1 text-emerald-600 font-medium">
+                <Clock className="w-3.5 h-3.5" /> &lt; 2h SLA
+              </span>
+            </div>
+          </div>
+
+          {/* Direct Support Notice */}
+          <div className="pt-2 text-xs text-zinc-500 max-w-md mx-auto flex items-center justify-center gap-4 font-body">
+            <span className="flex items-center gap-1.5">
+              <Mail className="w-3.5 h-3.5 text-indigo-500" />
+              sales@nomadschat.com
+            </span>
+            <span>•</span>
+            <span className="flex items-center gap-1.5">
+              <Phone className="w-3.5 h-3.5 text-indigo-500" />
+              +1 (800) 555-0199
             </span>
           </div>
 
-          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white mb-2">
-            Talk with Our Enterprise Solutions Team
-          </h2>
-          <p className="text-slate-300 text-sm sm:text-base leading-relaxed max-w-xl">
-            Tailored message capacity, dedicated architecture, SOC 2 compliance packages, custom SLAs, and high-volume pricing quotes.
-          </p>
+          <div className="pt-4 flex justify-center">
+            <Button
+              type="button"
+              variant="primary"
+              onClick={onClose}
+            >
+              Return to Dashboard
+            </Button>
+          </div>
         </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-6 font-body">
+          {errorMessage && (
+            <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium rounded-xl">
+              {errorMessage}
+            </div>
+          )}
 
-        {/* Content */}
-        <div className="p-6 sm:p-8 max-h-[75vh] overflow-y-auto">
-          {submitted ? (
-            <div className="text-center py-6 sm:py-8 space-y-6">
-              <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 flex items-center justify-center mx-auto text-emerald-600 dark:text-emerald-400 animate-in zoom-in-50 duration-300">
-                <CheckCircle2 className="w-9 h-9" />
-              </div>
+          {/* Contact Information */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="Your Name"
+              required
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. Elena Rostova"
+            />
 
-              <div className="space-y-2">
-                <h3 className="text-2xl font-bold text-slate-900 dark:text-white">
-                  Inquiry Received Successfully
-                </h3>
-                <p className="text-slate-600 dark:text-slate-300 text-sm max-w-md mx-auto">
-                  Thank you, <span className="font-semibold text-slate-900 dark:text-white">{name}</span>. A Dedicated Solutions Architect has been assigned to your workspace inquiry and will reach out within <span className="font-semibold text-indigo-600 dark:text-indigo-400">2 business hours</span>.
-                </p>
-              </div>
+            <Input
+              label="Work Email"
+              type="email"
+              required
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="elena@enterprise.com"
+            />
 
-              {/* Reference Card */}
-              <div className="max-w-md mx-auto bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl p-4 text-left">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    Inquiry Reference Number
-                  </span>
-                  <button
-                    onClick={handleCopyRef}
-                    className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
-                  >
-                    {copiedRef ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-500" />
-                        Copied!
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        Copy Reference
-                      </>
-                    )}
-                  </button>
-                </div>
-                <div className="font-mono text-base font-bold text-slate-900 dark:text-white tracking-wide">
-                  {referenceId}
-                </div>
-                <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700/60 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
-                  <span>Confirmation sent to: <strong className="text-slate-800 dark:text-slate-200">{email}</strong></span>
-                  <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                    <Clock className="w-3.5 h-3.5" /> &lt; 2h SLA
-                  </span>
-                </div>
-              </div>
+            <Input
+              label="Company Name"
+              value={company}
+              onChange={e => setCompany(e.target.value)}
+              placeholder="e.g. Apex Global Technologies"
+            />
 
-              {/* Direct Support Notice */}
-              <div className="pt-2 text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto flex items-center justify-center gap-4">
-                <span className="flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-indigo-500" />
-                  sales@nomadschat.com
-                </span>
-                <span>•</span>
-                <span className="flex items-center gap-1.5">
-                  <Phone className="w-3.5 h-3.5 text-indigo-500" />
-                  +1 (800) 555-0199
-                </span>
-              </div>
+            <Select
+              label="Company Size"
+              value={teamSize}
+              onChange={e => setTeamSize(e.target.value)}
+              options={[
+                { value: '1 - 20 employees', label: '1 - 20 employees' },
+                { value: '20 - 100 employees', label: '20 - 100 employees' },
+                { value: '100 - 1,000 employees', label: '100 - 1,000 employees' },
+                { value: '1,000+ employees', label: '1,000+ employees (Global Enterprise)' },
+              ]}
+            />
+          </div>
 
-              <div className="pt-4">
+          {/* Monthly Message Capacity Range */}
+          <div>
+            <label className="block text-xs font-bold text-zinc-900 uppercase tracking-wider mb-1.5 font-heading">
+              Expected Monthly AI Message Volume
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {[
+                '100k - 500k msgs/mo',
+                '500k - 2M msgs/mo',
+                '2M+ msgs/mo (Custom Scale)',
+              ].map(option => (
                 <button
                   type="button"
-                  onClick={onClose}
-                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 text-white font-medium text-sm rounded-xl transition-all shadow-sm"
+                  key={option}
+                  onClick={() => setMessageVolume(option)}
+                  className={`px-3.5 py-2.5 text-xs font-semibold rounded-xl border text-left transition cursor-pointer ${
+                    messageVolume === option
+                      ? 'border-indigo-600 bg-indigo-50/70 text-indigo-700 ring-1 ring-indigo-500'
+                      : 'border-zinc-200 hover:border-zinc-300 bg-zinc-50 text-zinc-700'
+                  }`}
                 >
-                  Return to Dashboard
+                  {option}
                 </button>
-              </div>
+              ))}
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {errorMessage && (
-                <div className="p-3.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-xl">
-                  {errorMessage}
-                </div>
-              )}
+          </div>
 
-              {/* Contact Information */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-                    Your Name <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={e => setName(e.target.value)}
-                    placeholder="e.g. Elena Rostova"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-                    Work Email <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    placeholder="elena@enterprise.com"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-                    Company Name
-                  </label>
-                  <input
-                    type="text"
-                    value={company}
-                    onChange={e => setCompany(e.target.value)}
-                    placeholder="e.g. Apex Global Technologies"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-                    Company Size
-                  </label>
-                  <select
-                    value={teamSize}
-                    onChange={e => setTeamSize(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+          {/* Key Enterprise Requirements Checkboxes */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-bold text-zinc-900 uppercase tracking-wider font-heading">
+                Key Enterprise Requirements (Select all that apply)
+              </label>
+              <Badge variant="brand" size="sm">SOC 2 & SAML</Badge>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {enterpriseFeatures.map(item => {
+                const isChecked = selectedRequirements.includes(item.id);
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => toggleRequirement(item.id)}
+                    className={`flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer select-none transition ${
+                      isChecked
+                        ? 'border-indigo-500/60 bg-indigo-50/50 text-zinc-950'
+                        : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:border-zinc-300'
+                    }`}
                   >
-                    <option value="1 - 20 employees">1 - 20 employees</option>
-                    <option value="20 - 100 employees">20 - 100 employees</option>
-                    <option value="100 - 1,000 employees">100 - 1,000 employees</option>
-                    <option value="1,000+ employees">1,000+ employees (Global Enterprise)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Monthly Message Capacity Range */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-                  Expected Monthly AI Message Volume
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  {[
-                    '100k - 500k msgs/mo',
-                    '500k - 2M msgs/mo',
-                    '2M+ msgs/mo (Custom Scale)',
-                  ].map(option => (
-                    <button
-                      type="button"
-                      key={option}
-                      onClick={() => setMessageVolume(option)}
-                      className={`px-3.5 py-2.5 text-xs font-medium rounded-xl border text-left transition-all ${
-                        messageVolume === option
-                          ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 ring-1 ring-indigo-500'
-                          : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-slate-50/50 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300'
+                    <div
+                      className={`w-4 h-4 rounded mt-0.5 flex items-center justify-center shrink-0 transition-colors ${
+                        isChecked
+                          ? 'bg-indigo-600 text-white'
+                          : 'border border-zinc-300 bg-white'
                       }`}
                     >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              </div>
+                      {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
+                    </div>
+                    <span className="text-xs leading-tight font-medium">
+                      {item.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
-              {/* Key Enterprise Requirements Checkboxes */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2">
-                  Key Enterprise Requirements (Select all that apply)
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {enterpriseFeatures.map(item => {
-                    const isChecked = selectedRequirements.includes(item.id);
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => toggleRequirement(item.id)}
-                        className={`flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer select-none transition-all ${
-                          isChecked
-                            ? 'border-indigo-500/50 bg-indigo-50/50 dark:bg-indigo-950/30 text-slate-900 dark:text-white'
-                            : 'border-slate-200 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-800/30 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                        }`}
-                      >
-                        <div
-                          className={`w-4 h-4 rounded mt-0.5 flex items-center justify-center flex-shrink-0 transition-colors ${
-                            isChecked
-                              ? 'bg-indigo-600 text-white'
-                              : 'border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'
-                          }`}
-                        >
-                          {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
-                        </div>
-                        <span className="text-xs leading-tight font-medium">
-                          {item.label}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+          {/* Additional Notes */}
+          <div>
+            <label className="block text-xs font-bold text-zinc-900 uppercase tracking-wider mb-1.5 font-heading">
+              Project Scope & Implementation Timeline (Optional)
+            </label>
+            <textarea
+              rows={2}
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Share details about existing CRM, ticketing stacks (Zendesk/HubSpot/Salesforce), or required go-live dates..."
+              className="w-full px-3.5 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-zinc-900 text-xs focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-zinc-950/10 focus:border-zinc-950 resize-none font-body"
+            />
+          </div>
 
-              {/* Additional Notes */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-                  Project Scope & Implementation Timeline (Optional)
-                </label>
-                <textarea
-                  rows={2}
-                  value={notes}
-                  onChange={e => setNotes(e.target.value)}
-                  placeholder="Share details about existing CRM, ticketing stacks (Zendesk/HubSpot/Salesforce), or required go-live dates..."
-                  className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/40 resize-none"
-                />
-              </div>
+          {/* Action Buttons */}
+          <div className="pt-3 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-zinc-100">
+            <div className="text-xs text-zinc-500 flex items-center gap-1.5 font-medium">
+              <ShieldCheck className="w-4 h-4 text-indigo-500" />
+              <span>SOC 2 Type II Certified • NDA upon request</span>
+            </div>
 
-              {/* Action Buttons */}
-              <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800">
-                <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-indigo-500" />
-                  <span>SOC 2 Type II Certified • NDA upon request</span>
-                </div>
-
-                <div className="flex items-center gap-2.5 w-full sm:w-auto">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="px-4 py-2.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="flex-1 sm:flex-none px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-medium text-xs rounded-xl transition-all shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2"
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Submitting...
-                      </>
-                    ) : (
-                      <>
-                        Request Custom Quote & Demo
-                        <ArrowRight className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </form>
-          )}
-        </div>
-      </div>
-    </div>
+            <div className="flex items-center gap-2.5 w-full sm:w-auto">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onClose}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="brand"
+                size="sm"
+                isLoading={isSubmitting}
+                rightIcon={<ArrowRight className="w-4 h-4" />}
+              >
+                Request Custom Quote & Demo
+              </Button>
+            </div>
+          </div>
+        </form>
+      )}
+    </ModalDialog>
   );
 };
+

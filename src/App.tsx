@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navbar } from './components/layout/Navbar';
+import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { OverviewDashboard } from './components/dashboard/OverviewDashboard';
 import { BotList } from './components/chatbots/BotList';
 import { BotEditorModal } from './components/chatbots/BotEditorModal';
 import { KnowledgeManager } from './components/chatbots/KnowledgeManager';
-import { PlaygroundView } from './components/chatbots/PlaygroundView';
+import { PlaygroundView } from './components/playground/PlaygroundView';
 import { WidgetEmbedModal } from './components/embed/WidgetEmbedModal';
 import { InboxView } from './components/inbox/InboxView';
 import { EmbedChatWidget } from './components/embed/EmbedChatWidget';
@@ -27,29 +28,94 @@ import { SecurityPage } from './components/public/SecurityPage';
 import { Footer } from './components/layout/Footer';
 import { TrialBanner } from './components/layout/TrialBanner';
 import { ExpiredTrialModal } from './components/pricing/ExpiredTrialModal';
+import { AdminAuthModal } from './components/admin/AdminAuthModal';
+import { AdminPortalView } from './components/admin/AdminPortalView';
 import { CheckoutModal } from './components/pricing/CheckoutModal';
 import { AdminApp } from './admin/AdminApp';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { ToastProvider, useToast } from './context/ToastContext';
 import { CommandPalette } from './components/common/CommandPalette';
+import { EmptyState } from './components/common/EmptyState';
+import { WorkspaceGuard } from './components/common/WorkspaceGuard';
+import { ThreadChatSkeleton } from './components/common/SkeletonLoader';
+import { getAccessibleTextColor } from './lib/colorUtils';
 import { Chatbot, KnowledgeSource, Conversation, Message, SupportTicket, VisitorLead, GroundingSource, AnalyticsSummary, TenantPlan } from './types';
-import { MessageSquare, X, AlertCircle, Loader2 } from 'lucide-react';
+import { MessageSquare, X, AlertCircle, Loader2, Code } from 'lucide-react';
 
 function DashboardContent() {
   const { isAuthenticated, tenant, switchPlan } = useAuth();
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState<string>('overview');
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam) return tabParam;
+    }
+    return 'overview';
+  });
   const [chatbots, setChatbots] = useState<Chatbot[]>([]);
   const [selectedBot, setSelectedBot] = useState<Chatbot | null>(null);
+  const [isLoadingChatbots, setIsLoadingChatbots] = useState<boolean>(true);
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [leads, setLeads] = useState<VisitorLead[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(true);
+  const [isLoadingKnowledge, setIsLoadingKnowledge] = useState(true);
+  const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(true);
 
   // Effective current bot for preview and views
   const activeBot = selectedBot || (chatbots.length > 0 ? chatbots[0] : null);
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', tab);
+      if (selectedBot) {
+        url.searchParams.set('bot', selectedBot.id);
+        url.searchParams.set('botId', selectedBot.id);
+      }
+      window.history.replaceState({}, '', url.toString());
+    }
+  };
+
+  const handleSelectBot = (bot: Chatbot) => {
+    setSelectedBot(bot);
+    try {
+      localStorage.setItem('nomads_active_bot_id', bot.id);
+    } catch (e) {}
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('bot', bot.id);
+      url.searchParams.set('botId', bot.id);
+      window.history.replaceState({}, '', url.toString());
+    }
+    showToast(`Switched active assistant to "${bot.name}"`, 'info');
+  };
+
+  // Browser navigation popstate listener
+  useEffect(() => {
+    const handlePopState = () => {
+      if (typeof window === 'undefined') return;
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      const botIdParam = params.get('botId') || params.get('bot');
+      if (tabParam) {
+        setActiveTab(tabParam);
+      }
+      if (botIdParam && chatbots.length > 0) {
+        const found = chatbots.find(b => b.id === botIdParam);
+        if (found) {
+          setSelectedBot(found);
+        }
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [chatbots]);
 
   // Modals & Floating preview & Mobile Menu & Command Palette
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -59,6 +125,8 @@ function DashboardContent() {
   const [embedModalBot, setEmbedModalBot] = useState<Chatbot | null>(null);
   const [isFloatingWidgetOpen, setIsFloatingWidgetOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isAdminAuthModalOpen, setIsAdminAuthModalOpen] = useState(false);
+  const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isExpiredTrialModalOpen, setIsExpiredTrialModalOpen] = useState(false);
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
@@ -89,36 +157,113 @@ function DashboardContent() {
     }
   }, [isAuthenticated, tenant?.id, tenant?.trialEndsAt, tenant?.hasPaymentMethod]);
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('auth_token') || localStorage.getItem('token') || '') : '';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
   const fetchApi = (url: string, options: RequestInit = {}) => {
+    const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('auth_token') || localStorage.getItem('token') || '') : '';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...((options.headers as Record<string, string>) || {}),
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     return fetch(url, {
       credentials: 'include',
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(options.headers || {}),
-      },
+      headers,
     });
   };
 
   // 1. Fetch Chatbots on Auth / Mount
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated) {
+      setIsLoadingChatbots(false);
+      return;
+    }
+    setIsLoadingChatbots(true);
     fetchApi('/api/chatbots')
       .then(res => res.json())
       .then(data => {
         if (data.success && data.chatbots) {
           setChatbots(data.chatbots);
           if (data.chatbots.length > 0) {
-            setSelectedBot(prev => prev ? prev : data.chatbots[0]);
+            let matchedBot: Chatbot | undefined;
+            // 1) URL query param priority
+            if (typeof window !== 'undefined') {
+              const params = new URLSearchParams(window.location.search);
+              const urlBotId = params.get('botId') || params.get('bot');
+              if (urlBotId) {
+                matchedBot = data.chatbots.find((b: Chatbot) => b.id === urlBotId);
+              }
+            }
+            // 2) LocalStorage priority
+            if (!matchedBot) {
+              try {
+                const savedBotId = localStorage.getItem('nomads_active_bot_id');
+                if (savedBotId) {
+                  matchedBot = data.chatbots.find((b: Chatbot) => b.id === savedBotId);
+                }
+              } catch (e) {}
+            }
+            // 3) Default to first bot
+            const finalBot = matchedBot || data.chatbots[0];
+            setSelectedBot(finalBot);
+            try {
+              localStorage.setItem('nomads_active_bot_id', finalBot.id);
+            } catch (e) {}
+            if (typeof window !== 'undefined') {
+              const url = new URL(window.location.href);
+              url.searchParams.set('botId', finalBot.id);
+              window.history.replaceState({}, '', url.toString());
+            }
           }
         }
       })
-      .catch(err => console.log('Error fetching chatbots:', err));
+      .catch(err => console.log('Error fetching chatbots:', err))
+      .finally(() => setIsLoadingChatbots(false));
   }, [isAuthenticated]);
 
+  // Keep selectedBot in sync if chatbots list changes or is reloaded
+  useEffect(() => {
+    if (!selectedBot && chatbots.length > 0) {
+      let matchedBot: Chatbot | undefined;
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const urlBotId = params.get('botId') || params.get('bot');
+        if (urlBotId) {
+          matchedBot = chatbots.find(b => b.id === urlBotId);
+        }
+      }
+      if (!matchedBot) {
+        try {
+          const savedBotId = localStorage.getItem('nomads_active_bot_id');
+          if (savedBotId) {
+            matchedBot = chatbots.find(b => b.id === savedBotId);
+          }
+        } catch (e) {}
+      }
+      const finalBot = matchedBot || chatbots[0];
+      setSelectedBot(finalBot);
+    }
+  }, [selectedBot, chatbots]);
+
   // 2. Fetch Tenant Knowledge Sources
-  const fetchKnowledgeSources = () => {
-    if (!isAuthenticated) return;
+  const fetchKnowledgeSources = (silent = false) => {
+    if (!isAuthenticated) {
+      setIsLoadingKnowledge(false);
+      return;
+    }
+    if (!silent) setIsLoadingKnowledge(true);
     fetchApi('/api/knowledge')
       .then(res => res.json())
       .then(data => {
@@ -126,7 +271,10 @@ function DashboardContent() {
           setKnowledgeSources(data.knowledgeSources);
         }
       })
-      .catch(err => console.log('Error fetching knowledge sources:', err));
+      .catch(err => console.log('Error fetching knowledge sources:', err))
+      .finally(() => {
+        if (!silent) setIsLoadingKnowledge(false);
+      });
   };
 
   useEffect(() => {
@@ -138,13 +286,17 @@ function DashboardContent() {
     const hasPending = knowledgeSources.some(s => s.status === 'pending' || s.status === 'processing');
     if (!hasPending || !isAuthenticated) return;
     
-    const intervalId = setInterval(fetchKnowledgeSources, 3000);
+    const intervalId = setInterval(() => fetchKnowledgeSources(true), 3000);
     return () => clearInterval(intervalId);
   }, [knowledgeSources, isAuthenticated]);
 
   // 3. Fetch Conversations & Inbox Data
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated) {
+      setIsLoadingConversations(false);
+      return;
+    }
+    setIsLoadingConversations(true);
     fetchApi('/api/conversations')
       .then(res => res.json())
       .then(data => {
@@ -162,7 +314,8 @@ function DashboardContent() {
           });
         }
       })
-      .catch(err => console.log('Error fetching conversations:', err));
+      .catch(err => console.log('Error fetching conversations:', err))
+      .finally(() => setIsLoadingConversations(false));
   }, [isAuthenticated, activeTab]);
 
   // 4. Fetch Leads
@@ -208,7 +361,11 @@ function DashboardContent() {
 
   // 5. Fetch Analytics
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated) {
+      setIsLoadingAnalytics(false);
+      return;
+    }
+    setIsLoadingAnalytics(true);
     fetchApi('/api/analytics')
       .then(res => res.json())
       .then(data => {
@@ -216,7 +373,8 @@ function DashboardContent() {
           setAnalytics(data.analytics);
         }
       })
-      .catch(err => console.log('Error fetching analytics:', err));
+      .catch(err => console.log('Error fetching analytics:', err))
+      .finally(() => setIsLoadingAnalytics(false));
   }, [isAuthenticated, activeTab]);
 
   // Close open protected drawers/modals on logout
@@ -250,48 +408,74 @@ function DashboardContent() {
   const handleSaveBot = async (formData: Partial<Chatbot>) => {
     if (editingBot && editingBot.id) {
       try {
-        const res = await fetch(`/api/chatbots/${editingBot.id}`, {
+        const res = await fetchApi(`/api/chatbots/${editingBot.id}`, {
           method: 'PUT',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders(),
+          },
           body: JSON.stringify(formData),
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || `Failed to update chatbot (HTTP ${res.status})`);
+        }
         const updated = data.chatbot;
         if (updated) {
           setChatbots(prev => prev.map(b => (b.id === updated.id ? updated : b)));
           if (selectedBot?.id === updated.id) setSelectedBot(updated);
+          setIsBotEditorOpen(false);
+          setEditingBot(null);
           showToast(`Successfully updated "${updated.name}" settings!`, 'success');
         }
-      } catch (e) {
-        console.log('Error updating chatbot:', e);
-        showToast('Failed to update chatbot.', 'error');
+        return updated;
+      } catch (e: any) {
+        console.error('Error updating chatbot:', e);
+        showToast(e.message || 'Failed to update chatbot.', 'error');
+        throw e;
       }
     } else {
       try {
-        const res = await fetch('/api/chatbots', {
+        const res = await fetchApi('/api/chatbots', {
           method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders(),
+          },
           body: JSON.stringify(formData),
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || `Failed to create chatbot (HTTP ${res.status})`);
+        }
         const newBot = data.chatbot;
         if (newBot) {
           setChatbots(prev => [newBot, ...prev]);
           setSelectedBot(newBot);
+          try {
+            localStorage.setItem('nomads_active_bot_id', newBot.id);
+          } catch (err) {}
+          if (typeof window !== 'undefined') {
+            const url = new URL(window.location.href);
+            url.searchParams.set('botId', newBot.id);
+            window.history.replaceState({}, '', url.toString());
+          }
+          setIsBotEditorOpen(false);
+          setEditingBot(null);
           showToast(`Created new assistant "${newBot.name}"!`, 'success');
         }
-      } catch (e) {
-        console.log('Error creating chatbot:', e);
-        showToast('Failed to create chatbot.', 'error');
+        return newBot;
+      } catch (e: any) {
+        console.error('Error creating chatbot:', e);
+        showToast(e.message || 'Failed to create chatbot.', 'error');
+        throw e;
       }
     }
   };
 
   const handleTestBot = (bot: Chatbot) => {
-    setSelectedBot(bot);
-    setActiveTab('playground');
+    handleSelectBot(bot);
+    handleTabChange('playground');
   };
 
   const handleTrainBot = (bot: Chatbot) => {
@@ -299,8 +483,8 @@ function DashboardContent() {
       setIsAuthModalOpen(true);
       return;
     }
-    setSelectedBot(bot);
-    setActiveTab('knowledge');
+    handleSelectBot(bot);
+    handleTabChange('knowledge');
   };
 
   const handleDeleteBot = async (bot: Chatbot) => {
@@ -310,24 +494,44 @@ function DashboardContent() {
     }
     if (!bot || !bot.id) return;
     try {
-      const res = await fetch(`/api/chatbots/${bot.id}`, {
+      const res = await fetchApi(`/api/chatbots/${bot.id}`, {
         method: 'DELETE',
-        credentials: 'include',
       });
-      const data = await res.json();
-      if (data.success) {
-        setChatbots(prev => {
-          const remaining = prev.filter(b => b.id !== bot.id);
-          if (selectedBot?.id === bot.id) {
-            setSelectedBot(remaining.length > 0 ? remaining[0] : null);
-          }
-          return remaining;
-        });
-        showToast(`Chatbot "${bot.name}" has been deleted.`, 'info');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Failed to delete chatbot (HTTP ${res.status})`);
       }
-    } catch (e) {
-      console.log('Error deleting chatbot:', e);
-      showToast('Failed to delete chatbot.', 'error');
+      setChatbots(prev => {
+        const remaining = prev.filter(b => b.id !== bot.id);
+        if (selectedBot?.id === bot.id) {
+          const nextBot = remaining.length > 0 ? remaining[0] : null;
+          setSelectedBot(nextBot);
+          if (nextBot) {
+            try {
+              localStorage.setItem('nomads_active_bot_id', nextBot.id);
+            } catch (e) {}
+            if (typeof window !== 'undefined') {
+              const url = new URL(window.location.href);
+              url.searchParams.set('botId', nextBot.id);
+              window.history.replaceState({}, '', url.toString());
+            }
+          } else {
+            try {
+              localStorage.removeItem('nomads_active_bot_id');
+            } catch (e) {}
+            if (typeof window !== 'undefined') {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('botId');
+              window.history.replaceState({}, '', url.toString());
+            }
+          }
+        }
+        return remaining;
+      });
+      showToast(`Chatbot "${bot.name}" has been deleted.`, 'info');
+    } catch (e: any) {
+      console.error('Error deleting chatbot:', e);
+      showToast(e.message || 'Failed to delete chatbot.', 'error');
     }
   };
 
@@ -339,7 +543,7 @@ function DashboardContent() {
     const target = bot || selectedBot || (chatbots.length > 0 ? chatbots[0] : activeBot);
     setEmbedModalBot(target);
     if (target) {
-      setSelectedBot(target);
+      handleSelectBot(target);
     }
     setIsWidgetModalOpen(true);
   };
@@ -347,44 +551,38 @@ function DashboardContent() {
   // Knowledge Handlers
   const handleAddKnowledgeSource = async (sourceData: Partial<KnowledgeSource> & { chatbotIds: string[] }) => {
     try {
-      const res = await fetch(`/api/knowledge`, {
+      const res = await fetchApi(`/api/knowledge`, {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sourceData),
       });
-      const data = await res.json();
-      if (data.success && data.knowledgeSource) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && data.knowledgeSource) {
         setKnowledgeSources(prev => [data.knowledgeSource, ...prev.filter(k => k.id !== data.knowledgeSource.id)]);
       }
     } catch (err) {
-      console.log('Error adding knowledge source:', err);
+      console.error('Error adding knowledge source:', err);
     }
   };
 
   const handleScrapeUrl = async (url: string, chatbotIds: string[]) => {
-    const res = await fetch(`/api/knowledge/scrape-url`, {
+    const res = await fetchApi(`/api/knowledge/scrape-url`, {
       method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, chatbotIds }),
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || 'Failed to scrape URL');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'Failed to scrape URL');
     if (data.knowledgeSource) {
       setKnowledgeSources(prev => [data.knowledgeSource, ...prev.filter(k => k.id !== data.knowledgeSource.id)]);
     }
   };
 
   const handleIngestHtml = async (html: string, url?: string, title?: string, chatbotIds: string[] = []) => {
-    const res = await fetch(`/api/knowledge/ingest-raw-html`, {
+    const res = await fetchApi(`/api/knowledge/ingest-raw-html`, {
       method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ html, url, title, chatbotIds }),
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || 'Failed to ingest HTML');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'Failed to ingest HTML');
     if (data.knowledgeSource) {
       setKnowledgeSources(prev => [data.knowledgeSource, ...prev.filter(k => k.id !== data.knowledgeSource.id)]);
     }
@@ -392,29 +590,26 @@ function DashboardContent() {
 
   const handleUpdateSourceLinks = async (sourceId: string, chatbotIds: string[]) => {
     try {
-      const res = await fetch(`/api/knowledge/${sourceId}/links`, {
+      const res = await fetchApi(`/api/knowledge/${sourceId}/links`, {
         method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatbotIds }),
       });
-      const data = await res.json();
-      if (data.success && data.knowledgeSource) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && data.knowledgeSource) {
         setKnowledgeSources(prev => prev.map(k => k.id === sourceId ? data.knowledgeSource : k));
       }
     } catch (e) {
-      console.log('Error updating source links:', e);
+      console.error('Error updating source links:', e);
     }
   };
 
   const handleDeleteKnowledgeSource = async (sourceId: string) => {
     try {
-      await fetch(`/api/knowledge/${sourceId}`, {
+      await fetchApi(`/api/knowledge/${sourceId}`, {
         method: 'DELETE',
-        credentials: 'include',
       });
     } catch (e) {
-      console.log('Error deleting source from server:', e);
+      console.error('Error deleting source from server:', e);
     }
     setKnowledgeSources(prev => prev.filter(k => k.id !== sourceId));
   };
@@ -425,16 +620,15 @@ function DashboardContent() {
     message: string,
     history: Message[]
   ): Promise<{ reply: string; sourcesUsed: GroundingSource[] }> => {
-    const res = await fetch(`/api/chatbots/${botId}/chat`, {
+    const res = await fetchApi(`/api/chatbots/${botId}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message,
         conversationHistory: history,
         isPlayground: true,
       }),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     return {
       reply: data.reply || selectedBot?.fallbackMessage || 'I am currently unable to assist.',
       sourcesUsed: data.sourcesUsed || [],
@@ -442,7 +636,7 @@ function DashboardContent() {
   };
 
   // Inbox Handlers
-  const handleInboxSendMessage = (conversationId: string, content: string, sender: 'agent' | 'visitor') => {
+  const handleInboxSendMessage = async (conversationId: string, content: string, sender: 'agent' | 'visitor') => {
     const newMsg: Message = {
       id: 'm_' + Date.now(),
       conversationId,
@@ -468,22 +662,48 @@ function DashboardContent() {
           : c
       )
     );
+
+    try {
+      await fetchApi(`/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content, sender }),
+      });
+    } catch (err) {
+      console.error('Error posting message:', err);
+    }
   };
 
-  const handleToggleTakeover = (conversationId: string, isTakeover: boolean) => {
+  const handleToggleTakeover = async (conversationId: string, isTakeover: boolean) => {
+    const newStatus = isTakeover ? 'human_takeover' : 'active';
     setConversations(prev =>
       prev.map(c =>
         c.id === conversationId
-          ? { ...c, status: isTakeover ? 'human_takeover' : 'active' }
+          ? { ...c, status: newStatus }
           : c
       )
     );
+    try {
+      await fetchApi(`/api/conversations/${conversationId}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch (err) {
+      console.error('Error updating status:', err);
+    }
   };
 
-  const handleResolveConversation = (conversationId: string) => {
+  const handleResolveConversation = async (conversationId: string) => {
     setConversations(prev =>
       prev.map(c => (c.id === conversationId ? { ...c, status: 'resolved' } : c))
     );
+    try {
+      await fetchApi(`/api/conversations/${conversationId}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: 'resolved' }),
+      });
+    } catch (err) {
+      console.error('Error resolving conversation:', err);
+    }
   };
 
   const unreadCount = conversations.filter(c => c.unreadByAgent).length;
@@ -523,18 +743,22 @@ function DashboardContent() {
         }}
       />
 
-      {/* Top Navigation */}
-      <Navbar
-        onOpenWidgetModal={() => handleOpenEmbedModal()}
+      {/* Persistent 56px Sticky Top Bar */}
+      <Header
+        chatbots={chatbots}
+        selectedBot={activeBot}
+        onSelectBot={handleSelectBot}
+        onCreateBot={handleCreateBot}
+        onOpenEmbedModal={() => handleOpenEmbedModal()}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleTabChange}
         onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
       />
 
       <VerificationBanner />
-      <MfaRecommendationBanner onNavigateToAccount={() => setActiveTab('account')} />
+      <MfaRecommendationBanner onNavigateToAccount={() => handleTabChange('account')} />
 
       {/* Main Layout Area */}
       <div className="flex-1 flex overflow-hidden relative">
@@ -555,7 +779,7 @@ function DashboardContent() {
                 <Sidebar
                   activeTab={activeTab}
                   setActiveTab={(tab) => {
-                    setActiveTab(tab);
+                    handleTabChange(tab);
                     setIsMobileMenuOpen(false);
                   }}
                   unreadCount={unreadCount}
@@ -575,7 +799,7 @@ function DashboardContent() {
           <div className="hidden lg:block shrink-0">
             <Sidebar
               activeTab={activeTab}
-              setActiveTab={setActiveTab}
+              setActiveTab={handleTabChange}
               unreadCount={unreadCount}
               onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
             />
@@ -599,7 +823,8 @@ function DashboardContent() {
                     chatbots={chatbots}
                     leads={leads}
                     knowledgeCount={knowledgeSources.length}
-                    onNavigate={setActiveTab}
+                    isLoading={isLoadingAnalytics}
+                    onNavigate={handleTabChange}
                     onOpenCreateBotModal={handleCreateBot}
                     onOpenEmbedModal={handleOpenEmbedModal}
                   />
@@ -618,26 +843,48 @@ function DashboardContent() {
                 )}
 
                 {activeTab === 'knowledge' && (
-                  <KnowledgeManager
+                  <WorkspaceGuard
+                    selectedBot={activeBot}
+                    featureTitle="Knowledge Base"
+                    featureDescription="Train your AI chatbot on custom documents, PDFs, FAQs, and scraped URLs to ground its responses."
+                    onCreateBot={handleCreateBot}
                     chatbots={chatbots}
-                    knowledgeSources={knowledgeSources}
-                    onAddSource={handleAddKnowledgeSource}
-                    onScrapeUrl={handleScrapeUrl}
-                    onIngestHtml={handleIngestHtml}
-                    onUpdateSourceLinks={handleUpdateSourceLinks}
-                    onDeleteSource={handleDeleteKnowledgeSource}
-                  />
+                    onSelectBot={handleSelectBot}
+                  >
+                    <KnowledgeManager
+                      chatbots={chatbots}
+                      selectedBot={activeBot}
+                      onSelectBot={handleSelectBot}
+                      knowledgeSources={knowledgeSources}
+                      isFetchingSources={isLoadingKnowledge}
+                      onAddSource={handleAddKnowledgeSource}
+                      onScrapeUrl={handleScrapeUrl}
+                      onIngestHtml={handleIngestHtml}
+                      onUpdateSourceLinks={handleUpdateSourceLinks}
+                      onDeleteSource={handleDeleteKnowledgeSource}
+                      onCreateBot={handleCreateBot}
+                    />
+                  </WorkspaceGuard>
                 )}
 
                 {activeTab === 'playground' && (
-                  <PlaygroundView
-                    chatbots={chatbots}
+                  <WorkspaceGuard
                     selectedBot={activeBot}
-                    onSelectBot={setSelectedBot}
+                    featureTitle="Live Test Playground"
+                    featureDescription="Test and refine your AI chatbot with live model streaming, tone adjustments, and RAG citation inspection."
                     onCreateBot={handleCreateBot}
-                    onSendQuery={handleSendPlaygroundQuery}
-                    onOpenEmbedModal={handleOpenEmbedModal}
-                  />
+                    chatbots={chatbots}
+                    onSelectBot={handleSelectBot}
+                  >
+                    <PlaygroundView
+                      chatbots={chatbots}
+                      selectedBot={activeBot}
+                      onSelectBot={handleSelectBot}
+                      onCreateBot={handleCreateBot}
+                      onSendQuery={handleSendPlaygroundQuery}
+                      onOpenEmbedModal={handleOpenEmbedModal}
+                    />
+                  </WorkspaceGuard>
                 )}
 
                 {activeTab === 'inbox' && (
@@ -646,6 +893,8 @@ function DashboardContent() {
                     messages={messages}
                     chatbots={chatbots}
                     tickets={tickets}
+                    leads={leads}
+                    isLoading={isLoadingConversations}
                     onSendMessage={handleInboxSendMessage}
                     onToggleTakeover={handleToggleTakeover}
                     onResolveConversation={handleResolveConversation}
@@ -659,20 +908,21 @@ function DashboardContent() {
                         )
                       );
                     }}
+                    onOpenEmbedModal={() => handleOpenEmbedModal()}
                   />
                 )}
 
                 {activeTab === 'integrations' && (
                   <IntegrationsView
-                    onNavigateToInbox={() => setActiveTab('inbox')}
-                    onNavigateToKnowledge={() => setActiveTab('knowledge')}
+                    onNavigateToInbox={() => handleTabChange('inbox')}
+                    onNavigateToKnowledge={() => handleTabChange('knowledge')}
                   />
                 )}
 
                 {activeTab === 'team' && (
                   <TeamView
-                    onNavigateToBilling={() => setActiveTab('billing')}
-                    onNavigateToInbox={() => setActiveTab('inbox')}
+                    onNavigateToBilling={() => handleTabChange('billing')}
+                    onNavigateToInbox={() => handleTabChange('inbox')}
                   />
                 )}
 
@@ -685,27 +935,46 @@ function DashboardContent() {
                 )}
 
                 {activeTab === 'status' && (
-                  <StatusPage onReturnToApp={() => setActiveTab('overview')} />
+                  <StatusPage onReturnToApp={() => handleTabChange('overview')} />
                 )}
 
                 {activeTab === 'security' && (
-                  <SecurityPage onReturnToApp={() => setActiveTab('overview')} />
+                  <SecurityPage onReturnToApp={() => handleTabChange('overview')} />
                 )}
 
                 {activeTab === 'embed' && (
-                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs">
-                    <h2 className="text-lg font-bold text-slate-900 mb-2">Embed Code Generator</h2>
-                    <p className="text-xs text-slate-500 mb-6">Select a bot to retrieve script snippets and platform guides.</p>
-                    <BotList
-                      chatbots={chatbots}
-                      onOpenCreateModal={handleCreateBot}
-                      onEditBot={handleEditBot}
-                      onTestBot={handleTestBot}
-                      onOpenEmbedModal={handleOpenEmbedModal}
-                      onTrainBot={handleTrainBot}
-                      onDeleteBot={handleDeleteBot}
-                    />
-                  </div>
+                  <WorkspaceGuard
+                    selectedBot={activeBot}
+                    featureTitle="Widget & Embed Code"
+                    featureDescription="Select or create an AI chatbot to generate iframe snippets, floating widget scripts, and CMS integration guides."
+                    onCreateBot={handleCreateBot}
+                    chatbots={chatbots}
+                    onSelectBot={handleSelectBot}
+                  >
+                    <div className="bg-white border border-zinc-200/80 rounded-3xl p-6 shadow-xs">
+                      <h2 className="text-lg font-bold text-zinc-950 mb-2">Embed Code Generator</h2>
+                      <p className="text-xs text-zinc-500 mb-6">Select a bot to retrieve script snippets and platform guides.</p>
+                      {chatbots.length === 0 ? (
+                        <EmptyState
+                          icon={<Code className="w-6 h-6 text-zinc-700" />}
+                          title="No Chatbots Available to Embed"
+                          description="Create an AI assistant first to generate embed scripts, WordPress plugins, or Shopify snippets for your website."
+                          actionLabel="+ Create Your First Bot"
+                          onAction={handleCreateBot}
+                        />
+                      ) : (
+                        <BotList
+                          chatbots={chatbots}
+                          onOpenCreateModal={handleCreateBot}
+                          onEditBot={handleEditBot}
+                          onTestBot={handleTestBot}
+                          onOpenEmbedModal={handleOpenEmbedModal}
+                          onTrainBot={handleTrainBot}
+                          onDeleteBot={handleDeleteBot}
+                        />
+                      )}
+                    </div>
+                  </WorkspaceGuard>
                 )}
 
                 {activeTab === 'analytics' && (
@@ -714,14 +983,14 @@ function DashboardContent() {
                     chatbots={chatbots}
                     leads={leads}
                     knowledgeCount={knowledgeSources.length}
-                    onNavigate={setActiveTab}
+                    onNavigate={handleTabChange}
                     onOpenCreateBotModal={handleCreateBot}
                     onOpenEmbedModal={handleOpenEmbedModal}
                   />
                 )}
 
                 {activeTab === 'features' && (
-                  <FeaturesView onNavigateToTab={setActiveTab} />
+                  <FeaturesView onNavigateToTab={handleTabChange} />
                 )}
 
                 {activeTab === 'billing' && (
@@ -755,12 +1024,17 @@ function DashboardContent() {
       </div>
 
       {/* Footer */}
-      <Footer onNavigateTab={setActiveTab} onOpenCreateBot={handleCreateBot} />
+      <Footer
+        onNavigateTab={setActiveTab}
+        onOpenCreateBot={handleCreateBot}
+        onOpenAdminPortal={() => setIsAdminPortalOpen(true)}
+        onOpenAdminAuth={() => setIsAdminAuthModalOpen(true)}
+      />
 
-      {/* Floating Live Widget Test Launcher */}
-      <div className="fixed bottom-6 right-6 z-50">
-        <AnimatePresence mode="wait">
-          {!isFloatingWidgetOpen ? (
+      {/* Floating Live Widget Test Launcher & Responsive Breakpoint Widget */}
+      <AnimatePresence mode="wait">
+        {!isFloatingWidgetOpen ? (
+          <div key="floating-launcher-wrapper" className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-40 sm:z-50 pb-[env(safe-area-inset-bottom)] pr-[env(safe-area-inset-right)]">
             <motion.button
               key="floating-btn"
               initial={{ scale: 0, opacity: 0 }}
@@ -780,31 +1054,42 @@ function DashboardContent() {
                   handleCreateBot();
                 }
               }}
-              style={{ backgroundColor: activeBot?.primaryColor || '#09090b' }}
-              className="w-14 h-14 rounded-full text-white flex items-center justify-center shadow-xl cursor-pointer ring-4 ring-white/80"
+              style={{
+                backgroundColor: activeBot?.primaryColor || '#09090b',
+                color: getAccessibleTextColor(activeBot?.primaryColor || '#09090b'),
+              }}
+              className="w-13 h-13 sm:w-14 sm:h-14 rounded-full flex items-center justify-center shadow-xl cursor-pointer ring-4 ring-white/80"
               title={activeBot ? 'Test Floating AI Widget' : 'Create a Chatbot to Test Live Widget'}
+              aria-label="Open AI Assistant Floating Widget"
             >
-              <MessageSquare className="w-6 h-6" />
+              <MessageSquare className="w-5 h-5 sm:w-6 sm:h-6" />
             </motion.button>
-          ) : (
-            activeBot && isAuthenticated && (
-              <motion.div
-                key="floating-widget"
-                initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+          </div>
+        ) : (
+          activeBot && isAuthenticated && (
+            <motion.div
+              key="floating-widget-wrapper"
+              initial={{ opacity: 0, y: 30, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 30, scale: 0.96 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+              className="fixed inset-0 z-50 w-full h-[100dvh] max-h-[100dvh] sm:h-[600px] sm:inset-auto sm:bottom-6 sm:right-6 sm:w-[380px] sm:max-h-[600px] flex flex-col"
+            >
+              <ErrorBoundary
+                compact
+                fallbackTitle="Widget Encountered an Error"
+                fallbackMessage="Failed to load floating chat widget."
               >
                 <EmbedChatWidget
                   bot={activeBot}
                   isFloating={true}
                   onClose={() => setIsFloatingWidgetOpen(false)}
                 />
-              </motion.div>
-            )
-          )}
-        </AnimatePresence>
-      </div>
+              </ErrorBoundary>
+            </motion.div>
+          )
+        )}
+      </AnimatePresence>
 
       {/* Modals */}
       <BotEditorModal
@@ -836,6 +1121,16 @@ function DashboardContent() {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
       />
+
+      <AdminAuthModal
+        isOpen={isAdminAuthModalOpen}
+        onClose={() => setIsAdminAuthModalOpen(false)}
+        onSuccess={() => setIsAdminPortalOpen(true)}
+      />
+
+      {isAdminPortalOpen && (
+        <AdminPortalView onClose={() => setIsAdminPortalOpen(false)} />
+      )}
 
       <ExpiredTrialModal
         isOpen={isExpiredTrialModalOpen}
@@ -961,10 +1256,9 @@ function StandaloneEmbedView({ botId }: { botId: string }) {
 
   if (isLoading) {
     return (
-      <div className="w-full h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="flex items-center gap-2 text-indigo-600 font-medium text-xs">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span>Loading AI Assistant...</span>
+      <div className="w-full h-screen bg-zinc-100 flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-white rounded-3xl border border-zinc-200 shadow-xl overflow-hidden h-[600px] flex flex-col">
+          <ThreadChatSkeleton className="h-full" />
         </div>
       </div>
     );
@@ -973,15 +1267,15 @@ function StandaloneEmbedView({ botId }: { botId: string }) {
   if (error || !bot) {
     const isSec = error?.isSecurity;
     return (
-      <div className="w-full h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className={`bg-white border rounded-2xl p-6 max-w-md w-full text-center shadow-xl ${isSec ? 'border-amber-300' : 'border-red-200'}`}>
-          <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${isSec ? 'bg-amber-100 text-amber-700' : 'bg-red-50 text-red-600'}`}>
+      <div className="w-full h-screen bg-zinc-100 flex items-center justify-center p-4">
+        <div className={`bg-white border rounded-2xl p-6 max-w-md w-full text-center shadow-xl ${isSec ? 'border-amber-300' : 'border-rose-200'}`}>
+          <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${isSec ? 'bg-amber-100 text-amber-700' : 'bg-rose-50 text-rose-600'}`}>
             <AlertCircle className="w-6 h-6" />
           </div>
-          <h3 className="font-bold text-slate-900 text-base mb-2">
+          <h3 className="font-bold text-zinc-950 text-base mb-2">
             {error?.title || 'Chatbot Unavailable'}
           </h3>
-          <p className="text-xs text-slate-600 leading-relaxed mb-4">
+          <p className="text-xs text-zinc-600 leading-relaxed mb-4">
             {error?.message || 'The requested AI Chatbot cannot be loaded.'}
           </p>
           {isSec && (
@@ -997,7 +1291,7 @@ function StandaloneEmbedView({ botId }: { botId: string }) {
   }
 
   return (
-    <div className="w-full h-screen bg-transparent p-2">
+    <div className="w-full h-[100dvh] bg-transparent p-0 sm:p-2">
       <EmbedChatWidget bot={bot} isFloating={false} />
     </div>
   );
@@ -1083,11 +1377,16 @@ export default function App() {
   }
 
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <DashboardContent />
-      </ToastProvider>
-    </AuthProvider>
+    <ErrorBoundary
+      fallbackTitle="Application Recovery"
+      fallbackMessage="An unexpected issue occurred while rendering the workspace. You can reload the page or reset the app state."
+    >
+      <AuthProvider>
+        <ToastProvider>
+          <DashboardContent />
+        </ToastProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

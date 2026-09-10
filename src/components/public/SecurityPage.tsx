@@ -254,7 +254,13 @@ export const SecurityPage: React.FC<SecurityPageProps> = ({ onReturnToApp }) => 
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
           <p>© 2026 NomadsChat Inc. Data protected under international privacy standards.</p>
           <div className="flex items-center gap-4">
-            <a href="#status" onClick={(e) => { e.preventDefault(); window.location.hash = 'status'; }} className="hover:text-zinc-900 transition">System Status</a>
+            <button
+              type="button"
+              onClick={() => { window.location.hash = 'status'; }}
+              className="hover:text-zinc-900 transition cursor-pointer"
+            >
+              System Status
+            </button>
             <a href="https://nomadsarc.io" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-900 transition">NomadsArc Platform</a>
           </div>
         </div>

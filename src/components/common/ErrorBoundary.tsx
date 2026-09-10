@@ -2,10 +2,13 @@ import React, { Component, ReactNode, ErrorInfo, useState, useEffect } from 'rea
 import { AlertCircle, RefreshCw, X, ShieldAlert, Cpu, Webhook, ChevronRight } from 'lucide-react';
 import { telemetry, TelemetryAlert } from '../../lib/telemetry';
 
-interface ErrorBoundaryProps {
+export interface ErrorBoundaryProps {
   children: ReactNode;
   fallbackTitle?: string;
   fallbackMessage?: string;
+  fallback?: ReactNode | ((error: Error, reset: () => void) => ReactNode);
+  compact?: boolean;
+  renderToaster?: boolean;
   onCatch?: (error: Error, errorInfo: ErrorInfo) => void;
 }
 
@@ -46,11 +49,48 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   public render() {
     if (this.state.hasError) {
+      // Custom fallback support
+      if (this.props.fallback) {
+        if (typeof this.props.fallback === 'function') {
+          return this.props.fallback(this.state.error || new Error('Unknown error'), this.handleReset);
+        }
+        return this.props.fallback;
+      }
+
       const isGeminiError =
         this.state.error?.message?.toLowerCase().includes('gemini') ||
         this.state.error?.message?.toLowerCase().includes('model');
       const isWebhookError =
         this.state.error?.message?.toLowerCase().includes('webhook');
+
+      // Compact inline mode for panels, cards, or widget embeddings
+      if (this.props.compact) {
+        return (
+          <div className="p-4 rounded-2xl bg-rose-50/70 border border-rose-200 text-xs flex items-start gap-3 my-2">
+            <div className="p-1.5 rounded-lg bg-white border border-rose-200 text-rose-600 shrink-0">
+              <AlertCircle className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-extrabold text-zinc-950 font-heading">
+                  {this.props.fallbackTitle || 'Component Error'}
+                </span>
+                <button
+                  type="button"
+                  onClick={this.handleReset}
+                  className="text-[11px] font-bold text-zinc-900 hover:text-black underline flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Retry
+                </button>
+              </div>
+              <p className="text-zinc-600 text-[11px] mt-0.5">
+                {this.props.fallbackMessage || this.state.error?.message || 'An error prevented this component from displaying.'}
+              </p>
+            </div>
+          </div>
+        );
+      }
 
       return (
         <div className="min-h-[280px] p-6 flex items-center justify-center">
@@ -105,10 +145,26 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return (
       <>
         {this.props.children}
-        <TelemetryAlertToaster />
+        {this.props.renderToaster && <TelemetryAlertToaster />}
       </>
     );
   }
+}
+
+/**
+ * HOC to easily wrap components with an ErrorBoundary
+ */
+export function withErrorBoundary<P extends object>(
+  ComponentToWrap: React.ComponentType<P>,
+  errorBoundaryProps?: Omit<ErrorBoundaryProps, 'children'>
+): React.FC<P> {
+  const Wrapped: React.FC<P> = (props) => (
+    <ErrorBoundary {...errorBoundaryProps}>
+      <ComponentToWrap {...props} />
+    </ErrorBoundary>
+  );
+  Wrapped.displayName = `WithErrorBoundary(${ComponentToWrap.displayName || ComponentToWrap.name || 'Component'})`;
+  return Wrapped;
 }
 
 /**

@@ -651,7 +651,7 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
                               <label className="block text-[10px] text-zinc-400 mb-1">Reason for Plan Change <span className="text-rose-400">*</span></label>
                               <input
                                 type="text"
-                                value={billingPlanReason}
+                                value={billingPlanReason || ''}
                                 onChange={(e) => setBillingPlanReason(e.target.value)}
                                 placeholder="e.g. Account rep override per enterprise agreement"
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
@@ -679,7 +679,7 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
                                 type="number"
                                 min="1"
                                 step="1"
-                                value={creditAmount}
+                                value={creditAmount || ''}
                                 onChange={(e) => setCreditAmount(e.target.value)}
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                               />
@@ -688,7 +688,7 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
                               <label className="block text-[10px] text-zinc-400 mb-1">Reason for Credit <span className="text-rose-400">*</span></label>
                               <input
                                 type="text"
-                                value={creditReason}
+                                value={creditReason || ''}
                                 onChange={(e) => setCreditReason(e.target.value)}
                                 placeholder="e.g. Compensation for platform downtime incident"
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
@@ -713,7 +713,7 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
                             <label className="block text-[10px] text-zinc-400 mb-1">Reason for Payment Retry <span className="text-rose-400">*</span></label>
                             <input
                               type="text"
-                              value={retryReason}
+                              value={retryReason || ''}
                               onChange={(e) => setRetryReason(e.target.value)}
                               placeholder="e.g. Customer confirmed updated card is on file"
                               className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
@@ -825,7 +825,7 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
                       <input
                         type="password"
                         placeholder="Enter new temporary password (min 6 chars)..."
-                        value={newPassword}
+                        value={newPassword || ''}
                         onChange={(e) => setNewPassword(e.target.value)}
                         className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-hidden focus:border-indigo-500 font-mono flex-1"
                       />

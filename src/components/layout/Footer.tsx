@@ -1,17 +1,47 @@
 import React, { useState } from 'react';
 import { NomadsLogo } from '../common/NomadsLogo';
 import { LegalModal } from '../public/LegalModal';
-import { Sparkles, ArrowRight, ShieldCheck, CheckCircle2, MessageSquare, Bot, HelpCircle, FileText, Lock, Globe, ExternalLink } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import {
+  Sparkles,
+  ArrowRight,
+  ShieldCheck,
+  CheckCircle2,
+  Bot,
+  FileText,
+  Lock,
+  ExternalLink,
+  Github,
+  Twitter,
+  Linkedin,
+} from 'lucide-react';
 
 interface FooterProps {
   onNavigateTab?: (tab: string) => void;
   onOpenCreateBot?: () => void;
+  onOpenAdminPortal?: () => void;
+  onOpenAdminAuth?: () => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }) => {
+export const Footer: React.FC<FooterProps> = ({
+  onNavigateTab,
+  onOpenCreateBot,
+  onOpenAdminPortal,
+  onOpenAdminAuth,
+}) => {
+  const { user, isAuthenticated } = useAuth();
   const [email, setEmail] = useState('');
   const [subscribed, setSubscribed] = useState(false);
   const [legalModalType, setLegalModalType] = useState<'privacy' | 'terms' | 'gdpr' | null>(null);
+
+  const handleAdminClick = () => {
+    const role = String(user?.role || '').toLowerCase();
+    if (isAuthenticated && (role === 'owner' || role === 'admin' || role === 'super_admin')) {
+      onOpenAdminPortal?.();
+    } else {
+      onOpenAdminAuth?.();
+    }
+  };
 
   const handleSubscribe = (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +72,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
           <div className="flex flex-wrap items-center gap-3 shrink-0">
             {onOpenCreateBot && (
               <button
+                type="button"
                 onClick={onOpenCreateBot}
                 className="bg-white hover:bg-zinc-100 text-black text-xs font-extrabold px-6 py-3 rounded-xl shadow-lg transition duration-200 flex items-center gap-2 active:scale-95 cursor-pointer"
               >
@@ -51,6 +82,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
             )}
             {onNavigateTab && (
               <button
+                type="button"
                 onClick={() => onNavigateTab('knowledge')}
                 className="bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold px-5 py-3 rounded-xl border border-zinc-700 transition duration-200 flex items-center gap-2 cursor-pointer"
               >
@@ -69,7 +101,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
             <p className="text-xs text-zinc-400 font-medium leading-relaxed max-w-sm">
               NomadsChat is the enterprise-grade AI customer support platform built on NomadsArc AI architecture. Deliver grounded, hallucination-free support across all web channels 24/7.
             </p>
-            <div className="flex items-center gap-3 pt-2">
+            <div className="flex items-center gap-3 pt-2 flex-wrap">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-bold text-white">
                 <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
                 NomadsArc Engine Active
@@ -79,6 +111,55 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
                 SOC2 Certified
               </span>
             </div>
+
+            {/* Social & Community Links */}
+            <div className="pt-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 block mb-2 font-mono">
+                Connect &amp; Community
+              </span>
+              <div className="flex items-center gap-2.5">
+                <a
+                  href="https://github.com/google-gemini"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Google Gemini GitHub repository"
+                  className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white hover:border-zinc-700 transition"
+                  title="GitHub"
+                >
+                  <Github className="w-4 h-4" />
+                </a>
+                <a
+                  href="https://x.com/nomadsarc"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="NomadsArc on X / Twitter"
+                  className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white hover:border-zinc-700 transition"
+                  title="X / Twitter"
+                >
+                  <Twitter className="w-4 h-4" />
+                </a>
+                <a
+                  href="https://linkedin.com/company/nomadsarc"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="NomadsArc on LinkedIn"
+                  className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white hover:border-zinc-700 transition"
+                  title="LinkedIn"
+                >
+                  <Linkedin className="w-4 h-4" />
+                </a>
+                <a
+                  href="https://nomadsarc.io"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="NomadsArc Official Platform"
+                  className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-white border border-zinc-800 rounded-lg px-2.5 py-1.5 bg-zinc-900 hover:border-zinc-700 transition ml-1"
+                >
+                  <span>nomadsarc.io</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+            </div>
           </div>
 
           {/* Quick Navigation */}
@@ -87,42 +168,56 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
             <ul className="space-y-2 text-xs text-zinc-400 font-medium">
               <li>
                 <button
+                  type="button"
                   onClick={() => onNavigateTab?.('overview')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
                 >
                   Dashboard Overview
                 </button>
               </li>
               <li>
                 <button
+                  type="button"
                   onClick={() => onNavigateTab?.('chatbots')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
                 >
-                  Bot Manager & Custom Colors
+                  Bot Manager &amp; Custom Colors
                 </button>
               </li>
               <li>
                 <button
+                  type="button"
                   onClick={() => onNavigateTab?.('knowledge')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
                 >
                   AI Training Center (RAG)
                 </button>
               </li>
               <li>
                 <button
+                  type="button"
                   onClick={() => onNavigateTab?.('inbox')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
                 >
-                  Live Inbox & Human Takeover
+                  Live Inbox &amp; Human Takeover
                 </button>
               </li>
               <li>
                 <button
+                  type="button"
                   onClick={() => onNavigateTab?.('playground')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
                 >
                   Interactive Playground
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab?.('embed')}
+                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
+                >
+                  Embed Widget Code Guide
                 </button>
               </li>
             </ul>
@@ -130,54 +225,69 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
 
           {/* Resources & Support */}
           <div className="space-y-3">
-            <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">Resources & Guides</h4>
+            <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">Resources &amp; Guides</h4>
             <ul className="space-y-2 text-xs text-zinc-400 font-medium">
               <li>
                 <button
+                  type="button"
                   onClick={() => onNavigateTab?.('features')}
-                  className="hover:text-white transition cursor-pointer"
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
                   Complete Feature Suite
                 </button>
               </li>
               <li>
                 <button
+                  type="button"
                   onClick={() => onNavigateTab?.('pricing')}
-                  className="hover:text-white transition cursor-pointer"
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
-                  Pricing Plans & Free Trial
+                  Pricing Plans &amp; Free Trial
                 </button>
               </li>
               <li>
                 <button
+                  type="button"
                   onClick={() => onNavigateTab?.('faq')}
-                  className="hover:text-white transition cursor-pointer"
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
-                  Support FAQ & Help Center
+                  Support FAQ &amp; Help Center
                 </button>
               </li>
               <li>
                 <button
+                  type="button"
                   onClick={() => onNavigateTab?.('integrations')}
-                  className="hover:text-white transition cursor-pointer"
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
                   Integrations Marketplace
                 </button>
               </li>
               <li>
                 <button
+                  type="button"
                   onClick={() => onNavigateTab?.('team')}
-                  className="hover:text-white transition cursor-pointer"
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
-                  Team & Role Management
+                  Team &amp; Role Management
                 </button>
               </li>
               <li>
                 <button
-                  onClick={() => onNavigateTab?.('embed')}
-                  className="hover:text-white transition cursor-pointer"
+                  type="button"
+                  onClick={() => onNavigateTab?.('security')}
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
-                  Embed Widget Code Guide
+                  Security Standards &amp; VDP
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab?.('status')}
+                  className="hover:text-white transition cursor-pointer text-left"
+                >
+                  Edge System Status
                 </button>
               </li>
             </ul>
@@ -217,30 +327,32 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
         {/* Bottom Copyright Bar */}
         <div className="border-t border-zinc-900 pt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-zinc-500 font-medium">
           <p>© 2026 NomadsChat. Powered by <a href="https://nomadsarc.io" target="_blank" rel="noopener noreferrer" className="hover:underline font-extrabold text-white inline-flex items-center gap-1">NomadsArc <ExternalLink className="w-3 h-3" /></a>. All rights reserved.</p>
-          <div className="flex items-center gap-6 text-zinc-400">
+          <div className="flex items-center gap-4 sm:gap-6 text-zinc-400 flex-wrap justify-center md:justify-end">
             <a href="https://nomadsarc.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition">NomadsArc Platform</a>
-            <span
+            <button
+              type="button"
               onClick={() => setLegalModalType('privacy')}
-              className="hover:text-white cursor-pointer"
+              className="hover:text-white transition cursor-pointer"
             >
               Privacy Policy
-            </span>
-            <span
+            </button>
+            <button
+              type="button"
               onClick={() => setLegalModalType('terms')}
-              className="hover:text-white cursor-pointer"
+              className="hover:text-white transition cursor-pointer"
             >
               Terms of Service
-            </span>
-            <span
+            </button>
+            <button
+              type="button"
               onClick={() => setLegalModalType('gdpr')}
-              className="hover:text-white cursor-pointer"
+              className="hover:text-white transition cursor-pointer"
             >
               GDPR &amp; Deletion
-            </span>
-            <a
-              href="#security"
-              onClick={(e) => {
-                e.preventDefault();
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 if (onNavigateTab) {
                   onNavigateTab('security');
                 } else {
@@ -250,11 +362,10 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
               className="hover:text-white transition cursor-pointer"
             >
               Security Standards
-            </a>
-            <a
-              href="#status"
-              onClick={(e) => {
-                e.preventDefault();
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 if (onNavigateTab) {
                   onNavigateTab('status');
                 } else {
@@ -264,18 +375,15 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateTab, onOpenCreateBot }
               className="hover:text-white transition cursor-pointer"
             >
               System Status
-            </a>
-            <a
-              href="#admin"
-              onClick={(e) => {
-                e.preventDefault();
-                window.location.hash = 'admin';
-              }}
-              className="inline-flex items-center gap-1 text-zinc-400 hover:text-white transition font-medium border border-zinc-800 px-2 py-0.5 rounded-md hover:border-zinc-700 bg-zinc-950"
+            </button>
+            <button
+              type="button"
+              onClick={handleAdminClick}
+              className="inline-flex items-center gap-1 text-zinc-400 hover:text-white transition font-medium border border-zinc-800 px-2.5 py-1 rounded-md hover:border-zinc-700 bg-zinc-950 cursor-pointer"
             >
               <Lock className="w-3 h-3 text-zinc-400" />
               <span>Admin Portal</span>
-            </a>
+            </button>
           </div>
         </div>
 

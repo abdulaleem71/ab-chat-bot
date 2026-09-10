@@ -213,10 +213,15 @@
     '#nomadschat-bubble:hover { transform: scale(1.08); box-shadow: 0 20px 25px -5px rgba(0,0,0,0.4); }',
     '#nomadschat-bubble:active { transform: scale(0.95); }',
     '#nomadschat-bubble svg { width: 26px; height: 26px; fill: currentColor; }',
-    '#nomadschat-iframe-container { position: fixed; bottom: 92px; right: 24px; width: 400px; height: 600px; max-width: calc(100vw - 32px); max-height: calc(100vh - 110px); border-radius: 24px; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0,0,0,0.08); opacity: 0; transform: translateY(20px) scale(0.96); transform-origin: bottom right; pointer-events: none; transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1); z-index: 2147483647; background: #ffffff; }',
+    '#nomadschat-iframe-container { position: fixed; bottom: 24px; right: 24px; width: 380px; height: 580px; max-width: calc(100vw - 32px); max-height: 580px; border-radius: 24px; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0,0,0,0.08); opacity: 0; transform: translateY(20px) scale(0.96); transform-origin: bottom right; pointer-events: none; transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1); z-index: 2147483647; background: #ffffff; }',
     '#nomadschat-iframe-container.active { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }',
     '#nomadschat-iframe { width: 100%; height: 100%; border: none; }',
-    '@media (max-width: 480px) { #nomadschat-iframe-container { bottom: 0; right: 0; width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; border-radius: 0; } }'
+    '@media (max-width: 640px) {',
+    '  #nomadschat-root { bottom: 16px; right: 16px; }',
+    '  #nomadschat-bubble { width: 52px; height: 52px; }',
+    '  #nomadschat-iframe-container { position: fixed; inset: 0; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; height: 100dvh; max-width: 100vw; max-height: 100dvh; border-radius: 0; box-shadow: none; z-index: 2147483647; }',
+    '  #nomadschat-root.is-open #nomadschat-bubble { display: none; }',
+    '}'
   ].join('\n');
   document.head.appendChild(style);
 
@@ -253,9 +258,11 @@
   function toggleWidget() {
     isOpen = !isOpen;
     if (isOpen) {
+      root.classList.add('is-open');
       iframeContainer.classList.add('active');
       bubble.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
     } else {
+      root.classList.remove('is-open');
       iframeContainer.classList.remove('active');
       bubble.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 1.821.487 3.53 1.338 5L2.5 21.5l4.5-.838A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2zm1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/></svg>';
     }

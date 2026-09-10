@@ -250,7 +250,7 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
             <a
               href={`https://${domain}`}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="p-2 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 rounded-xl transition cursor-pointer"
               title="Open Website"
             >

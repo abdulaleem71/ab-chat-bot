@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
   CreditCard,
   CheckCircle2,
@@ -49,6 +50,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [transactionId, setTransactionId] = useState('');
 
   // Payment form state
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, isOpen, onClose);
+
   const hasExistingCard = Boolean(tenant?.hasPaymentMethod);
   const [useNewCard, setUseNewCard] = useState(!hasExistingCard);
   const [cardNumber, setCardNumber] = useState('');
@@ -178,7 +182,13 @@ Thank you for choosing NomadsChat!
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-3 sm:p-6 overflow-hidden animate-in fade-in duration-200">
-      <div className="bg-white border border-zinc-200 rounded-3xl shadow-2xl max-w-lg w-full max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col my-auto relative overflow-hidden font-body">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="checkout-modal-title"
+        className="bg-white border border-zinc-200 rounded-3xl shadow-2xl max-w-lg w-full max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col my-auto relative overflow-hidden font-body"
+      >
         {/* Header Bar */}
         <div className="bg-black text-white p-5 sm:p-6 flex items-center justify-between border-b border-zinc-800 shrink-0">
           <div className="flex items-center gap-3">
@@ -187,7 +197,7 @@ Thank you for choosing NomadsChat!
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-lg font-extrabold text-white tracking-tight font-heading">
+                <h3 id="checkout-modal-title" className="text-lg font-extrabold text-white tracking-tight font-heading">
                   {isPaidPlan ? 'Upgrade & Payment Method' : 'Confirm Free Plan'}
                 </h3>
                 <span className="bg-emerald-950 border border-emerald-800 text-emerald-400 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase font-mono">
@@ -198,7 +208,9 @@ Thank you for choosing NomadsChat!
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close checkout modal"
             className="p-2 text-zinc-400 hover:text-white rounded-xl bg-zinc-900 hover:bg-zinc-800 transition cursor-pointer"
           >
             <X className="w-5 h-5" />

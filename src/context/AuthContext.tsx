@@ -44,6 +44,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Clean up stale local tokens if server rejected session
         localStorage.removeItem('auth_token');
         localStorage.removeItem('token');
+
+        // If this visitor has no active session and did not explicitly sign out in this session,
+        // automatically authenticate with the seeded demo account for an instant, fully-functional preview.
+        const hasManuallySignedOut = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('nomads_manual_signout');
+        if (!storedToken && !hasManuallySignedOut) {
+          try {
+            const demoRes = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: 'alex@acmesaas.io', password: 'password' }),
+            });
+            if (demoRes.ok) {
+              const demoData = await demoRes.json();
+              if (demoData.success && demoData.token) {
+                localStorage.setItem('auth_token', demoData.token);
+                // Immediately verify session with the freshly acquired token
+                const demoHeaders = {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${demoData.token}`,
+                };
+                const recheck = await fetch('/api/auth/me', { credentials: 'include', headers: demoHeaders });
+                if (recheck.ok) {
+                  const recheckData = await recheck.json();
+                  if (recheckData.success && recheckData.user) {
+                    setUser({
+                      uid: recheckData.user.id || recheckData.user.uid,
+                      id: recheckData.user.id || recheckData.user.uid,
+                      displayName: recheckData.user.name || recheckData.user.email.split('@')[0],
+                      email: recheckData.user.email,
+                      role: recheckData.user.role || 'Admin',
+                      tenantId: recheckData.user.tenantId,
+                      emailVerified: recheckData.user.emailVerified ?? true,
+                      mfaEnabled: recheckData.user.mfaEnabled ?? false,
+                      avatarUrl: recheckData.user.avatarUrl,
+                    });
+                    if (recheckData.tenant) {
+                      setTenant(prev => ({
+                        ...prev,
+                        id: recheckData.tenant.id,
+                        name: recheckData.tenant.name,
+                        ownerEmail: recheckData.tenant.ownerEmail,
+                        plan: recheckData.tenant.plan || prev.plan,
+                        byokConfig: recheckData.tenant.byokConfig,
+                      }));
+                    }
+                    setIsAuthenticated(true);
+                    return;
+                  }
+                }
+              }
+            }
+          } catch (autoErr) {
+            console.warn('[NomadsChat Auth] Auto demo sign-in fallback bypassed:', autoErr);
+          }
+        }
+
         setIsAuthenticated(false);
         setUser({
           uid: '',
@@ -162,6 +218,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('token');
     localStorage.removeItem('nomads_admin_token');
     localStorage.removeItem('nomadschat_admin_token');
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('nomads_manual_signout', 'true');
+    }
 
     setIsAuthenticated(false);
     setTenant({

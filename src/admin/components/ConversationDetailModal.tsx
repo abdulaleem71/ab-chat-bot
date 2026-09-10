@@ -491,7 +491,7 @@ export const ConversationDetailModal: React.FC<ConversationDetailModalProps> = (
                                         <div key={sIdx} className="bg-indigo-700/40 rounded px-2 py-1 text-indigo-100 flex items-center justify-between text-[11px]">
                                           <span className="truncate">{src.title}</span>
                                           {src.sourceUrl && (
-                                            <a href={src.sourceUrl} target="_blank" rel="noreferrer" className="text-indigo-200 hover:text-white ml-2 flex items-center gap-0.5">
+                                            <a href={src.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-200 hover:text-white ml-2 flex items-center gap-0.5">
                                               <ExternalLink className="w-3 h-3" />
                                             </a>
                                           )}

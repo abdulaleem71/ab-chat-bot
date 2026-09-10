@@ -235,11 +235,17 @@ export async function initDb(): Promise<void> {
         tenant_id TEXT NOT NULL,
         content TEXT NOT NULL,
         chunk_index INTEGER NOT NULL,
+        embedding_json TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY (source_id) REFERENCES knowledge_sources(id) ON DELETE CASCADE,
         FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
       );
     `);
+
+    // Migration for knowledge_chunks embedding_json column
+    try {
+      await client.execute(`ALTER TABLE knowledge_chunks ADD COLUMN embedding_json TEXT;`);
+    } catch (e) {}
 
     // Create Transactional Emails Table
     await client.execute(`

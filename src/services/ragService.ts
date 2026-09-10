@@ -1,21 +1,76 @@
+import { GoogleGenAI } from '@google/genai';
 import { KnowledgeRepo, KnowledgeChunkRow } from '../repositories/knowledgeRepo';
 import { GroundingSource } from '../types';
 
-interface RetrievalResult {
+export interface RetrievalResult {
   groundingContext: string;
   sourcesUsed: GroundingSource[];
+  isBelowThreshold: boolean;
+  topScore: number;
+  fallbackTriggered: boolean;
 }
 
-const STOP_WORDS = new Set([
-  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he',
-  'in', 'is', 'it', 'its', 'of', 'on', 'or', 'that', 'the', 'to', 'was', 'were',
-  'will', 'with', 'what', 'how', 'where', 'when', 'who', 'why', 'can', 'do', 'does',
-  'i', 'you', 'me', 'my', 'we', 'our', 'your', 'tell', 'about', 'please', 'help'
-]);
+export function cosineSimilarity(vecA: number[], vecB: number[]): number {
+  if (!vecA || !vecB || vecA.length === 0 || vecB.length === 0 || vecA.length !== vecB.length) {
+    return 0;
+  }
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let i = 0; i < vecA.length; i++) {
+    const a = vecA[i];
+    const b = vecB[i];
+    dotProduct += a * b;
+    normA += a * a;
+    normB += b * b;
+  }
+
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+const GREETINGS = new Set(['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening', 'thanks', 'thank you']);
 
 export class RagService {
   /**
-   * Retrieves top relevant knowledge chunks for a user query and returns grounded prompt context with actual citations.
+   * Computes embedding vector for a query using Gemini text-embedding-004 model (768 dimensions)
+   */
+  static async computeQueryEmbedding(query: string): Promise<number[] | null> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return null;
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const res = await ai.models.embedContent({
+        model: 'text-embedding-004',
+        contents: query.trim().slice(0, 8000),
+      });
+
+      const emb = res.embeddings;
+      if (Array.isArray(emb) && emb[0]?.values) {
+        return emb[0].values;
+      }
+      if ((emb as any)?.values && Array.isArray((emb as any).values)) {
+        return (emb as any).values;
+      }
+      return null;
+    } catch (err: any) {
+      console.warn('[Query Embedding Error]:', err.message || err);
+      return null;
+    }
+  }
+
+  /**
+   * Retrieves top relevant knowledge chunks using Gemini text-embedding-004 and Cosine Similarity (> 0.65 threshold).
    */
   static async retrieveRelevantContext(
     chatbotId: string,
@@ -25,7 +80,7 @@ export class RagService {
   ): Promise<RetrievalResult> {
     let chunks = await KnowledgeRepo.findChunksByBot(chatbotId);
 
-    // If no chunks exist but a website URL is configured and tenantId is known, try an auto-ingest
+    // If no chunks exist but a website URL is configured and tenantId is known, attempt on-demand scrape
     if (chunks.length === 0 && botWebsiteUrl && tenantId) {
       try {
         const { KnowledgeService } = await import('./knowledgeService');
@@ -42,149 +97,152 @@ export class RagService {
           ? `Chatbot configured website URL: ${botWebsiteUrl}. No additional scraped knowledge chunks are currently indexed.`
           : 'No indexed knowledge sources available for this chatbot.',
         sourcesUsed: [],
+        isBelowThreshold: true,
+        topScore: 0,
+        fallbackTriggered: true,
       };
     }
 
     const lowerQuery = query.toLowerCase().trim();
-    const queryTokens = this.tokenize(query).filter(t => !STOP_WORDS.has(t) && t.length > 1);
 
-    // If the corpus is compact (<= 15 chunks), include all chunks in context for 100% knowledge retention
-    if (chunks.length <= 15) {
-      const groundingContext = chunks
+    // Check for conversational greetings
+    if (GREETINGS.has(lowerQuery)) {
+      const introChunks = chunks.slice(0, 2);
+      const groundingContext = introChunks
         .map(c => `[SOURCE: ${c.source_title}${c.source_url ? ` (${c.source_url})` : ''}]\n${c.content}`)
         .join('\n\n---\n\n');
 
-      const sourceMap = new Map<string, GroundingSource>();
-      chunks.forEach(c => {
-        if (!sourceMap.has(c.source_id)) {
-          sourceMap.set(c.source_id, {
-            title: c.source_title,
-            snippet: c.content.substring(0, 180) + '...',
-            sourceType: c.source_url ? 'url' : 'document',
-          });
-        }
-      });
-
-      return {
-        groundingContext,
-        sourcesUsed: Array.from(sourceMap.values()),
-      };
-    }
-
-    // For larger corpuses: Handle greetings or general questions by providing introductory chunks
-    const isGreetingOrGeneral = queryTokens.length === 0 || ['hi', 'hello', 'hey', 'help', 'info', 'what do you do'].includes(lowerQuery);
-    if (isGreetingOrGeneral) {
-      const topOverviewChunks = chunks.slice(0, 3);
-      const groundingContext = topOverviewChunks
-        .map(c => `[SOURCE: ${c.source_title}${c.source_url ? ` (${c.source_url})` : ''}]\n${c.content}`)
-        .join('\n\n---\n\n');
-
-      const sourcesUsed: GroundingSource[] = [{
-        title: topOverviewChunks[0].source_title,
-        snippet: topOverviewChunks[0].content.substring(0, 180) + '...',
-        sourceType: topOverviewChunks[0].source_url ? 'url' : 'document',
-      }];
+      const sourcesUsed: GroundingSource[] = introChunks.map(c => ({
+        title: c.source_title,
+        snippet: c.content.length > 250 ? c.content.substring(0, 250) + '...' : c.content,
+        sourceType: c.source_url ? 'url' : 'document',
+        url: c.source_url || undefined,
+      }));
 
       return {
         groundingContext,
         sourcesUsed,
+        isBelowThreshold: false,
+        topScore: 1.0,
+        fallbackTriggered: false,
       };
     }
 
-    // Score Chunks using Term Frequency, Keyword Coverage, and Exact Substring Matching
-    const scoredChunks = chunks.map(chunk => {
-      const lowerContent = chunk.content.toLowerCase();
-      const lowerTitle = chunk.source_title.toLowerCase();
-      const chunkTokens = this.tokenize(chunk.content);
-      const titleTokens = this.tokenize(chunk.source_title);
+    // Compute Query Vector Embedding using text-embedding-004
+    const queryEmbedding = await this.computeQueryEmbedding(query);
 
-      let score = 0;
-      let matchedTokensCount = 0;
+    // Score Chunks using Vector Cosine Similarity
+    const scoredChunks: { chunk: KnowledgeChunkRow & { source_title: string; source_url: string }; score: number }[] = [];
 
-      // Exact phrase match in content gets strong boost
-      if (lowerContent.includes(lowerQuery) && lowerQuery.length > 3) {
-        score += 8.0;
-        matchedTokensCount += queryTokens.length;
+    if (queryEmbedding && queryEmbedding.length > 0) {
+      for (const chunk of chunks) {
+        let chunkEmbedding: number[] | null = null;
+
+        if (chunk.embedding_json) {
+          try {
+            chunkEmbedding = JSON.parse(chunk.embedding_json);
+          } catch (e) {
+            chunkEmbedding = null;
+          }
+        }
+
+        // On-the-fly embedding calculation for legacy chunks missing vector data
+        if (!chunkEmbedding) {
+          try {
+            const { KnowledgeService } = await import('./knowledgeService');
+            const embs = await KnowledgeService.computeChunkEmbeddings([chunk.content]);
+            if (embs[0]) {
+              chunkEmbedding = embs[0];
+              await KnowledgeRepo.updateChunkEmbedding(chunk.id, chunkEmbedding);
+            }
+          } catch (e) {
+            console.warn('[On-demand chunk embedding failed]:', e);
+          }
+        }
+
+        if (chunkEmbedding && chunkEmbedding.length === queryEmbedding.length) {
+          const sim = cosineSimilarity(queryEmbedding, chunkEmbedding);
+          scoredChunks.push({ chunk, score: sim });
+        } else {
+          // Keyword fallback score if embedding missing
+          const kwScore = this.computeKeywordScore(query, chunk.content, chunk.source_title);
+          scoredChunks.push({ chunk, score: kwScore });
+        }
       }
+    } else {
+      // Fallback: Keyword scoring if Gemini API key missing
+      for (const chunk of chunks) {
+        const kwScore = this.computeKeywordScore(query, chunk.content, chunk.source_title);
+        scoredChunks.push({ chunk, score: kwScore });
+      }
+    }
 
-      queryTokens.forEach(token => {
-        let tokenMatched = false;
-        // Exact token match in content
-        const exactMatches = chunkTokens.filter(t => t === token).length;
-        if (exactMatches > 0) {
-          score += exactMatches * 2.0;
-          tokenMatched = true;
-        } else if (lowerContent.includes(token)) {
-          score += 1.0;
-          tokenMatched = true;
-        }
+    // Sort by Cosine Similarity score descending
+    scoredChunks.sort((a, b) => b.score - a.score);
 
-        // Title matches are high intent signals
-        const titleMatches = titleTokens.filter(t => t === token).length;
-        if (titleMatches > 0) {
-          score += titleMatches * 3.5;
-          tokenMatched = true;
-        } else if (lowerTitle.includes(token)) {
-          score += 2.0;
-          tokenMatched = true;
-        }
+    const topScore = scoredChunks.length > 0 ? scoredChunks[0].score : 0;
+    const SIMILARITY_THRESHOLD = 0.65;
 
-        if (tokenMatched) {
-          matchedTokensCount++;
-        }
-      });
+    // Filter top-k (top 4) chunks above similarity threshold (> 0.65)
+    const qualifying = scoredChunks.filter(sc => sc.score > SIMILARITY_THRESHOLD);
+    const top4 = qualifying.slice(0, 4).map(sc => sc.chunk);
 
-      // Reward coverage of query terms (percentage of query keywords found)
-      const coverageRatio = queryTokens.length > 0 ? (matchedTokensCount / queryTokens.length) : 0;
-      score = score * (1 + coverageRatio * 1.5);
-
-      // Normalize by chunk length to avoid bias toward giant documents
-      const normalizedScore = score / Math.sqrt(chunkTokens.length + 10);
-      return { chunk, score: normalizedScore, coverageRatio };
-    });
-
-    // Sort by relevance score
-    const sorted = scoredChunks.sort((a, b) => b.score - a.score);
-    let topChunks = sorted
-      .filter(sc => sc.score > 0.1 || sc.coverageRatio > 0.3)
-      .slice(0, 5)
-      .map(sc => sc.chunk);
-
-    // Fallback: If no chunks scored high enough, pick the top 3 best matching or first chunks
-    if (topChunks.length === 0) {
-      topChunks = sorted.slice(0, 3).map(sc => sc.chunk);
+    if (top4.length === 0 || topScore <= SIMILARITY_THRESHOLD) {
+      return {
+        groundingContext: `[KNOWLEDGE BASE BELOW CONFIDENCE THRESHOLD] Top chunk similarity score is ${topScore.toFixed(3)}, which is below the required 0.65 threshold. Answer strictly using the configured bot fallback message.`,
+        sourcesUsed: [],
+        isBelowThreshold: true,
+        topScore,
+        fallbackTriggered: true,
+      };
     }
 
     // Build Grounding Context Text
-    const groundingContext = topChunks
+    const groundingContext = top4
       .map(c => `[SOURCE: ${c.source_title}${c.source_url ? ` (${c.source_url})` : ''}]\n${c.content}`)
       .join('\n\n---\n\n');
 
     // Deduplicate and Map Actual Sources Used
     const sourceMap = new Map<string, GroundingSource>();
-    topChunks.forEach(c => {
+    top4.forEach(c => {
       if (!sourceMap.has(c.source_id)) {
         sourceMap.set(c.source_id, {
           title: c.source_title,
-          snippet: c.content.substring(0, 180) + '...',
+          snippet: c.content.length > 350 ? c.content.substring(0, 350) + '...' : c.content,
           sourceType: c.source_url ? 'url' : 'document',
+          url: c.source_url || undefined,
         });
       }
     });
 
-    const sourcesUsed = Array.from(sourceMap.values());
-
     return {
       groundingContext,
-      sourcesUsed,
+      sourcesUsed: Array.from(sourceMap.values()),
+      isBelowThreshold: false,
+      topScore,
+      fallbackTriggered: false,
     };
   }
 
-  private static tokenize(text: string): string[] {
-    return text
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter(t => t.length > 0);
+  private static computeKeywordScore(query: string, content: string, title: string): number {
+    const lQuery = query.toLowerCase().trim();
+    const lContent = content.toLowerCase();
+    const lTitle = title.toLowerCase();
+
+    let score = 0;
+    if (lContent.includes(lQuery)) score += 0.5;
+    if (lTitle.includes(lQuery)) score += 0.4;
+
+    const queryWords = lQuery.split(/\s+/).filter(w => w.length > 2);
+    let matches = 0;
+    for (const w of queryWords) {
+      if (lContent.includes(w) || lTitle.includes(w)) matches++;
+    }
+
+    if (queryWords.length > 0) {
+      score += (matches / queryWords.length) * 0.4;
+    }
+
+    return Math.min(score, 0.99);
   }
 }

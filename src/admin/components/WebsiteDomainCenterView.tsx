@@ -379,7 +379,7 @@ export const WebsiteDomainCenterView: React.FC = () => {
                             <a
                               href={`https://${dom.domain}`}
                               target="_blank"
-                              rel="noreferrer"
+                              rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
                               className="text-zinc-400 hover:text-zinc-900 opacity-0 group-hover:opacity-100 transition"
                             >

@@ -575,7 +575,7 @@ export const SettingsView: React.FC = () => {
               <label className="block text-xs font-bold text-zinc-800">Workspace Name</label>
               <input
                 type="text"
-                value={profile.name}
+                value={profile.name || ''}
                 onChange={e => setProfile({ ...profile, name: e.target.value })}
                 required
                 className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-950"
@@ -586,7 +586,7 @@ export const SettingsView: React.FC = () => {
               <label className="block text-xs font-bold text-zinc-800">Owner Email</label>
               <input
                 type="email"
-                value={profile.ownerEmail}
+                value={profile.ownerEmail || ''}
                 disabled
                 className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-semibold text-zinc-500 cursor-not-allowed"
               />
@@ -607,7 +607,7 @@ export const SettingsView: React.FC = () => {
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-zinc-800">Timezone</label>
               <select
-                value={profile.timezone}
+                value={profile.timezone || 'UTC'}
                 onChange={e => setProfile({ ...profile, timezone: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-950 bg-white"
               >
@@ -924,7 +924,7 @@ export const SettingsView: React.FC = () => {
                   type="number"
                   min="1"
                   max="100"
-                  value={policy.maxPercent}
+                  value={policy.maxPercent ?? 20}
                   onChange={e => setPolicy({ ...policy, maxPercent: Number(e.target.value) })}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-950"
                 />
@@ -939,7 +939,7 @@ export const SettingsView: React.FC = () => {
                   type="number"
                   min="1"
                   max="10"
-                  value={policy.maxPerConversation}
+                  value={policy.maxPerConversation ?? 1}
                   onChange={e => setPolicy({ ...policy, maxPerConversation: Number(e.target.value) })}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-950"
                 />
@@ -954,7 +954,7 @@ export const SettingsView: React.FC = () => {
                   type="number"
                   min="1"
                   max="100"
-                  value={policy.requiresApprovalAbove}
+                  value={policy.requiresApprovalAbove ?? 15}
                   onChange={e => setPolicy({ ...policy, requiresApprovalAbove: Number(e.target.value) })}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-950"
                 />

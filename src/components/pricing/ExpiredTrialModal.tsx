@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion } from 'motion/react';
 import { useAuth } from '../../context/AuthContext';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -28,11 +29,18 @@ export const ExpiredTrialModal: React.FC<ExpiredTrialModalProps> = ({
   onSelectUpgradeToPro,
   onStayOnFree,
 }) => {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, isOpen, onClose);
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 overflow-y-auto animate-in fade-in duration-200">
       <motion.div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="expired-trial-modal-title"
         initial={{ opacity: 0, scale: 0.95, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -43,7 +51,7 @@ export const ExpiredTrialModal: React.FC<ExpiredTrialModalProps> = ({
           <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-700 flex items-center justify-center mx-auto mb-3 text-amber-400 shadow-inner">
             <AlertTriangle className="w-6 h-6" />
           </div>
-          <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight font-heading">
+          <h2 id="expired-trial-modal-title" className="text-xl sm:text-2xl font-extrabold tracking-tight font-heading">
             Your Growth Pro Trial Has Ended
           </h2>
           <p className="text-xs text-zinc-300 font-medium mt-1 max-w-md mx-auto">

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { AlertTriangle, Trash2, X, Loader2 } from 'lucide-react';
 import { MotionButton } from './MotionButton';
 import { useClickOutside } from '../../hooks/useClickOutside';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 export interface ConfirmDialogProps {
   isOpen: boolean;
@@ -39,6 +40,12 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 
   useClickOutside(modalRef, () => {
     if (isOpen && !isLoading) onClose();
+  });
+
+  useFocusTrap(modalRef, {
+    isOpen,
+    onClose,
+    closeOnEsc: !isLoading,
   });
 
   useEffect(() => {
@@ -78,6 +85,9 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           {/* Modal Box */}
           <motion.div
             ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-dialog-title"
             initial={{ opacity: 0, scale: 0.95, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 12 }}
@@ -101,7 +111,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                   )}
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-zinc-950 font-heading">
+                  <h3 id="confirm-dialog-title" className="text-base font-bold text-zinc-950 font-heading">
                     {title}
                   </h3>
                   <p className="text-xs text-zinc-500 font-medium font-body">
@@ -113,6 +123,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                 type="button"
                 onClick={onClose}
                 disabled={isLoading}
+                aria-label="Close confirmation dialog"
                 className="p-1.5 text-zinc-400 hover:text-zinc-700 rounded-xl hover:bg-zinc-100 transition cursor-pointer disabled:opacity-50"
               >
                 <X className="w-4 h-4" />

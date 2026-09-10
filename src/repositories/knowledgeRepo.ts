@@ -7,6 +7,7 @@ export interface KnowledgeChunkRow {
   tenant_id: string;
   content: string;
   chunk_index: number;
+  embedding_json?: string | null;
   created_at: string;
 }
 
@@ -66,7 +67,8 @@ export class KnowledgeRepo {
   static async createSourceWithChunks(
     source: Omit<KnowledgeSource, 'chatbotIds' | 'chatbotId' | 'chunkCount'>,
     chunks: string[],
-    chatbotIds: string[]
+    chatbotIds: string[],
+    chunkEmbeddings?: (number[] | null)[]
   ): Promise<KnowledgeSource> {
     const db = getDb();
 
@@ -96,10 +98,11 @@ export class KnowledgeRepo {
     const now = new Date().toISOString();
     for (let i = 0; i < chunks.length; i++) {
       const chunkId = `kc_${source.id}_${i}`;
+      const emb = chunkEmbeddings && chunkEmbeddings[i] ? JSON.stringify(chunkEmbeddings[i]) : null;
       await db.execute({
-        sql: `INSERT INTO knowledge_chunks (id, source_id, tenant_id, content, chunk_index, created_at)
-              VALUES (?, ?, ?, ?, ?, ?);`,
-        args: [chunkId, source.id, source.tenantId, chunks[i], i, now],
+        sql: `INSERT INTO knowledge_chunks (id, source_id, tenant_id, content, chunk_index, embedding_json, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?);`,
+        args: [chunkId, source.id, source.tenantId, chunks[i], i, emb, now],
       });
     }
 
@@ -109,6 +112,14 @@ export class KnowledgeRepo {
       chatbotIds,
       chatbotId: chatbotIds[0] || '',
     };
+  }
+
+  static async updateChunkEmbedding(chunkId: string, embedding: number[]): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE knowledge_chunks SET embedding_json = ? WHERE id = ?;`,
+      args: [JSON.stringify(embedding), chunkId],
+    });
   }
 
   static async updateSourceLinks(sourceId: string, tenantId: string, chatbotIds: string[]): Promise<void> {
@@ -163,6 +174,7 @@ export class KnowledgeRepo {
       tenant_id: String(r.tenant_id),
       content: String(r.content),
       chunk_index: Number(r.chunk_index),
+      embedding_json: r.embedding_json ? String(r.embedding_json) : null,
       created_at: String(r.created_at),
       source_title: String(r.source_title),
       source_url: String(r.source_url || ''),

@@ -188,6 +188,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       {isOpen && (
         <div className="fixed inset-0 z-[9990] flex items-start justify-center pt-16 sm:pt-24 px-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
           <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Command palette"
             initial={{ opacity: 0, scale: 0.96, y: -8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: -8 }}
@@ -207,10 +210,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                 }}
                 onKeyDown={handleKeyDown}
                 placeholder="Type a command, page, or search chatbot..."
+                aria-label="Search command or jump to page"
                 className="w-full bg-transparent text-sm font-medium text-zinc-900 placeholder:text-zinc-400 focus:outline-none font-body"
               />
               <button
+                type="button"
                 onClick={onClose}
+                aria-label="Close command palette"
                 className="p-1 text-zinc-400 hover:text-zinc-900 rounded-lg hover:bg-zinc-200 transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
