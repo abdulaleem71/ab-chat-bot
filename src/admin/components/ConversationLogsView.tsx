@@ -73,6 +73,7 @@ export const ConversationLogsView: React.FC<ConversationLogsViewProps> = ({
 
   // Quick Action feedback
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const liveEvents = overviewMetrics?.recentEvents || [];
   const filteredLiveEvents = liveEvents.filter((evt) => {
@@ -151,11 +152,12 @@ export const ConversationLogsView: React.FC<ConversationLogsViewProps> = ({
         a.remove();
       })
       .catch((err) => {
-        alert('Export error: ' + err.message);
+        setActionError('Export error: ' + err.message);
       });
   };
 
   const handleQuickStatusChange = async (id: string, newStatus: 'active' | 'closed' | 'archived' | 'flagged') => {
+    setActionError(null);
     try {
       const res = await fetch(`/api/admin/conversations/${id}/status`, {
         method: 'PATCH',
@@ -177,7 +179,7 @@ export const ConversationLogsView: React.FC<ConversationLogsViewProps> = ({
       setTimeout(() => setActionSuccess(null), 3000);
       fetchConversations();
     } catch (err: any) {
-      alert(err.message || 'Failed to update conversation status');
+      setActionError(err.message || 'Failed to update conversation status');
     }
   };
 
@@ -652,7 +654,7 @@ export const ConversationLogsView: React.FC<ConversationLogsViewProps> = ({
         </div>
       </div>
 
-      {/* Success Notification */}
+      {/* Success / Error Notifications */}
       {actionSuccess && (
         <div className="p-3 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs font-medium flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -660,6 +662,17 @@ export const ConversationLogsView: React.FC<ConversationLogsViewProps> = ({
             <span>{actionSuccess}</span>
           </div>
           <button onClick={() => setActionSuccess(null)} className="opacity-70 hover:opacity-100">
+            &times;
+          </button>
+        </div>
+      )}
+      {actionError && (
+        <div className="p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300 rounded-xl text-xs font-medium flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-500" />
+            <span>{actionError}</span>
+          </div>
+          <button onClick={() => setActionError(null)} className="opacity-70 hover:opacity-100">
             &times;
           </button>
         </div>

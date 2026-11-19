@@ -155,14 +155,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   type="button"
                   id="sidebar-search-btn"
                   onClick={onOpenCommandPalette}
-                  className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl border border-zinc-200/70 bg-zinc-50/60 hover:bg-zinc-100 text-zinc-500 hover:text-zinc-900 transition text-xs font-medium cursor-pointer shadow-2xs font-body"
+                  className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-zinc-500 hover:text-zinc-900 transition text-xs font-medium cursor-pointer shadow-xs font-body"
                   title="Search commands and navigate (⌘K)"
                 >
                   <div className="flex items-center gap-2">
                     <Search className="w-3.5 h-3.5 text-zinc-400" />
                     <span className="text-zinc-500">Quick actions...</span>
                   </div>
-                  <kbd className="text-[10px] font-bold font-mono bg-white border border-zinc-200 px-1.5 py-0.5 rounded text-zinc-500 shadow-2xs">
+                  <kbd className="text-[10px] font-semibold font-mono bg-white border border-zinc-200 px-1.5 py-0.5 rounded text-zinc-500 shadow-xs">
                     ⌘K
                   </kbd>
                 </button>
@@ -187,7 +187,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {navSections.map((section) => (
             <div key={section.title} className="space-y-1">
               {!isCollapsed ? (
-                <p className="px-3 text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">
+                <p className="px-3 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider font-heading">
                   {section.title}
                 </p>
               ) : (
@@ -203,6 +203,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                   return (
                     <motion.button
+                      type="button"
                       key={item.id}
                       whileHover={{ x: isCollapsed ? 0 : isActive ? 0 : 2 }}
                       whileTap={{ scale: 0.98 }}
@@ -276,7 +277,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="pt-2 border-t border-zinc-100 space-y-2">
         {/* Grounded RAG Status Box */}
         {!isCollapsed ? (
-          <div className="bg-zinc-950 rounded-2xl p-3 text-white shadow-xs relative overflow-hidden group">
+          <div className="bg-zinc-950 rounded-xl p-3 text-white shadow-xs relative overflow-hidden group">
             <div className="flex items-center gap-2 mb-1 relative z-10">
               <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-[11px] font-bold text-zinc-100 font-heading">

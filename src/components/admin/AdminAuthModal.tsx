@@ -164,10 +164,9 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({ isOpen, onClose,
             </MotionButton>
           </form>
 
-          {/* Quick Demo Staff Credential Hint */}
           <div className="mt-6 pt-4 border-t border-zinc-900 text-center">
             <p className="text-[11px] text-zinc-500 font-medium">
-              Demo Owner Email: <span className="text-zinc-300 font-bold font-mono">sarah.lin@acme.io</span>
+              Owner or Administrator privileges are required to open the platform console.
             </p>
           </div>
         </motion.div>

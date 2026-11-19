@@ -1,6 +1,7 @@
 import { Role } from './config/permissions';
 
-export type TenantPlan = 'Free' | 'Pro' | 'growth_pro' | 'Ultra' | 'Enterprise';
+export type SubscriptionStatus = 'trialing' | 'active' | 'expired' | 'canceled';
+export type TenantPlan = 'Pro' | 'Enterprise' | 'Free' | 'growth_pro' | 'Ultra';
 export type ChannelType = 'Website Widget' | 'WhatsApp' | 'Instagram DM' | 'Email' | 'website_widget' | 'whatsapp' | 'instagram_dm' | 'email';
 export type TeamRole = Role;
 
@@ -17,6 +18,7 @@ export interface Tenant {
   ownerEmail: string;
   plan: TenantPlan;
   createdAt: string;
+  subscriptionStatus?: SubscriptionStatus;
   trialStartedAt?: string | null;
   trialEndsAt?: string | null;
   hasPaymentMethod?: boolean;
@@ -60,6 +62,7 @@ export interface TeamInvite {
   tenantId: string;
   email: string;
   role: Role;
+  token?: string;
   invitedBy: string;
   invitedByName?: string;
   status: 'pending' | 'accepted' | 'revoked';
@@ -83,7 +86,7 @@ export interface IntegrationItem {
 }
 
 export type BotTone = 'Friendly' | 'Professional' | 'Concise' | 'Technical' | 'Empathetic';
-export type BotModel = 'gemini-3.7-flash' | 'gemini-3.1-pro-preview';
+export type BotModel = 'gemini-4-hydrogen' | 'gemini-3.1-flash-lite' | string;
 export type BotType = 'support';
 
 export interface SupportTicket {

@@ -87,6 +87,7 @@ import { MotionButton } from '../common/MotionButton';
 import { EmptyState, InboxEmptyState } from '../common/EmptyState';
 import { ConversationListSkeleton, ThreadChatSkeleton, SkeletonLoader, TableRowsSkeleton } from '../common/SkeletonLoader';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 
 interface InboxViewProps {
   conversations: Conversation[];
@@ -120,6 +121,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   onOpenEmbedModal,
 }) => {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [selectedConvId, setSelectedConvId] = useState<string>(conversations[0]?.id || '');
   const [replyInput, setReplyInput] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'needs_attention' | 'active' | 'resolved'>('all');
@@ -184,10 +186,12 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [reportReason, setReportReason] = useState('');
   const [isReporting, setIsReporting] = useState(false);
   const [reportSuccessMsg, setReportSuccessMsg] = useState<string | null>(null);
+  const [reportErrorMsg, setReportErrorMsg] = useState<string | null>(null);
 
   const handleReportConversation = async () => {
     if (!activeConv || !reportReason.trim()) return;
     setIsReporting(true);
+    setReportErrorMsg(null);
     try {
       const res = await fetch(`/api/conversations/${activeConv.id}/report`, {
         method: 'POST',
@@ -198,14 +202,15 @@ export const InboxView: React.FC<InboxViewProps> = ({
       const data = await res.json();
       if (data.success) {
         setReportSuccessMsg('Conversation successfully reported for moderation review.');
+        toast.success('Report Submitted', 'Conversation flagged for moderation review.');
         setReportReason('');
         setShowReportModal(false);
         setTimeout(() => setReportSuccessMsg(null), 4000);
       } else {
-        alert(data.error || 'Failed to report conversation.');
+        setReportErrorMsg(data.error || 'Failed to report conversation.');
       }
     } catch (err: any) {
-      alert('Error reporting conversation: ' + err.message);
+      setReportErrorMsg('Error reporting conversation: ' + (err?.message || 'Network error'));
     } finally {
       setIsReporting(false);
     }
@@ -1182,6 +1187,12 @@ export const InboxView: React.FC<InboxViewProps> = ({
                       className="w-full p-3 text-xs bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-hidden focus:border-zinc-900"
                     />
                   </div>
+
+                  {reportErrorMsg && (
+                    <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-700">
+                      {reportErrorMsg}
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-end gap-2 pt-2">
                     <button

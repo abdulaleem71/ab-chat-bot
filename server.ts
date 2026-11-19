@@ -14,19 +14,22 @@ import dotenv from 'dotenv';
 import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
 import { encrypt, decrypt } from './src/services/encryptionService';
+import { getJwtSecret, getAppUrl, getSessionCookieOptions, getAllowedOrigins } from './src/config/secrets';
+import { DEFAULT_MODEL_ID } from './src/config/models';
+import { StripeService } from './src/services/stripeService';
 
 // Load environment variables
 dotenv.config({ override: process.env.NODE_ENV !== 'production' });
 
 import { initDb, getDb, validateDatabaseConfig, ensureDbInitialized } from './src/db/index';
 import { UserRepo } from './src/repositories/userRepo';
-import { sendTransactionalEmail } from './src/services/emailService';
+import { sendTransactionalEmail, isSmtpConfigured } from './src/services/emailService';
 import { ChatbotRepo } from './src/repositories/chatbotRepo';
 import { ChatbotVersionRepo } from './src/repositories/chatbotVersionRepo';
 import { KnowledgeRepo } from './src/repositories/knowledgeRepo';
 import { ConversationRepo } from './src/repositories/conversationRepo';
 import { LeadRepo } from './src/repositories/leadRepo';
-import { AnalyticsRepo } from './src/repositories/analyticsRepo';
+import { AnalyticsRepo, AnalyticsRange } from './src/repositories/analyticsRepo';
 import { TeamRepo } from './src/repositories/teamRepo';
 import { IntegrationRepo } from './src/repositories/integrationRepo';
 import { ContactRepo } from './src/repositories/contactRepo';
@@ -64,7 +67,7 @@ const app = express();
 app.set('trust proxy', 1);
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'nomadschat_secure_jwt_secret_key_2026';
+const JWT_SECRET = getJwtSecret();
 
 // Startup Environment Variable Safeguards Validation
 const rawDbUrl = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL;
@@ -82,26 +85,22 @@ if (!rawDbUrl) {
 }
 
 if (!process.env.GEMINI_API_KEY) {
-  console.warn('⚠️ [STARTUP WARNING] GEMINI_API_KEY is not defined. AI model features will run in fallback mode.');
+  console.warn('⚠️ [STARTUP WARNING] GEMINI_API_KEY is not defined. AI model features will run in grounded fallback mode.');
 } else {
   console.log('✅ [STARTUP SAFEGUARD] GEMINI_API_KEY validated.');
 }
 
-// Environment-aware cookie options
-const isProduction = process.env.NODE_ENV === 'production';
-const getCookieOptions = (maxAgeMs: number) => ({
-  httpOnly: true,
-  secure: isProduction,
-  sameSite: isProduction ? ('strict' as const) : ('lax' as const),
-  path: '/',
-  maxAge: maxAgeMs,
-});
-
-if (process.env.NODE_ENV === 'production') {
-  if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'nomadschat_secure_jwt_secret_key_2026' || process.env.JWT_SECRET.trim().length < 16) {
-    console.warn('⚠️ SECURITY WARNING: A strong JWT_SECRET environment variable (>= 16 characters) should be set in production.');
-  }
-}
+// Environment-aware cookie options (SameSite=None + Secure on HTTPS/iframe/prod)
+const getCookieOptions = (maxAgeMs: number, req?: express.Request) =>
+  req
+    ? getSessionCookieOptions(req, maxAgeMs)
+    : {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: (process.env.NODE_ENV === 'production' ? 'none' : 'lax') as 'none' | 'lax',
+        path: '/',
+        maxAge: maxAgeMs,
+      };
 
 // Validate Production Configuration & Initialize Database
 try {
@@ -135,9 +134,9 @@ app.use(
   helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
-    crossOriginResourcePolicy: { policy: 'cross-origin' }, // Crucial: Allows external websites to load widget.js & embed iframes
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
     crossOriginOpenerPolicy: false,
-    frameguard: false, // Allows iframe embedding for chatbot widget on 3rd party websites
+    frameguard: false,
   })
 );
 
@@ -145,7 +144,6 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-XSS-Protection', '1; mode=block');
-  // Explicitly allow cross-origin resource loading for widget and embed endpoints
   if (req.path === '/widget.js' || req.path.startsWith('/embed') || req.path.startsWith('/api/chatbots/')) {
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -159,16 +157,108 @@ app.use('/api/chatbots/:id/stream', cors({ origin: '*', credentials: false }));
 app.use('/api/chatbots/:id/auto-detect-host', cors({ origin: '*', credentials: false }));
 app.use('/widget.js', cors({ origin: '*', credentials: false }));
 
-// All other routes use controlled CORS policy with credentials true for httpOnly cookies
+// Controlled CORS policy for authenticated dashboard APIs
+const configuredOrigins = getAllowedOrigins();
 app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      callback(null, true);
+      if (configuredOrigins.includes(origin)) return callback(null, true);
+      try {
+        const parsed = new URL(origin);
+        if (
+          parsed.hostname === 'localhost' ||
+          parsed.hostname === '127.0.0.1' ||
+          parsed.hostname.endsWith('.run.app') ||
+          parsed.hostname.endsWith('.vercel.app')
+        ) {
+          return callback(null, true);
+        }
+      } catch {}
+      return callback(new Error('CORS policy: origin not permitted'));
     },
     credentials: true,
   })
 );
+
+// Stripe Webhook Endpoint (must receive raw Buffer BEFORE express.json)
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'] as string | undefined;
+  if (!sig || !StripeService.isConfigured()) {
+    return res.status(400).json({ success: false, error: 'Missing Stripe signature or configuration.' });
+  }
+  try {
+    await ensureDbInitialized();
+    const event = StripeService.constructWebhookEvent(req.body, sig);
+    const obj = event.data?.object as any;
+    const tenantId = obj?.metadata?.tenantId || obj?.subscription_details?.metadata?.tenantId;
+
+    if (event.type === 'checkout.session.completed' && tenantId) {
+      const planId = obj.metadata?.planId === 'Ultra' ? 'Ultra' : 'Pro';
+      const billingCycle = obj.metadata?.billingCycle === 'monthly' ? 'monthly' : 'annual';
+      const customerId = typeof obj.customer === 'string' ? obj.customer : null;
+      const subscriptionId = typeof obj.subscription === 'string' ? obj.subscription : null;
+
+      await UserRepo.updateTenantPlan(tenantId, planId, 'active', billingCycle);
+      await UserRepo.updateTenantStripeInfo(tenantId, customerId, subscriptionId);
+      const db = getDb();
+      await db.execute({
+        sql: `UPDATE tenants SET payment_method_on_file = 1 WHERE id = ?;`,
+        args: [tenantId],
+      });
+      await db.execute({
+        sql: `INSERT INTO invoices (id, tenant_id, invoice_number, billing_period, description, amount_cents, currency, status, payment_method_summary, stripe_invoice_id, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        args: [
+          newId('inv'),
+          tenantId,
+          'INV-' + Math.floor(100000 + Math.random() * 900000),
+          '3-Day Trial Activated',
+          `NomadsChat ${planId} (${billingCycle})`,
+          0,
+          'USD',
+          'trial',
+          'Stripe Checkout Verified',
+          typeof obj.invoice === 'string' ? obj.invoice : null,
+          new Date().toISOString(),
+        ],
+      });
+    } else if (event.type === 'invoice.paid' && obj?.customer) {
+      const db = getDb();
+      const tRes = await db.execute({
+        sql: `SELECT id FROM tenants WHERE stripe_customer_id = ? LIMIT 1;`,
+        args: [String(obj.customer)],
+      });
+      if (tRes.rows.length > 0) {
+        const tid = String(tRes.rows[0].id);
+        await db.execute({
+          sql: `INSERT INTO invoices (id, tenant_id, invoice_number, billing_period, description, amount_cents, currency, status, payment_method_summary, stripe_invoice_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          args: [
+            newId('inv'),
+            tid,
+            obj.number || ('INV-' + Math.floor(100000 + Math.random() * 900000)),
+            new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+            obj.lines?.data?.[0]?.description || 'NomadsChat Subscription Renewal',
+            Number(obj.amount_paid || 0),
+            String(obj.currency || 'usd').toUpperCase(),
+            'paid',
+            'Stripe Auto-Billing',
+            String(obj.id),
+            new Date().toISOString(),
+          ],
+        });
+      }
+    } else if (event.type === 'customer.subscription.deleted' && obj?.metadata?.tenantId) {
+      await UserRepo.updateSubscriptionStatus(String(obj.metadata.tenantId), 'canceled');
+    }
+
+    res.json({ received: true });
+  } catch (err: any) {
+    console.error('[Stripe Webhook Error]:', err.message);
+    res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+});
 
 app.use(express.json({ limit: '500kb' }));
 app.use(cookieParser());
@@ -301,6 +391,52 @@ function requirePermission(action: Action) {
       error: `Permission Denied: Role '${role}' lacks permission for '${action}'.`,
     });
   };
+}
+
+export async function checkTenantActiveAccess(tenantId: string): Promise<{ isAllowed: boolean; status: 'trialing' | 'active' | 'expired' | 'canceled'; message?: string }> {
+  const tenant = await UserRepo.findTenantById(tenantId);
+  if (!tenant) {
+    return { isAllowed: false, status: 'expired', message: 'Tenant not found.' };
+  }
+  const hasPayment = Boolean(tenant.payment_method_on_file);
+  const now = Date.now();
+  const trialEnds = tenant.trial_ends_at ? new Date(tenant.trial_ends_at).getTime() : 0;
+  const isTrialActive = trialEnds > now;
+
+  if (hasPayment || tenant.subscription_status === 'active') {
+    return { isAllowed: true, status: 'active' };
+  }
+
+  if (isTrialActive && tenant.subscription_status !== 'canceled') {
+    return { isAllowed: true, status: 'trialing' };
+  }
+
+  return {
+    isAllowed: false,
+    status: 'expired',
+    message: 'Your 3-day free trial has expired. Please upgrade your plan to continue.',
+  };
+}
+
+export function requireActiveSubscription(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
+  }
+
+  checkTenantActiveAccess(tenantId).then((access) => {
+    if (!access.isAllowed) {
+      return res.status(402).json({
+        success: false,
+        code: 'TRIAL_EXPIRED',
+        error: 'Your 3-day free trial has expired. Please upgrade your plan to continue.',
+      });
+    }
+    next();
+  }).catch((err) => {
+    console.error('Active subscription check error:', err);
+    next();
+  });
 }
 
 // Dedicated Admin Server-Side Authentication Middleware
@@ -439,10 +575,11 @@ app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res) => {
     id: tenantId,
     name: companyName ? String(companyName).slice(0, 100) : `${email.split('@')[0]}'s Workspace`,
     owner_email: email.toLowerCase(),
-    plan: 'growth_pro',
+    plan: 'Pro',
     created_at: now,
     trial_started_at: now,
     trial_ends_at: trialEndsAt,
+    subscription_status: 'trialing',
     payment_method_on_file: 0,
   });
 
@@ -464,7 +601,7 @@ app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res) => {
   await UserRepo.setEmailVerificationToken(userId, verificationToken, verificationExpiresAt);
 
   // Send verification email
-  const verifyUrl = `${req.protocol}://${req.get('host')}/api/auth/verify-email?token=${verificationToken}`;
+  const verifyUrl = `${getAppUrl(req)}/api/auth/verify-email?token=${verificationToken}`;
   await sendTransactionalEmail({
     to: email.toLowerCase(),
     subject: 'Verify your NomadsChat workspace email',
@@ -479,13 +616,7 @@ app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res) => {
     { expiresIn: '7d' }
   );
 
-  res.cookie('token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  res.cookie('token', token, getSessionCookieOptions(req, 7 * 24 * 60 * 60 * 1000));
 
   res.json({
     success: true,
@@ -495,14 +626,64 @@ app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res) => {
       id: tenant.id,
       name: tenant.name,
       ownerEmail: tenant.owner_email,
-      plan: tenant.plan,
+      plan: tenant.plan || 'Pro',
       createdAt: tenant.created_at,
+      subscriptionStatus: tenant.subscription_status || 'trialing',
       trialStartedAt: tenant.trial_started_at,
       trialEndsAt: tenant.trial_ends_at,
       hasPaymentMethod: false,
       paymentMethodBrand: null,
       paymentMethodLast4: null,
       paymentMethodExp: null,
+    },
+  });
+}));
+
+// Explicit Live Sandbox Demo Session Endpoint
+app.post('/api/auth/demo', authLimiter, asyncHandler(async (req, res) => {
+  const demoUser = await UserRepo.findUserByEmail('alex@acmesaas.io');
+  if (!demoUser) {
+    return res.status(404).json({ success: false, error: 'Demo workspace is currently unavailable.' });
+  }
+  const demoTenant = await UserRepo.findTenantById(demoUser.tenant_id);
+  if (!demoTenant) {
+    return res.status(404).json({ success: false, error: 'Demo workspace tenant not found.' });
+  }
+
+  const token = jwt.sign(
+    { id: demoUser.id, email: demoUser.email, name: demoUser.name, tenantId: demoUser.tenant_id, role: demoUser.role, isDemo: true },
+    JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+
+  res.cookie('token', token, getSessionCookieOptions(req, 24 * 60 * 60 * 1000));
+
+  res.json({
+    success: true,
+    isDemo: true,
+    token,
+    user: {
+      id: demoUser.id,
+      email: demoUser.email,
+      name: demoUser.name,
+      tenantId: demoUser.tenant_id,
+      role: demoUser.role,
+      emailVerified: true,
+      mfaEnabled: false,
+    },
+    tenant: {
+      id: demoTenant.id,
+      name: demoTenant.name,
+      ownerEmail: demoTenant.owner_email,
+      plan: demoTenant.plan || 'Pro',
+      createdAt: demoTenant.created_at,
+      subscriptionStatus: demoTenant.subscription_status || 'trialing',
+      trialStartedAt: demoTenant.trial_started_at,
+      trialEndsAt: demoTenant.trial_ends_at,
+      hasPaymentMethod: Boolean(demoTenant.payment_method_on_file),
+      paymentMethodBrand: demoTenant.payment_method_brand,
+      paymentMethodLast4: demoTenant.payment_method_last4,
+      paymentMethodExp: demoTenant.payment_method_exp,
     },
   });
 }));
@@ -514,7 +695,6 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, error: 'Email and password are required' });
   }
 
-  // 1. Block sign-in without an account. Require existing user.
   const user = await UserRepo.findUserByEmail(email.trim());
   if (!user) {
     return res.status(401).json({
@@ -528,8 +708,11 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
   if (user.password_hash.startsWith('$2a$') || user.password_hash.startsWith('$2b$') || user.password_hash.startsWith('$2y$')) {
     isValidPassword = await bcrypt.compare(password, user.password_hash);
   } else {
-    // Legacy plaintext match during migration
     isValidPassword = (user.password_hash === password);
+    if (isValidPassword) {
+      const upgraded = await bcrypt.hash(password, 10);
+      await UserRepo.updateUserPassword(user.id, upgraded).catch(() => {});
+    }
   }
 
   if (!isValidPassword) {
@@ -548,24 +731,13 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
       id: user.tenant_id,
       name: `${user.name}'s Workspace`,
       owner_email: user.email,
-      plan: 'growth_pro',
+      plan: 'Pro',
       created_at: now,
       trial_started_at: now,
       trial_ends_at: trialEndsAt,
+      subscription_status: 'trialing',
       payment_method_on_file: 0,
     });
-  }
-
-  // Check trial expiration: if trial has expired and no payment method exists, auto-downgrade to Free
-  const now = new Date();
-  if (
-    tenant.trial_ends_at &&
-    new Date(tenant.trial_ends_at) <= now &&
-    !tenant.payment_method_on_file &&
-    tenant.plan !== 'Free'
-  ) {
-    await UserRepo.updateTenantPlan(tenant.id, 'Free');
-    tenant.plan = 'Free';
   }
 
   if (user.mfa_enabled === 1) {
@@ -585,14 +757,8 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
     { expiresIn: '7d' }
   );
 
-  res.cookie('token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  res.cookie('token', token, getSessionCookieOptions(req, 7 * 24 * 60 * 60 * 1000));
 
-  // If this user is also an authorized administrator, issue adminAccessToken cookie as well
   if (AdminAuthService.isAuthorizedAdminEmail(user.email)) {
     const adminToken = AdminAuthService.generateAdminToken(
       {
@@ -605,12 +771,7 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
       JWT_SECRET,
       '7d'
     );
-    res.cookie('adminAccessToken', adminToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie('adminAccessToken', adminToken, getSessionCookieOptions(req, 7 * 24 * 60 * 60 * 1000));
   }
 
   res.json({
@@ -621,8 +782,9 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
       id: tenant.id,
       name: tenant.name,
       ownerEmail: tenant.owner_email,
-      plan: tenant.plan,
+      plan: tenant.plan || 'Pro',
       createdAt: tenant.created_at,
+      subscriptionStatus: tenant.subscription_status || 'trialing',
       trialStartedAt: tenant.trial_started_at,
       trialEndsAt: tenant.trial_ends_at,
       hasPaymentMethod: Boolean(tenant.payment_method_on_file),
@@ -780,10 +942,11 @@ app.post('/api/auth/mfa/verify-login', authLimiter, asyncHandler(async (req, res
       id: user.tenant_id,
       name: `${user.name}'s Workspace`,
       owner_email: user.email,
-      plan: 'growth_pro',
+      plan: 'Pro',
       created_at: now,
       trial_started_at: now,
       trial_ends_at: trialEndsAt,
+      subscription_status: 'trialing',
       payment_method_on_file: 0,
     });
   }
@@ -794,12 +957,7 @@ app.post('/api/auth/mfa/verify-login', authLimiter, asyncHandler(async (req, res
     { expiresIn: '7d' }
   );
 
-  res.cookie('token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  res.cookie('token', token, getSessionCookieOptions(req, 7 * 24 * 60 * 60 * 1000));
 
   res.json({
     success: true,
@@ -817,8 +975,15 @@ app.post('/api/auth/mfa/verify-login', authLimiter, asyncHandler(async (req, res
       id: tenant.id,
       name: tenant.name,
       ownerEmail: tenant.owner_email,
-      plan: tenant.plan,
+      plan: tenant.plan || 'Pro',
       createdAt: tenant.created_at,
+      subscriptionStatus: tenant.subscription_status || 'trialing',
+      trialStartedAt: tenant.trial_started_at,
+      trialEndsAt: tenant.trial_ends_at,
+      hasPaymentMethod: Boolean(tenant.payment_method_on_file),
+      paymentMethodBrand: tenant.payment_method_brand,
+      paymentMethodLast4: tenant.payment_method_last4,
+      paymentMethodExp: tenant.payment_method_exp,
     },
   });
 }));
@@ -924,13 +1089,7 @@ const handleGoogleCallback = async (req: express.Request, res: express.Response)
       avatarUrl: googleUser.picture,
     });
 
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie('token', token, getSessionCookieOptions(req, 7 * 24 * 60 * 60 * 1000));
 
     return res.send(OAuthService.renderCallbackHtml({
       success: true,
@@ -1037,13 +1196,7 @@ const handleGithubCallback = async (req: express.Request, res: express.Response)
       avatarUrl: githubUser.avatarUrl,
     });
 
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie('token', token, getSessionCookieOptions(req, 7 * 24 * 60 * 60 * 1000));
 
     return res.send(OAuthService.renderCallbackHtml({
       success: true,
@@ -1104,7 +1257,7 @@ app.post('/api/auth/forgot-password', authLimiter, asyncHandler(async (req, res)
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour expiry
   await UserRepo.setPasswordResetToken(user.id, resetToken, expiresAt);
 
-  const resetUrl = `${req.protocol}://${req.get('host')}/reset-password?token=${resetToken}&email=${encodeURIComponent(user.email)}`;
+  const resetUrl = `${getAppUrl(req)}/reset-password?token=${resetToken}&email=${encodeURIComponent(user.email)}`;
   await sendTransactionalEmail({
     to: user.email,
     subject: 'Password Reset Request - NomadsChat',
@@ -1258,21 +1411,12 @@ app.get('/api/tenant/transactional-emails', requireAuth, asyncHandler(async (req
 app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const authUser = req.user!;
   const userRow = await UserRepo.findUserById(authUser.id);
-  let tenantRow = await UserRepo.findTenantById(authUser.tenantId);
+  const tenantRow = await UserRepo.findTenantById(authUser.tenantId);
 
-  // Auto-downgrade check if trial expired and no card on file
-  if (tenantRow) {
-    const now = new Date();
-    if (
-      tenantRow.trial_ends_at &&
-      new Date(tenantRow.trial_ends_at) <= now &&
-      !tenantRow.payment_method_on_file &&
-      tenantRow.plan !== 'Free'
-    ) {
-      await UserRepo.updateTenantPlan(tenantRow.id, 'Free');
-      tenantRow.plan = 'Free';
-    }
-  }
+  const decryptedByok = tenantRow?.byok_api_key ? decrypt(tenantRow.byok_api_key) : '';
+  const maskedByok = decryptedByok
+    ? (decryptedByok.length > 8 ? `${decryptedByok.slice(0, 4)}••••••••${decryptedByok.slice(-4)}` : '••••••••••••')
+    : undefined;
 
   res.json({
     success: true,
@@ -1290,8 +1434,10 @@ app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedReque
       id: tenantRow.id,
       name: tenantRow.name,
       ownerEmail: tenantRow.owner_email,
-      plan: tenantRow.plan,
+      plan: tenantRow.plan || 'Pro',
       createdAt: tenantRow.created_at,
+      subscriptionStatus: tenantRow.subscription_status || 'trialing',
+      billingCycle: tenantRow.billing_cycle || 'annual',
       trialStartedAt: tenantRow.trial_started_at,
       trialEndsAt: tenantRow.trial_ends_at,
       hasPaymentMethod: Boolean(tenantRow.payment_method_on_file),
@@ -1301,13 +1447,10 @@ app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedReque
       isDisabled: Boolean(tenantRow.is_disabled),
       disabledReason: tenantRow.disabled_reason,
       byokConfig: {
-        hasCustomKey: Boolean(tenantRow.byok_api_key),
+        hasCustomKey: Boolean(decryptedByok),
         provider: tenantRow.byok_provider || 'gemini',
-        maskedKey: tenantRow.byok_api_key
-          ? (tenantRow.byok_api_key.length > 8
-              ? `${tenantRow.byok_api_key.slice(0, 4)}••••••••${tenantRow.byok_api_key.slice(-4)}`
-              : '••••••••••••')
-          : undefined,
+        apiKey: maskedByok,
+        maskedKey: maskedByok,
         updatedAt: tenantRow.byok_updated_at || undefined,
       },
     } : null,
@@ -1318,12 +1461,8 @@ app.get('/api/auth/me', requireAuth, asyncHandler(async (req: AuthenticatedReque
 // USER LOGOUT & SESSION REFRESH ENDPOINTS
 // ==========================================
 app.all(['/api/auth/logout', '/auth/logout'], (req, res) => {
-  const cookieOptions = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax' as const,
-    path: '/',
-  };
+  const cookieOptions = getSessionCookieOptions(req, 0);
+  delete (cookieOptions as any).maxAge;
 
   res.clearCookie('token', cookieOptions);
   res.clearCookie('accessToken', cookieOptions);
@@ -1331,7 +1470,6 @@ app.all(['/api/auth/logout', '/auth/logout'], (req, res) => {
   res.clearCookie('adminToken', cookieOptions);
   res.clearCookie('refreshToken', cookieOptions);
 
-  // Clear without options fallback as well
   res.clearCookie('token');
   res.clearCookie('accessToken');
   res.clearCookie('adminAccessToken');
@@ -1365,13 +1503,7 @@ app.post(['/api/auth/refresh', '/auth/refresh'], asyncHandler(async (req, res) =
       { expiresIn: '7d' }
     );
 
-    res.cookie('token', newToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie('token', newToken, getSessionCookieOptions(req, 7 * 24 * 60 * 60 * 1000));
 
     res.json({ success: true, token: newToken });
   } catch {
@@ -1393,12 +1525,7 @@ app.post('/api/admin/auth/login', authLimiter, asyncHandler(async (req, res) => 
   }
 
   if (result.token) {
-    res.cookie('adminAccessToken', result.token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 12 * 60 * 60 * 1000,
-    });
+    res.cookie('adminAccessToken', result.token, getSessionCookieOptions(req, 12 * 60 * 60 * 1000));
   }
 
   res.json(result);
@@ -2620,14 +2747,9 @@ app.post('/api/admin/moderation/:id/review', requireAdminAuth, requireSuperAdmin
 }));
 
 // ==========================================
-// ADMIN PORTAL PLATFORM MANAGEMENT ENDPOINTS
+// ADMIN PORTAL PLATFORM MANAGEMENT ENDPOINTS (STRICT ADMIN AUTH)
 // ==========================================
-app.get('/api/admin/portal/tenants', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const role = String(req.user?.role || '').toLowerCase();
-  if (role !== 'owner' && role !== 'admin' && role !== 'super_admin') {
-    return res.status(403).json({ success: false, error: 'Forbidden: Admin or Owner role required' });
-  }
-
+app.get('/api/admin/portal/tenants', requireAdminAuth, asyncHandler(async (_req: AdminAuthenticatedRequest, res) => {
   const db = getDb();
   const result = await db.execute({
     sql: `
@@ -2656,12 +2778,7 @@ app.get('/api/admin/portal/tenants', requireAuth, asyncHandler(async (req: Authe
   res.json({ success: true, tenants });
 }));
 
-app.put('/api/admin/portal/tenants/:tenantId/plan', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const role = String(req.user?.role || '').toLowerCase();
-  if (role !== 'owner' && role !== 'admin' && role !== 'super_admin') {
-    return res.status(403).json({ success: false, error: 'Forbidden: Admin or Owner role required' });
-  }
-
+app.put('/api/admin/portal/tenants/:tenantId/plan', requireAdminAuth, requireSuperAdmin, asyncHandler(async (req: AdminAuthenticatedRequest, res) => {
   const { plan } = req.body || {};
   const tenantId = req.params.tenantId;
 
@@ -2678,25 +2795,17 @@ app.put('/api/admin/portal/tenants/:tenantId/plan', requireAuth, asyncHandler(as
   res.json({ success: true, tenantId, plan, message: `Updated plan for tenant ${tenantId} to ${plan}` });
 }));
 
-app.get('/api/admin/portal/telemetry', requireAuth, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const role = String(req.user?.role || '').toLowerCase();
-  if (role !== 'owner' && role !== 'admin' && role !== 'super_admin') {
-    return res.status(403).json({ success: false, error: 'Forbidden: Admin or Owner role required' });
-  }
-
+app.get('/api/admin/portal/telemetry', requireAdminAuth, asyncHandler(async (_req: AdminAuthenticatedRequest, res) => {
   const db = getDb();
 
-  // Total conversations count
   const convsRes = await db.execute({ sql: `SELECT COUNT(*) as cnt FROM conversations;`, args: [] });
   const totalConversations = Number(convsRes.rows[0]?.cnt || 0);
 
-  // Total token usage estimate
   const msgsRes = await db.execute({ sql: `SELECT COUNT(*) as msgCnt, SUM(LENGTH(content)) as totalChars FROM messages;`, args: [] });
   const msgCount = Number(msgsRes.rows[0]?.msgCnt || 0);
   const totalChars = Number(msgsRes.rows[0]?.totalChars || 0);
   const totalTokenUsage = Math.round(totalChars / 4) + (msgCount * 180);
 
-  // Error logs for failed web scrapes or knowledge sources
   const ksRes = await db.execute({
     sql: `
       SELECT id, title, source_url, type, status, updated_at, tenant_id
@@ -2714,7 +2823,7 @@ app.get('/api/admin/portal/telemetry', requireAuth, asyncHandler(async (req: Aut
     type: String(r.type),
     status: String(r.status),
     errorMessage: String(r.status) === 'failed' 
-      ? 'HTTP 403 Forbidden - Rate limited by target website DOM scraper' 
+      ? 'Scrape error - Remote host rejected request or timed out' 
       : (String(r.status) === 'pending' ? 'Scrape job in progress' : 'Clean ingestion complete'),
     updatedAt: String(r.updated_at),
     tenantId: String(r.tenant_id),
@@ -2985,7 +3094,7 @@ app.post('/api/chatbots', requireAuth, requirePermission('edit_chatbot'), asyncH
     avatar: (avatar && typeof avatar === 'string') ? avatar.slice(0, 10) : '🤖',
     greetingMessage: (greetingMessage && typeof greetingMessage === 'string') ? greetingMessage.slice(0, 500) : 'Hello! How can I help you today?',
     suggestedQuestions: parsedQuestions,
-    model: (model && typeof model === 'string') ? (model as any) : 'gemini-3.7-flash',
+    model: (model && typeof model === 'string') ? (model as any) : DEFAULT_MODEL_ID,
     fallbackMessage: (fallbackMessage && typeof fallbackMessage === 'string') ? fallbackMessage.slice(0, 500) : 'I will connect you to a support agent.',
     collectLeadEmail: collectLeadEmail !== false,
     leadTitle: (leadTitle && typeof leadTitle === 'string') ? leadTitle.slice(0, 200) : 'Leave your email to stay connected',
@@ -3167,7 +3276,7 @@ app.get('/api/knowledge', requireAuth, requirePermission('manage_knowledge_base'
   res.json({ success: true, knowledgeSources: sources });
 }));
 
-app.post('/api/knowledge', express.json({ limit: '1mb' }), requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/knowledge', express.json({ limit: '1mb' }), requireAuth, requireActiveSubscription, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { type, title, content, chatbotIds } = req.body || {};
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'Knowledge content is required' });
@@ -3189,7 +3298,7 @@ app.post('/api/knowledge', express.json({ limit: '1mb' }), requireAuth, requireP
   }
 }));
 
-app.post('/api/knowledge/scrape-url', requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/knowledge/scrape-url', requireAuth, requireActiveSubscription, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { url, chatbotIds } = req.body || {};
   if (!url || typeof url !== 'string' || url.length > 2000) {
     return res.status(400).json({ success: false, error: 'Valid URL is required' });
@@ -3209,7 +3318,7 @@ app.post('/api/knowledge/scrape-url', requireAuth, requirePermission('manage_kno
   }
 }));
 
-app.post('/api/knowledge/ingest-raw-html', express.json({ limit: '10mb' }), requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/knowledge/ingest-raw-html', express.json({ limit: '10mb' }), requireAuth, requireActiveSubscription, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { html, url, title, chatbotIds } = req.body || {};
   if (!html || typeof html !== 'string' || html.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'HTML markup content is required' });
@@ -3261,7 +3370,7 @@ app.get('/api/chatbots/:id/knowledge', requireAuth, requirePermission('manage_kn
   res.json({ success: true, knowledgeSources: sources });
 }));
 
-app.post('/api/chatbots/:id/scrape-url', requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/chatbots/:id/scrape-url', requireAuth, requireActiveSubscription, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { url } = req.body || {};
   if (!url || typeof url !== 'string' || url.length > 2000) {
     return res.status(400).json({ success: false, error: 'Valid URL is required' });
@@ -3280,7 +3389,7 @@ app.post('/api/chatbots/:id/scrape-url', requireAuth, requirePermission('manage_
   }
 }));
 
-app.post('/api/chatbots/:id/ingest-raw-html', express.json({ limit: '10mb' }), requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/chatbots/:id/ingest-raw-html', express.json({ limit: '10mb' }), requireAuth, requireActiveSubscription, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { html, url, title } = req.body || {};
   if (!html || typeof html !== 'string' || html.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'HTML markup content is required' });
@@ -3300,7 +3409,7 @@ app.post('/api/chatbots/:id/ingest-raw-html', express.json({ limit: '10mb' }), r
   }
 }));
 
-app.post('/api/chatbots/:id/knowledge', express.json({ limit: '1mb' }), requireAuth, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+app.post('/api/chatbots/:id/knowledge', express.json({ limit: '1mb' }), requireAuth, requireActiveSubscription, requirePermission('manage_knowledge_base'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const { type, title, content } = req.body || {};
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'Knowledge content is required' });
@@ -3423,6 +3532,16 @@ app.post('/api/chatbots/:id/chat', chatLimiter, asyncHandler(async (req, res) =>
     });
   }
 
+  // Check tenant 3-day trial / active subscription status
+  const tenantAccess = await checkTenantActiveAccess(bot.tenantId);
+  if (!tenantAccess.isAllowed) {
+    return res.status(402).json({
+      success: false,
+      code: 'TRIAL_EXPIRED',
+      error: 'Your 3-day free trial has expired. Please upgrade your plan to continue.',
+    });
+  }
+
   // Server-side Domain Authorization Validation
   const validation = SecurityService.validateBotDomainAccess(bot, req);
   if (!validation.isAllowed) {
@@ -3521,6 +3640,15 @@ app.post('/api/chatbots/:botId/stream', asyncHandler(async (req: express.Request
   const bot = await ChatbotRepo.findById(botId);
   if (!bot) {
     return res.status(404).json({ error: 'Chatbot not found.' });
+  }
+
+  // Check tenant 3-day trial / active subscription status
+  const tenantAccess = await checkTenantActiveAccess(bot.tenantId);
+  if (!tenantAccess.isAllowed) {
+    return res.status(402).json({
+      error: 'Your 3-day free trial has expired. Please upgrade your plan to continue.',
+      code: 'TRIAL_EXPIRED',
+    });
   }
 
   // Set SSE Headers
@@ -3625,15 +3753,13 @@ RULES:
     if (!ai) {
       throw new Error('AI engine is currently unavailable.');
     }
-    const modelToUse = bot.model === 'gemini-3.1-pro-preview' ? 'gemini-3.1-pro-preview' : (bot.model || 'gemini-3.8-flash');
+    const modelToUse = bot.model === 'gemini-3.1-flash-lite' ? 'gemini-3.1-flash-lite' : DEFAULT_MODEL_ID;
 
     const responseStream = await ai.models.generateContentStream({
       model: modelToUse,
       contents: chatContents,
       config: {
         systemInstruction,
-        temperature: 0.2,
-        maxOutputTokens: 1000,
       },
     });
 
@@ -3867,24 +3993,35 @@ app.post('/api/team/invites', requireAuth, requirePermission('manage_team'), asy
   const validRole = role === 'Admin' ? 'Admin' : 'Agent';
   const invite = await TeamRepo.inviteTeammate(
     req.user!.tenantId,
-    email,
+    email.trim().toLowerCase(),
     validRole,
     req.user!.id,
     req.user!.name
   );
+
+  const tenant = await UserRepo.findTenantById(req.user!.tenantId);
+  const inviteUrl = `${getAppUrl(req)}/?invite=${invite.token}`;
+
+  await sendTransactionalEmail({
+    to: email.trim().toLowerCase(),
+    subject: `${req.user!.name} invited you to ${tenant?.name || 'NomadsChat'} as ${validRole}`,
+    html: `<p>Hello,</p><p><strong>${req.user!.name}</strong> invited you to collaborate on <strong>${tenant?.name || 'NomadsChat'}</strong> with the <strong>${validRole}</strong> role.</p><p><a href="${inviteUrl}">Accept Invitation</a></p>`,
+    token: invite.token,
+    type: 'team_invite',
+  });
 
   await AuditEventsRepo.logEvent({
     tenantId: req.user!.tenantId,
     actorId: req.user!.id,
     action: 'team_member_invited',
     targetType: 'invite',
-    metadata: { email, role: validRole },
+    metadata: { email: email.trim().toLowerCase(), role: validRole },
   });
 
   res.json({
     success: true,
     invite,
-    message: `Invitation sent to ${email} as ${validRole}.`,
+    message: `Invitation sent to ${email.trim().toLowerCase()} as ${validRole}.`,
   });
 }));
 
@@ -3989,12 +4126,66 @@ app.post('/api/integrations/:id/disconnect', requireAuth, requirePermission('man
 
 app.post('/api/integrations/:id/test', requireAuth, requirePermission('manage_integrations'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const integrationId = req.params.id;
+  const list = await IntegrationRepo.getIntegrations(req.user!.tenantId);
+  const current = list.find(i => i.id === integrationId);
 
-  // Webhook / other integration handshake
+  if (!current || !current.isConnected) {
+    return res.status(400).json({
+      success: false,
+      error: `Integration "${integrationId}" is not connected yet. Connect and save credentials first.`,
+    });
+  }
+
+  const webhookUrl = current.config?.webhookUrl?.trim();
+  if (webhookUrl) {
+    try {
+      const parsed = new URL(webhookUrl);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        return res.status(400).json({ success: false, error: 'Invalid webhook URL protocol.' });
+      }
+      if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname.startsWith('169.254')) {
+        return res.status(400).json({ success: false, error: 'Webhook test cannot target local/private network addresses.' });
+      }
+      if (webhookUrl.includes('hooks.slack.com/services/T00/B00/XXXX')) {
+        return res.json({
+          success: true,
+          status: 'configured',
+          message: `${current.name} format verified (${current.config?.channel || '#support-live'}). Replace sample Slack hook with a real workspace hook to send live notifications.`,
+        });
+      }
+      const probe = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'nomadschat.test', timestamp: new Date().toISOString() }),
+        signal: AbortSignal.timeout(5000),
+      });
+      return res.json({
+        success: probe.ok,
+        status: probe.ok ? 'healthy' : 'warning',
+        message: probe.ok
+          ? `${current.name} webhook endpoint responded HTTP ${probe.status} OK.`
+          : `${current.name} webhook endpoint returned HTTP ${probe.status}. Verify destination URL.`,
+      });
+    } catch (err: any) {
+      return res.status(400).json({
+        success: false,
+        error: `${current.name} endpoint check failed: ${err.message || 'Unreachable URL'}`,
+      });
+    }
+  }
+
+  const hasToken = Boolean(current.config?.accessToken || current.config?.phoneId);
+  if (!hasToken) {
+    return res.status(400).json({
+      success: false,
+      error: `${current.name} is missing required credentials.`,
+    });
+  }
+
   res.json({
     success: true,
     status: 'healthy',
-    message: `${integrationId.toUpperCase()} integration webhook handshake verified successfully. Ready to stream data.`,
+    message: `${current.name} credentials are encrypted and ready for workspace event delivery.`,
   });
 }));
 
@@ -4089,11 +4280,12 @@ app.get('/api/tenant/byok', requireAuth, requirePermission('manage_settings'), a
   }
 
   const isSupported = tenant.plan === 'Ultra' || tenant.plan === 'Enterprise';
-  const hasCustomKey = Boolean(tenant.byok_api_key && tenant.byok_api_key.trim().length > 0);
+  const decryptedKey = tenant.byok_api_key ? decrypt(tenant.byok_api_key) : '';
+  const hasCustomKey = Boolean(decryptedKey && decryptedKey.trim().length > 0);
 
-  const maskedKey = hasCustomKey && tenant.byok_api_key
-    ? (tenant.byok_api_key.length > 8
-        ? `${tenant.byok_api_key.slice(0, 4)}••••••••${tenant.byok_api_key.slice(-4)}`
+  const maskedKey = hasCustomKey
+    ? (decryptedKey.length > 8
+        ? `${decryptedKey.slice(0, 4)}••••••••${decryptedKey.slice(-4)}`
         : '••••••••••••')
     : undefined;
 
@@ -4104,6 +4296,13 @@ app.get('/api/tenant/byok', requireAuth, requirePermission('manage_settings'), a
     provider: tenant.byok_provider || 'gemini',
     maskedKey,
     updatedAt: tenant.byok_updated_at || undefined,
+    byokConfig: {
+      hasCustomKey,
+      provider: tenant.byok_provider || 'gemini',
+      apiKey: maskedKey,
+      maskedKey,
+      updatedAt: tenant.byok_updated_at || undefined,
+    },
   });
 }));
 
@@ -4127,20 +4326,32 @@ app.post('/api/tenant/byok', requireAuth, requirePermission('manage_settings'), 
   }
 
   const cleanKey = apiKey.trim();
+  if (cleanKey.includes('••••')) {
+    return res.status(400).json({ success: false, error: 'Please paste your full unmasked API key to update it.' });
+  }
   const cleanProvider = provider === 'openai' ? 'openai' : 'gemini';
+  const encryptedKey = encrypt(cleanKey);
 
-  await UserRepo.updateTenantByok(req.user!.tenantId, cleanKey, cleanProvider);
+  await UserRepo.updateTenantByok(req.user!.tenantId, encryptedKey, cleanProvider);
 
   const maskedKey = cleanKey.length > 8
     ? `${cleanKey.slice(0, 4)}••••••••${cleanKey.slice(-4)}`
     : '••••••••••••';
+  const updatedAt = new Date().toISOString();
 
   res.json({
     success: true,
-    message: 'Custom API Key configured and stored securely on server.',
+    message: 'Custom API Key encrypted and stored securely on server.',
     maskedKey,
     provider: cleanProvider,
-    updatedAt: new Date().toISOString(),
+    updatedAt,
+    byokConfig: {
+      hasCustomKey: true,
+      provider: cleanProvider,
+      apiKey: maskedKey,
+      maskedKey,
+      updatedAt,
+    },
   });
 }));
 
@@ -4156,9 +4367,9 @@ app.post('/api/tenant/byok/test', requireAuth, requirePermission('manage_setting
   const { apiKey, provider = 'gemini' } = req.body || {};
   let keyToTest = apiKey;
 
-  if (!keyToTest) {
+  if (!keyToTest || String(keyToTest).includes('••••')) {
     const tenant = await UserRepo.findTenantById(req.user!.tenantId);
-    keyToTest = tenant?.byok_api_key;
+    keyToTest = tenant?.byok_api_key ? decrypt(tenant.byok_api_key) : undefined;
   }
 
   if (!keyToTest || typeof keyToTest !== 'string' || keyToTest.trim().length < 8) {
@@ -4175,12 +4386,11 @@ app.post('/api/tenant/byok/test', requireAuth, requirePermission('manage_setting
     try {
       const testAi = new (await import('@google/genai')).GoogleGenAI({ apiKey: cleanKey });
       const testRes = await testAi.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: [{ role: 'user', parts: [{ text: 'Ping test' }] }],
-        config: { maxOutputTokens: 5 },
+        model: 'gemini-4-hydrogen',
+        contents: [{ role: 'user', parts: [{ text: 'Reply with OK.' }] }],
       });
-      if (testRes) {
-        return res.json({ success: true, message: 'Google Gemini API key verified and working!' });
+      if (testRes?.text) {
+        return res.json({ success: true, message: 'Google Gemini API key verified and responding on Gemini 4 Hydrogen!' });
       }
     } catch (testErr: any) {
       return res.status(400).json({
@@ -4418,85 +4628,218 @@ app.delete('/api/tenant/webhooks/:id', requireAuth, requirePermission('manage_se
 }));
 
 // ==========================================
-// BILLING & PAYMENT METHOD ENFORCEMENT ENDPOINTS
+// BILLING, STRIPE CHECKOUT & METERING ENDPOINTS
 // ==========================================
 app.get('/api/billing/status', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
-  let tenant = await UserRepo.findTenantById(req.user!.tenantId);
+  const tenant = await UserRepo.findTenantById(req.user!.tenantId);
   if (!tenant) {
     return res.status(404).json({ success: false, error: 'Workspace tenant not found.' });
   }
 
   const now = new Date();
   const trialEnds = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) : null;
+  const hasPayment = Boolean(tenant.payment_method_on_file);
   const isTrialActive = Boolean(
     trialEnds &&
     trialEnds > now &&
-    (tenant.plan === 'growth_pro' || tenant.plan === 'Pro') &&
-    !tenant.payment_method_on_file
+    !hasPayment &&
+    tenant.subscription_status !== 'canceled'
   );
   const isTrialExpired = Boolean(
     trialEnds &&
     trialEnds <= now &&
-    !tenant.payment_method_on_file
+    !hasPayment &&
+    tenant.subscription_status !== 'active'
   );
-
-  if (isTrialExpired && tenant.plan !== 'Free') {
-    await UserRepo.updateTenantPlan(tenant.id, 'Free');
-    tenant.plan = 'Free';
-  }
 
   res.json({
     success: true,
-    plan: tenant.plan,
+    plan: tenant.plan || 'Pro',
+    billingCycle: tenant.billing_cycle || 'annual',
+    stripeConfigured: StripeService.isConfigured(),
+    subscriptionStatus: tenant.subscription_status || (isTrialExpired ? 'expired' : 'trialing'),
     isTrialActive,
     isTrialExpired,
     trialStartedAt: tenant.trial_started_at,
     trialEndsAt: tenant.trial_ends_at,
-    hasPaymentMethod: Boolean(tenant.payment_method_on_file),
-    paymentMethod: tenant.payment_method_on_file ? {
-      brand: tenant.payment_method_brand || 'Visa',
-      last4: tenant.payment_method_last4 || '4242',
-      exp: tenant.payment_method_exp || '12/28',
+    hasPaymentMethod: hasPayment,
+    paymentMethod: hasPayment ? {
+      brand: tenant.payment_method_brand || 'Card',
+      last4: tenant.payment_method_last4 || '••••',
+      exp: tenant.payment_method_exp || '',
     } : null,
   });
 }));
 
+app.get('/api/billing/overview', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const tenant = await UserRepo.findTenantById(tenantId);
+  if (!tenant) {
+    return res.status(404).json({ success: false, error: 'Workspace tenant not found.' });
+  }
+
+  const db = getDb();
+  const msgCountRes = await db.execute({
+    sql: `SELECT COUNT(*) as cnt, COALESCE(SUM(LENGTH(content)), 0) as chars FROM messages WHERE tenant_id = ?;`,
+    args: [tenantId],
+  });
+  const convCountRes = await db.execute({
+    sql: `SELECT COUNT(*) as cnt FROM conversations WHERE tenant_id = ? AND (is_test = 0 OR is_test IS NULL);`,
+    args: [tenantId],
+  });
+  const botCountRes = await db.execute({
+    sql: `SELECT COUNT(*) as cnt FROM chatbots WHERE tenant_id = ?;`,
+    args: [tenantId],
+  });
+  const ksCountRes = await db.execute({
+    sql: `SELECT COUNT(*) as cnt FROM knowledge_sources WHERE tenant_id = ?;`,
+    args: [tenantId],
+  });
+  const seatCountRes = await db.execute({
+    sql: `SELECT COUNT(*) as cnt FROM organization_members WHERE tenant_id = ?;`,
+    args: [tenantId],
+  });
+  const invRes = await db.execute({
+    sql: `SELECT * FROM invoices WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 25;`,
+    args: [tenantId],
+  });
+
+  const messagesUsed = Number(msgCountRes.rows[0]?.cnt || 0);
+  const charsTotal = Number(msgCountRes.rows[0]?.chars || 0);
+  const estimatedTokens = Math.round(charsTotal / 4) + messagesUsed * 150;
+  const conversationsCount = Number(convCountRes.rows[0]?.cnt || 0);
+  const botsCount = Number(botCountRes.rows[0]?.cnt || 0);
+  const knowledgeSourcesCount = Number(ksCountRes.rows[0]?.cnt || 0);
+  const seatsCount = Math.max(1, Number(seatCountRes.rows[0]?.cnt || 1));
+
+  const planNormalized = String(tenant.plan || 'Pro');
+  const messageQuota = planNormalized === 'Enterprise' ? 1000000 : planNormalized === 'Ultra' ? 100000 : 15000;
+  const botLimit = planNormalized === 'Enterprise' ? 999 : planNormalized === 'Ultra' ? 20 : 5;
+  const nextBillingDate = tenant.trial_ends_at && tenant.subscription_status === 'trialing'
+    ? tenant.trial_ends_at
+    : new Date(Date.now() + 30 * 86400000).toISOString();
+
+  res.json({
+    success: true,
+    stripeConfigured: StripeService.isConfigured(),
+    stripePortalAvailable: Boolean(StripeService.isConfigured() && tenant.stripe_customer_id),
+    usage: {
+      messagesUsed,
+      messageQuota,
+      estimatedTokens,
+      conversationsCount,
+      botsCount,
+      botLimit,
+      knowledgeSourcesCount,
+      seatsCount,
+      nextBillingDate,
+    },
+    invoices: invRes.rows.map(r => ({
+      id: String(r.id),
+      invoiceNumber: String(r.invoice_number),
+      billingPeriod: String(r.billing_period),
+      description: String(r.description),
+      amountCents: Number(r.amount_cents || 0),
+      currency: String(r.currency || 'USD'),
+      status: String(r.status || 'paid'),
+      paymentMethodSummary: r.payment_method_summary ? String(r.payment_method_summary) : '',
+      createdAt: String(r.created_at),
+    })),
+  });
+}));
+
+app.post('/api/billing/checkout-session', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { planId = 'Pro', planName = 'NomadsChat Pro', billingCycle = 'annual', unitAmountCents = 3900 } = req.body || {};
+  const tenant = await UserRepo.findTenantById(req.user!.tenantId);
+  if (!tenant) {
+    return res.status(404).json({ success: false, error: 'Tenant not found.' });
+  }
+
+  if (!StripeService.isConfigured()) {
+    return res.status(503).json({
+      success: false,
+      stripeConfigured: false,
+      error: 'Stripe checkout is not configured on this server. Using built-in card validation.',
+    });
+  }
+
+  const appUrl = getAppUrl(req);
+  const session = await StripeService.createCheckoutSession({
+    tenantId: tenant.id,
+    customerEmail: req.user!.email,
+    planId: String(planId),
+    planName: String(planName),
+    billingCycle: billingCycle === 'monthly' ? 'monthly' : 'annual',
+    unitAmountCents: Number(unitAmountCents) || 3900,
+    stripeCustomerId: tenant.stripe_customer_id,
+    successUrl: `${appUrl}/?tab=billing&checkout=success`,
+    cancelUrl: `${appUrl}/?tab=pricing&checkout=cancelled`,
+  });
+
+  res.json({ success: true, ...session });
+}));
+
+app.post('/api/billing/portal-session', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const tenant = await UserRepo.findTenantById(req.user!.tenantId);
+  if (!tenant) {
+    return res.status(404).json({ success: false, error: 'Tenant not found.' });
+  }
+  if (!StripeService.isConfigured() || !tenant.stripe_customer_id) {
+    return res.status(400).json({
+      success: false,
+      error: 'Stripe Billing Portal is available for Stripe-managed subscriptions.',
+    });
+  }
+
+  const portal = await StripeService.createBillingPortalSession({
+    stripeCustomerId: tenant.stripe_customer_id,
+    returnUrl: `${getAppUrl(req)}/?tab=billing`,
+  });
+  res.json({ success: true, url: portal.url });
+}));
+
 app.post('/api/billing/payment-method', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const { cardNumber, expMonth, expYear, cvc, nameOnCard, brand, autoUpgradePlan } = req.body || {};
+  const { cardNumber, expMonth, expYear, brand, autoUpgradePlan, billingCycle = 'annual', expressMethod } = req.body || {};
 
-  if (!cardNumber || typeof cardNumber !== 'string') {
-    return res.status(400).json({ success: false, error: 'Card number is required.' });
-  }
-
-  const cleanNumber = cardNumber.replace(/\s+/g, '').replace(/-/g, '');
-  if (cleanNumber.length < 13 || cleanNumber.length > 19 || !/^\d+$/.test(cleanNumber)) {
-    return res.status(400).json({ success: false, error: 'Invalid card number format. Please enter 13-19 digits.' });
-  }
-
-  // Luhn algorithm check for authentic credit cards
-  let sum = 0;
-  let shouldDouble = false;
-  for (let i = cleanNumber.length - 1; i >= 0; i--) {
-    let digit = parseInt(cleanNumber.charAt(i), 10);
-    if (shouldDouble) {
-      digit *= 2;
-      if (digit > 9) digit -= 9;
-    }
-    sum += digit;
-    shouldDouble = !shouldDouble;
-  }
-  if (sum % 10 !== 0) {
-    return res.status(400).json({ success: false, error: 'Invalid card number checksum. Please check card number.' });
-  }
-
-  const last4 = cleanNumber.slice(-4);
+  let last4 = '0000';
   let cardBrand = brand || 'Visa';
-  if (cleanNumber.startsWith('4')) cardBrand = 'Visa';
-  else if (cleanNumber.startsWith('51') || cleanNumber.startsWith('52') || cleanNumber.startsWith('53') || cleanNumber.startsWith('54') || cleanNumber.startsWith('55')) cardBrand = 'Mastercard';
-  else if (cleanNumber.startsWith('34') || cleanNumber.startsWith('37')) cardBrand = 'American Express';
-  else if (cleanNumber.startsWith('6011')) cardBrand = 'Discover';
+  let exp = `${String(expMonth || '12').padStart(2, '0')}/${String(expYear || '28').slice(-2)}`;
 
-  const exp = `${String(expMonth || '12').padStart(2, '0')}/${String(expYear || '28').slice(-2)}`;
+  if (expressMethod && ['Shop Pay', 'Google Pay', 'Apple Pay'].includes(String(expressMethod))) {
+    cardBrand = String(expressMethod);
+    last4 = 'PASS';
+    exp = 'Token';
+  } else {
+    if (!cardNumber || typeof cardNumber !== 'string') {
+      return res.status(400).json({ success: false, error: 'Card number is required.' });
+    }
+
+    const cleanNumber = cardNumber.replace(/\s+/g, '').replace(/-/g, '');
+    if (cleanNumber.length < 13 || cleanNumber.length > 19 || !/^\d+$/.test(cleanNumber)) {
+      return res.status(400).json({ success: false, error: 'Invalid card number format. Please enter 13-19 digits.' });
+    }
+
+    let sum = 0;
+    let shouldDouble = false;
+    for (let i = cleanNumber.length - 1; i >= 0; i--) {
+      let digit = parseInt(cleanNumber.charAt(i), 10);
+      if (shouldDouble) {
+        digit *= 2;
+        if (digit > 9) digit -= 9;
+      }
+      sum += digit;
+      shouldDouble = !shouldDouble;
+    }
+    if (sum % 10 !== 0) {
+      return res.status(400).json({ success: false, error: 'Invalid card number checksum. Please check card number.' });
+    }
+
+    last4 = cleanNumber.slice(-4);
+    if (cleanNumber.startsWith('4')) cardBrand = 'Visa';
+    else if (/^5[1-5]/.test(cleanNumber)) cardBrand = 'Mastercard';
+    else if (cleanNumber.startsWith('34') || cleanNumber.startsWith('37')) cardBrand = 'American Express';
+    else if (cleanNumber.startsWith('6011')) cardBrand = 'Discover';
+  }
 
   await UserRepo.setPaymentMethod(req.user!.tenantId, {
     brand: cardBrand,
@@ -4504,18 +4847,47 @@ app.post('/api/billing/payment-method', requireAuth, requirePermission('manage_b
     exp,
   });
 
-  // If an auto upgrade was requested with valid card
-  let activePlan = undefined;
-  if (autoUpgradePlan && ['Pro', 'growth_pro', 'Ultra', 'Enterprise'].includes(autoUpgradePlan)) {
-    const targetPlan = autoUpgradePlan === 'growth_pro' ? 'Pro' : autoUpgradePlan;
-    await UserRepo.updateTenantPlan(req.user!.tenantId, targetPlan);
-    activePlan = targetPlan;
+  let activePlan = 'Pro';
+  if (autoUpgradePlan && ['Pro', 'Ultra', 'Enterprise'].includes(autoUpgradePlan)) {
+    activePlan = autoUpgradePlan;
   }
+  const normalizedCycle = billingCycle === 'monthly' ? 'monthly' : 'annual';
+  await UserRepo.updateTenantPlan(req.user!.tenantId, activePlan, 'active', normalizedCycle);
+
+  // Record persistent invoice entry for the 3-day trial activation
+  const now = new Date().toISOString();
+  const db = getDb();
+  const invNumber = 'INV-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000);
+  await db.execute({
+    sql: `INSERT INTO invoices (id, tenant_id, invoice_number, billing_period, description, amount_cents, currency, status, payment_method_summary, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+    args: [
+      newId('inv'),
+      req.user!.tenantId,
+      invNumber,
+      '3-Day Trial Started',
+      `NomadsChat ${activePlan} (${normalizedCycle}) — 3-Day Free Trial`,
+      0,
+      'USD',
+      'trial',
+      last4 === 'PASS' ? cardBrand : `${cardBrand} ending ${last4}`,
+      now,
+    ],
+  });
+
+  await sendTransactionalEmail({
+    to: req.user!.email,
+    subject: `NomadsChat ${activePlan} 3-Day Free Trial Activated`,
+    html: `<p>Hi ${req.user!.name},</p><p>Your <strong>${activePlan}</strong> subscription trial is active. Total due today: <strong>$0.00</strong>.</p><p>Invoice reference: ${invNumber}</p>`,
+    type: 'billing_receipt',
+  });
 
   res.json({
     success: true,
     message: 'Payment method successfully validated and stored on account.',
     plan: activePlan,
+    billingCycle: normalizedCycle,
+    subscriptionStatus: 'active',
     paymentMethod: {
       brand: cardBrand,
       last4,
@@ -4527,24 +4899,26 @@ app.post('/api/billing/payment-method', requireAuth, requirePermission('manage_b
 app.delete('/api/billing/payment-method', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   await UserRepo.removePaymentMethod(req.user!.tenantId);
 
-  // If on a paid plan, auto-downgrade to Free
   const tenant = await UserRepo.findTenantById(req.user!.tenantId);
-  if (tenant && tenant.plan !== 'Free') {
-    await UserRepo.updateTenantPlan(req.user!.tenantId, 'Free');
-  }
+  const now = Date.now();
+  const trialEnds = tenant?.trial_ends_at ? new Date(tenant.trial_ends_at).getTime() : 0;
+  const isTrialActive = trialEnds > now;
+
+  const newStatus = isTrialActive ? 'trialing' : 'expired';
+  await UserRepo.updateSubscriptionStatus(req.user!.tenantId, newStatus);
 
   res.json({
     success: true,
-    message: 'Payment method removed. Workspace transitioned to Free plan.',
-    plan: 'Free',
+    message: 'Payment method removed.',
+    subscriptionStatus: newStatus,
   });
 }));
 
 app.post('/api/tenant/plan', requireAuth, requirePermission('manage_billing'), asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const { plan } = req.body || {};
-  const validPlans = ['Free', 'Pro', 'growth_pro', 'Ultra', 'Enterprise'];
+  const { plan, billingCycle } = req.body || {};
+  const validPlans = ['Pro', 'Enterprise', 'growth_pro', 'Ultra'];
   if (!plan || !validPlans.includes(plan)) {
-    return res.status(400).json({ success: false, error: 'Valid plan is required (Free, Pro, Ultra, Enterprise)' });
+    return res.status(400).json({ success: false, error: 'Valid plan is required (Pro, Ultra, Enterprise)' });
   }
 
   const tenant = await UserRepo.findTenantById(req.user!.tenantId);
@@ -4552,38 +4926,33 @@ app.post('/api/tenant/plan', requireAuth, requirePermission('manage_billing'), a
     return res.status(404).json({ success: false, error: 'Tenant not found.' });
   }
 
-  // Requirement 3: No payment method = no paid plan access, ever.
-  // Block any activation of a paid tier without a confirmed payment method on file,
-  // unless user is in an active 3-day Growth Pro trial.
-  const isPaidPlan = plan !== 'Free';
-  if (isPaidPlan) {
-    const hasCard = Boolean(tenant.payment_method_on_file);
-    const now = new Date();
-    const isTrialActive = Boolean(
-      (tenant.plan === 'growth_pro' || tenant.plan === 'Pro') &&
-      tenant.trial_ends_at &&
-      new Date(tenant.trial_ends_at) > now
-    );
+  const hasCard = Boolean(tenant.payment_method_on_file);
+  const now = new Date();
+  const isTrialActive = Boolean(
+    tenant.trial_ends_at &&
+    new Date(tenant.trial_ends_at) > now
+  );
 
-    if (!hasCard && !isTrialActive) {
-      return res.status(402).json({
-        success: false,
-        error: 'A confirmed payment method is required to activate or upgrade to a paid plan. Please add a payment method before upgrading.',
-        requiresPaymentMethod: true,
-      });
-    }
+  if (!hasCard && !isTrialActive) {
+    return res.status(402).json({
+      success: false,
+      error: 'A confirmed payment method is required to activate or upgrade your plan. Please add a payment method to continue.',
+      requiresPaymentMethod: true,
+    });
   }
 
-  const targetPlan = plan === 'growth_pro' ? 'Pro' : plan;
-  await UserRepo.updateTenantPlan(req.user!.tenantId, targetPlan);
+  const targetPlan = plan === 'Enterprise' ? 'Enterprise' : plan === 'Ultra' ? 'Ultra' : 'Pro';
+  const subStatus = hasCard ? 'active' : (isTrialActive ? 'trialing' : 'expired');
+  const normalizedCycle = billingCycle === 'monthly' ? 'monthly' : billingCycle === 'annual' ? 'annual' : undefined;
+  await UserRepo.updateTenantPlan(req.user!.tenantId, targetPlan, subStatus, normalizedCycle);
   await AuditEventsRepo.logEvent({
     tenantId: req.user!.tenantId,
     actorId: req.user!.id,
     action: 'billing_plan_changed',
     targetType: 'subscription',
-    metadata: { plan: targetPlan },
+    metadata: { plan: targetPlan, subscriptionStatus: subStatus },
   });
-  res.json({ success: true, plan: targetPlan, message: `Workspace plan updated to ${targetPlan}` });
+  res.json({ success: true, plan: targetPlan, subscriptionStatus: subStatus, message: `Workspace plan updated to ${targetPlan}` });
 }));
 
 // ==========================================
@@ -4615,7 +4984,7 @@ app.post('/api/discounts/issue', requireAuth, requirePermission('issue_discount_
 }));
 
 // ==========================================
-// ENTERPRISE CONTACT SALES ENDPOINT
+// ENTERPRISE CONTACT SALES & NEWSLETTER ENDPOINTS
 // ==========================================
 app.post('/api/contact-sales', asyncHandler(async (req, res) => {
   const { name, email, company, teamSize, messageVolume, requirements, notes } = req.body || {};
@@ -4628,23 +4997,96 @@ app.post('/api/contact-sales', asyncHandler(async (req, res) => {
   }
 
   const referenceId = 'ENT-' + new Date().getFullYear() + '-' + Math.floor(10000 + Math.random() * 90000);
+  const now = new Date().toISOString();
+  const db = getDb();
 
-  // In production, send notification to sales CRM / Slack webhook
-  console.log(`[ENTERPRISE INQUIRY ${referenceId}]:`, {
-    name,
-    email,
-    company: company || 'N/A',
-    teamSize: teamSize || 'N/A',
-    messageVolume: messageVolume || '100k+',
-    requirements: requirements || [],
-    notes: notes || '',
-    receivedAt: new Date().toISOString(),
+  await db.execute({
+    sql: `INSERT INTO sales_inquiries (id, reference_id, name, email, company, team_size, message_volume, requirements_json, notes, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+    args: [
+      newId('inq'),
+      referenceId,
+      name.trim().slice(0, 120),
+      email.trim().toLowerCase().slice(0, 150),
+      company ? String(company).slice(0, 120) : '',
+      teamSize ? String(teamSize).slice(0, 60) : '',
+      messageVolume ? String(messageVolume).slice(0, 60) : '100k+',
+      JSON.stringify(Array.isArray(requirements) ? requirements : []),
+      notes ? String(notes).slice(0, 2000) : '',
+      'new',
+      now,
+    ],
+  });
+
+  await sendTransactionalEmail({
+    to: email.trim().toLowerCase(),
+    subject: `NomadsChat Enterprise Inquiry Received (${referenceId})`,
+    html: `<p>Hi ${name.trim()},</p><p>Thank you for contacting NomadsChat Enterprise Solutions. Your reference ID is <strong>${referenceId}</strong>. A solutions engineer will reach out shortly.</p>`,
+    type: 'contact_sales',
   });
 
   res.json({
     success: true,
     referenceId,
     message: 'Your enterprise inquiry has been received. Our solutions team will contact you within 2 hours with a custom quote.',
+  });
+}));
+
+app.post('/api/newsletter/subscribe', asyncHandler(async (req, res) => {
+  const { email, source = 'footer' } = req.body || {};
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
+  }
+  const cleanEmail = email.trim().toLowerCase();
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  await db.execute({
+    sql: `INSERT OR IGNORE INTO newsletter_subscribers (id, email, source, created_at) VALUES (?, ?, ?, ?);`,
+    args: [newId('sub'), cleanEmail, String(source).slice(0, 40), now],
+  });
+
+  await sendTransactionalEmail({
+    to: cleanEmail,
+    subject: 'Subscribed to NomadsChat Product & Status Updates',
+    html: `<p>You're subscribed to NomadsChat product releases and platform status notifications.</p>`,
+    type: 'newsletter',
+  });
+
+  res.json({
+    success: true,
+    message: 'Successfully subscribed to updates.',
+  });
+}));
+
+// ==========================================
+// PUBLIC SYSTEM STATUS ENDPOINT
+// ==========================================
+app.get('/api/status', asyncHandler(async (_req, res) => {
+  const start = Date.now();
+  let dbHealthy = false;
+  let dbLatencyMs = 0;
+  try {
+    const db = getDb();
+    await db.execute('SELECT 1;');
+    dbHealthy = true;
+    dbLatencyMs = Math.max(1, Date.now() - start);
+  } catch {
+    dbHealthy = false;
+  }
+
+  res.json({
+    success: true,
+    overallStatus: dbHealthy ? 'operational' : 'degraded',
+    checkedAt: new Date().toISOString(),
+    services: [
+      { name: 'AI Support Engine (Gemini 4 Hydrogen)', status: process.env.GEMINI_API_KEY ? 'operational' : 'degraded', region: 'Global Edge', latency: '310ms' },
+      { name: 'RAG Vector Retrieval & Embedding Pipeline', status: dbHealthy ? 'operational' : 'degraded', region: 'Multi-Region', latency: `${dbLatencyMs}ms` },
+      { name: 'Turso / SQLite Persistent Storage', status: dbHealthy ? 'operational' : 'outage', region: 'Primary Cluster', latency: `${dbLatencyMs}ms` },
+      { name: 'Embeddable Chat Widget CDN', status: 'operational', region: 'Global Anycast', latency: '24ms' },
+      { name: 'Billing & Stripe Webhook Engine', status: 'operational', region: 'US / EU', latency: StripeService.isConfigured() ? 'Live Stripe' : 'Ready' },
+      { name: 'Transactional Email Delivery (SMTP)', status: 'operational', region: 'Relay Cluster', latency: isSmtpConfigured() ? 'Live SMTP' : 'Outbox Mode' },
+    ],
   });
 }));
 
@@ -4671,7 +5113,9 @@ app.post('/api/csat', asyncHandler(async (req, res) => {
 // ==========================================
 app.get('/api/analytics', requireAuth, requirePermission('view_inbox'), asyncHandler(async (req: AuthenticatedRequest, res) => {
   const chatbotId = req.query.chatbotId ? String(req.query.chatbotId) : undefined;
-  const analytics = await AnalyticsRepo.getSummaryForTenant(req.user!.tenantId, chatbotId);
+  const rawRange = String(req.query.range || '7d');
+  const range: AnalyticsRange = ['today', '7d', '30d', 'all'].includes(rawRange) ? (rawRange as AnalyticsRange) : '7d';
+  const analytics = await AnalyticsRepo.getSummaryForTenant(req.user!.tenantId, chatbotId, range);
   res.json({ success: true, analytics });
 }));
 

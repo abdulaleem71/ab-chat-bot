@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { getDb } from '../../db/index';
+import { DEFAULT_MODEL_ID } from '../../config/models';
 import { AdminAuditRepo } from './adminAuditRepo';
 import { Chatbot } from '../../types';
 
@@ -251,7 +252,7 @@ export class AdminChatbotRepo {
         allowedDomains: Array.isArray(allowedDomains) ? allowedDomains : [],
         domainLockEnabled: r.domain_lock_enabled === 1 || r.domain_lock_enabled === true,
         embedSecretKey: r.embed_secret_key ? String(r.embed_secret_key) : undefined,
-        model: String(r.model || 'gemini-3.7-flash'),
+        model: String(r.model || DEFAULT_MODEL_ID),
         tone: String(r.tone || 'Friendly'),
         status: (r.status as any) || 'active',
         primaryColor: String(r.primary_color || '#4F46E5'),
@@ -339,7 +340,7 @@ export class AdminChatbotRepo {
       avatar: String(r.avatar || '🤖'),
       greetingMessage: String(r.greeting_message || 'Hello! How can I help you today?'),
       suggestedQuestions: Array.isArray(suggestedQuestions) ? suggestedQuestions : [],
-      model: String(r.model || 'gemini-3.7-flash'),
+      model: String(r.model || DEFAULT_MODEL_ID),
       fallbackMessage: String(r.fallback_message || 'Connecting to human representative...'),
       collectLeadEmail: r.collect_lead_email === 1 || r.collect_lead_email === true,
       leadTitle: String(r.lead_title || 'Leave your email'),

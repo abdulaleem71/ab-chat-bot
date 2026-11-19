@@ -1,124 +1,160 @@
-import React, { useState } from 'react';
-import { motion } from 'motion/react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   CheckCircle2,
   AlertTriangle,
-  Clock,
-  ShieldCheck,
   Activity,
-  Server,
-  Zap,
-  Globe,
   Bell,
   ArrowLeft,
-  ChevronRight,
-  ExternalLink,
-  Bot
+  RefreshCw,
 } from 'lucide-react';
 import { NomadsLogo } from '../common/NomadsLogo';
+import { GEMINI_CONFIG } from '../../config/models';
 
 interface StatusPageProps {
   onReturnToApp?: () => void;
 }
 
+interface StatusServiceItem {
+  name: string;
+  description?: string;
+  status: string;
+  region?: string;
+  latency?: string;
+}
+
 export const StatusPage: React.FC<StatusPageProps> = ({ onReturnToApp }) => {
   const [subscribed, setSubscribed] = useState(false);
+  const [isSubscribing, setIsSubscribing] = useState(false);
+  const [subscribeError, setSubscribeError] = useState('');
   const [email, setEmail] = useState('');
-  const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
+  const [overallStatus, setOverallStatus] = useState<'operational' | 'degraded'>('operational');
+  const [checkedAt, setCheckedAt] = useState<string>('');
+  const [loadingStatus, setLoadingStatus] = useState(false);
 
-  const services = [
+  const [services, setServices] = useState<StatusServiceItem[]>([
     {
       name: 'Gemini AI Inference & Grounding Gateway',
-      description: 'Gemini 3.7 Flash & 3.1 Pro real-time completion engine',
+      description: `${GEMINI_CONFIG.flash.name} & ${GEMINI_CONFIG.pro.name} completion engine`,
       status: 'Operational',
-      uptime: '99.99%',
-      latency: '340ms',
+      region: 'Global',
+      latency: '—',
     },
     {
       name: 'RAG Knowledge Search & Webpage Crawler',
       description: 'Document vector indexing, URL scraping, and semantic retrieval',
       status: 'Operational',
-      uptime: '99.98%',
-      latency: '180ms',
+      region: 'US / EU',
+      latency: '—',
     },
     {
-      name: 'Embed Widget Edge CDN & JavaScript Runtime',
-      description: 'Global Cloudflare edge delivery for website chat bubbles',
+      name: 'Embed Widget Edge CDN & Script Delivery',
+      description: 'Static & iframe runtime delivery for embedded chat widgets',
       status: 'Operational',
-      uptime: '100.0%',
-      latency: '22ms',
+      region: 'Edge',
+      latency: '—',
     },
     {
-      name: 'Live Chat Inbox & Human Takeover Stream',
-      description: 'Real-time agent takeover and live visitor messaging channels',
+      name: 'Live Chat Inbox & Human Takeover API',
+      description: 'Real-time agent takeover and visitor transcript storage',
       status: 'Operational',
-      uptime: '99.99%',
-      latency: '45ms',
+      region: 'Global',
+      latency: '—',
     },
     {
-      name: 'Integrations & Webhook Ingestion API',
-      description: 'Slack, WhatsApp, Zapier, HubSpot, and Shopify sync pipes',
+      name: 'Integrations & Webhook Ingestion Pipeline',
+      description: 'Slack, WhatsApp, Zapier, and HubSpot connectors',
       status: 'Operational',
-      uptime: '99.97%',
-      latency: '95ms',
+      region: 'Global',
+      latency: '—',
     },
-  ];
+  ]);
 
-  const pastIncidents = [
-    {
-      date: 'August 24, 2026',
-      title: 'Scheduled Database Index Optimization',
-      status: 'Resolved',
-      impact: 'Informational',
-      description: 'Completed scheduled performance tuning and vector index compaction on core US-East and EU-Central clusters. Zero user downtime recorded.',
-      duration: '22 mins',
-    },
-    {
-      date: 'August 11, 2026',
-      title: 'Elevated Webhook Latency on Meta WhatsApp Relay',
-      status: 'Resolved',
-      impact: 'Minor',
-      description: 'Upstream rate limit throttling on WhatsApp Cloud API caused minor response delays. Automatic backpressure retry queue cleared all messages within 6 minutes.',
-      duration: '6 mins',
-    },
-    {
-      date: 'July 28, 2026',
-      title: 'Edge CDN Routine SSL Certificate Rotation',
-      status: 'Resolved',
-      impact: 'Maintenance',
-      description: 'Automated global edge wildcard SSL certificates renewed seamlessly with zero packet loss.',
-      duration: '15 mins',
-    },
-  ];
+  const fetchLiveStatus = useCallback(async () => {
+    setLoadingStatus(true);
+    try {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (data.overallStatus === 'degraded' || data.overallStatus === 'operational') {
+          setOverallStatus(data.overallStatus);
+        }
+        if (data.checkedAt) {
+          setCheckedAt(new Date(data.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        }
+        if (Array.isArray(data.services) && data.services.length > 0) {
+          setServices(
+            data.services.map((s: any) => ({
+              name: s.name,
+              description: s.region ? `Region: ${s.region}` : undefined,
+              status: s.status || 'Operational',
+              region: s.region,
+              latency: s.latency || '—',
+            }))
+          );
+        }
+      }
+    } catch {
+      // Keep graceful UI fallback
+    } finally {
+      setLoadingStatus(false);
+    }
+  }, []);
 
-  const handleSubscribe = (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchLiveStatus();
+  }, [fetchLiveStatus]);
+
+  const handleSubscribe = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email.trim()) {
+    const trimmed = email.trim();
+    if (!trimmed) return;
+    setIsSubscribing(true);
+    setSubscribeError('');
+    try {
+      const res = await fetch('/api/newsletter/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed, source: 'status_page' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Could not subscribe to status alerts.');
+      }
       setSubscribed(true);
+      setEmail('');
+    } catch (err: any) {
+      setSubscribeError(err.message || 'Subscription failed.');
+    } finally {
+      setIsSubscribing(false);
     }
   };
-
-  const days = Array.from({ length: 90 }, (_, i) => ({
-    day: 90 - i,
-    status: 'operational',
-  }));
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans flex flex-col">
       {/* Standalone Public Header */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-zinc-200 px-6 py-4">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-zinc-200 px-4 sm:px-6 py-4">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <NomadsLogo showText textClassName="text-base font-extrabold text-zinc-950 font-heading" />
             <span className="hidden sm:inline-block text-zinc-300">/</span>
-            <span className="hidden sm:inline-flex items-center gap-1.5 text-xs font-bold text-zinc-700 bg-zinc-100 px-2.5 py-1 rounded-full border border-zinc-200">
+            <span className="hidden sm:inline-flex items-center gap-1.5 text-xs font-bold text-zinc-700 bg-zinc-100 px-2.5 py-1 rounded-md border border-zinc-200">
               <Activity className="w-3.5 h-3.5 text-emerald-600" />
               System Status
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 shrink-0">
             <button
+              type="button"
+              onClick={fetchLiveStatus}
+              disabled={loadingStatus}
+              className="px-3 py-2 text-xs font-bold text-zinc-700 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 if (onReturnToApp) {
                   onReturnToApp();
@@ -136,88 +172,73 @@ export const StatusPage: React.FC<StatusPageProps> = ({ onReturnToApp }) => {
       </header>
 
       {/* Main Status Container */}
-      <main className="flex-1 max-w-5xl w-full mx-auto p-6 md:p-10 space-y-8">
+      <main className="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-6 md:p-10 space-y-8">
         {/* Overall Status Hero Card */}
-        <div className="bg-emerald-600 text-white rounded-3xl p-8 shadow-lg relative overflow-hidden">
-          <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+        <div
+          className={`${
+            overallStatus === 'operational' ? 'bg-emerald-600' : 'bg-amber-600'
+          } text-white rounded-3xl p-6 sm:p-8 shadow-lg`}
+        >
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
             <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 bg-emerald-700/70 border border-emerald-500/50 px-3 py-1 rounded-full text-xs font-bold shadow-xs">
-                <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                <span>Real-Time Incident Monitor</span>
+              <div className="inline-flex items-center gap-2 bg-black/15 border border-white/20 px-3 py-1 rounded-md text-xs font-bold">
+                {overallStatus === 'operational' ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                ) : (
+                  <AlertTriangle className="w-3.5 h-3.5 text-white" />
+                )}
+                <span>Live Health Check</span>
               </div>
               <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight font-heading">
-                All Systems Operational
+                {overallStatus === 'operational' ? 'All Systems Operational' : 'Partial System Degradation'}
               </h1>
-              <p className="text-xs text-emerald-100 font-medium max-w-xl">
-                NomadsChat AI inference, RAG vectors, widget embeds, and live chat WebSockets are running smoothly with zero active incidents.
+              <p className="text-xs text-white/90 font-medium max-w-xl">
+                NomadsChat API, RAG indexing, widget embeds, and persistence services are monitored continuously in real time.
               </p>
             </div>
 
-            <div className="flex flex-col items-start md:items-end gap-1 bg-emerald-700/60 p-4 rounded-2xl border border-emerald-500/40 shrink-0">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-200">90-Day Uptime</span>
-              <span className="text-2xl font-extrabold text-white font-heading">99.992%</span>
-              <span className="text-[10px] text-emerald-200">Refreshed just now</span>
-            </div>
-          </div>
-        </div>
-
-        {/* 90-Day Uptime Visualization */}
-        <div className="bg-white border border-zinc-200/90 rounded-3xl p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-extrabold text-zinc-950 font-heading">Uptime History (Last 90 Days)</h2>
-            <div className="flex items-center gap-4 text-xs font-bold text-zinc-600">
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />
-                Operational (90d)
+            <div className="flex flex-col items-start md:items-end gap-1 bg-black/15 p-4 rounded-2xl border border-white/20 shrink-0">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-white/80">Last Probe</span>
+              <span className="text-xl font-extrabold text-white font-mono tabular-nums">
+                {checkedAt || 'Just now'}
               </span>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="grid grid-cols-45 sm:grid-cols-90 gap-0.5">
-              {days.map(d => (
-                <div
-                  key={d.day}
-                  title={`Day ${d.day} ago: 100% Operational`}
-                  className="h-7 rounded-[2px] bg-emerald-500 hover:bg-emerald-600 transition cursor-pointer"
-                />
-              ))}
-            </div>
-            <div className="flex items-center justify-between text-[10px] text-zinc-400 font-bold pt-1">
-              <span>90 days ago</span>
-              <span>45 days ago</span>
-              <span>Today</span>
+              <span className="text-[10px] text-white/80 font-mono">
+                {services.length} Core Components
+              </span>
             </div>
           </div>
         </div>
 
         {/* System Component Breakdown Table */}
-        <div className="bg-white border border-zinc-200/90 rounded-3xl overflow-hidden shadow-xs">
+        <div className="bg-white border border-zinc-200 rounded-3xl overflow-hidden shadow-xs">
           <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between">
-            <h2 className="text-sm font-extrabold text-zinc-950 font-heading">System Components & Gateways</h2>
-            <span className="text-xs text-zinc-500 font-medium">5 Core Services</span>
+            <h2 className="text-sm font-extrabold text-zinc-950 font-heading">System Components &amp; Gateways</h2>
+            <span className="text-xs text-zinc-500 font-medium tabular-nums">
+              {services.length} Services
+            </span>
           </div>
 
           <div className="divide-y divide-zinc-100">
             {services.map((svc, idx) => (
               <div
                 key={idx}
-                className="px-6 py-4.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-zinc-50/70 transition"
+                className="px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-zinc-50/70 transition"
               >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-zinc-950 font-heading">{svc.name}</span>
-                  </div>
-                  <p className="text-xs text-zinc-500 font-medium">{svc.description}</p>
+                <div className="min-w-0">
+                  <span className="text-xs font-bold text-zinc-950 font-heading block truncate">{svc.name}</span>
+                  {svc.description && (
+                    <p className="text-xs text-zinc-500 font-medium mt-0.5">{svc.description}</p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-4 shrink-0">
-                  <div className="text-right hidden sm:block">
-                    <span className="text-xs font-extrabold text-zinc-900 font-mono">{svc.uptime}</span>
-                    <span className="text-[10px] text-zinc-400 block font-mono">avg {svc.latency}</span>
-                  </div>
+                  {svc.latency && (
+                    <div className="text-right">
+                      <span className="text-[11px] text-zinc-500 font-mono tabular-nums">{svc.latency}</span>
+                    </div>
+                  )}
 
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                     {svc.status}
                   </span>
@@ -227,28 +248,16 @@ export const StatusPage: React.FC<StatusPageProps> = ({ onReturnToApp }) => {
           </div>
         </div>
 
-        {/* Past Incidents Timeline */}
-        <div className="bg-white border border-zinc-200/90 rounded-3xl p-6 shadow-xs space-y-6">
-          <h2 className="text-sm font-extrabold text-zinc-950 font-heading">Past Incidents & Maintenance Log</h2>
-
-          <div className="space-y-6">
-            {pastIncidents.map((incident, idx) => (
-              <div key={idx} className="border-l-2 border-zinc-200 pl-4 space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">{incident.date}</span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-700 border border-zinc-200">
-                    {incident.impact}
-                  </span>
-                </div>
-                <h3 className="text-xs font-extrabold text-zinc-900 font-heading">{incident.title}</h3>
-                <p className="text-xs text-zinc-600 font-medium leading-relaxed">{incident.description}</p>
-              </div>
-            ))}
-          </div>
+        {/* Active Incident Notice */}
+        <div className="bg-white border border-zinc-200 rounded-3xl p-6 shadow-xs space-y-2">
+          <h2 className="text-sm font-extrabold text-zinc-950 font-heading">Incident Log</h2>
+          <p className="text-xs text-zinc-600 font-medium">
+            No active service incidents reported. Scheduled maintenance windows are communicated in advance to workspace owners.
+          </p>
         </div>
 
         {/* Subscribe for Alerts Banner */}
-        <div className="bg-zinc-900 text-white rounded-3xl p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl">
+        <div className="bg-zinc-950 text-white rounded-3xl p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl">
           <div className="space-y-1 text-center md:text-left">
             <div className="inline-flex items-center gap-1.5 text-xs font-bold text-zinc-300">
               <Bell className="w-3.5 h-3.5 text-white" />
@@ -258,40 +267,45 @@ export const StatusPage: React.FC<StatusPageProps> = ({ onReturnToApp }) => {
               Subscribe to System Status Notifications
             </h3>
             <p className="text-xs text-zinc-400 max-w-md">
-              Receive automated email alerts whenever maintenance is scheduled or service degradation occurs.
+              Receive email alerts whenever scheduled maintenance or service degradation occurs.
             </p>
           </div>
 
           {subscribed ? (
-            <div className="bg-zinc-800 border border-zinc-700 px-4 py-2.5 rounded-xl text-xs font-bold text-emerald-400 flex items-center gap-2">
+            <div className="bg-zinc-900 border border-zinc-800 px-4 py-2.5 rounded-xl text-xs font-bold text-emerald-400 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>Subscribed to notifications!</span>
+              <span>Subscribed to status notifications</span>
             </div>
           ) : (
-            <form onSubmit={handleSubscribe} className="flex items-center gap-2 w-full md:w-auto">
-              <input
-                type="email"
-                required
-                placeholder="you@company.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                className="px-3.5 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-hidden focus:border-white font-medium"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 bg-white hover:bg-zinc-100 text-zinc-950 text-xs font-extrabold rounded-xl transition cursor-pointer shrink-0"
-              >
-                Subscribe
-              </button>
+            <form onSubmit={handleSubscribe} className="w-full md:w-auto space-y-1.5">
+              <div className="flex items-center gap-2">
+                <input
+                  type="email"
+                  required
+                  placeholder="you@company.com"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  className="px-3.5 py-2 bg-zinc-900 border border-zinc-700 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-hidden focus:border-white font-medium flex-1"
+                />
+                <button
+                  type="submit"
+                  disabled={isSubscribing}
+                  className="px-4 py-2 bg-white hover:bg-zinc-100 text-zinc-950 text-xs font-extrabold rounded-xl transition cursor-pointer shrink-0 disabled:opacity-60"
+                >
+                  {isSubscribing ? 'Saving...' : 'Subscribe'}
+                </button>
+              </div>
+              {subscribeError && (
+                <p className="text-[11px] text-rose-400">{subscribeError}</p>
+              )}
             </form>
           )}
         </div>
       </main>
 
-      {/* Standalone Footer */}
       <footer className="border-t border-zinc-200 bg-white py-6 px-6 text-center text-xs text-zinc-500">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
-          <p>© 2026 NomadsChat Inc. Hosted on distributed edge network.</p>
+          <p>© {new Date().getFullYear()} NomadsChat Inc.</p>
           <div className="flex items-center gap-4">
             <button
               type="button"
@@ -300,7 +314,9 @@ export const StatusPage: React.FC<StatusPageProps> = ({ onReturnToApp }) => {
             >
               Security Overview
             </button>
-            <a href="https://nomadsarc.io" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-900 transition">NomadsArc AI</a>
+            <a href="https://nomadsarc.io" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-900 transition">
+              NomadsArc AI
+            </a>
           </div>
         </div>
       </footer>

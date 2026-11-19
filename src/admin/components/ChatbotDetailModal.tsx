@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { AdminChatbotDetail } from '../repositories/adminChatbotRepo';
+import { GEMINI_CONFIG } from '../../config/models';
 import {
   X,
   Bot,
@@ -66,7 +67,7 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
 
   // Config states
   const [botName, setBotName] = useState<string>('');
-  const [botModel, setBotModel] = useState<string>('gemini-3.7-flash');
+  const [botModel, setBotModel] = useState<string>(GEMINI_CONFIG.flash.id);
   const [botTone, setBotTone] = useState<string>('Friendly');
   const [systemInstruction, setSystemInstruction] = useState<string>('');
   const [greetingMessage, setGreetingMessage] = useState<string>('');
@@ -76,6 +77,7 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
   // Status & Key regeneration
   const [isUpdatingStatus, setIsUpdatingStatus] = useState<boolean>(false);
   const [isRegeneratingKey, setIsRegeneratingKey] = useState<boolean>(false);
+  const [confirmRotateKey, setConfirmRotateKey] = useState<boolean>(false);
 
   const fetchDetail = useCallback(async () => {
     if (!chatbotId) return;
@@ -98,7 +100,7 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
         setAllowedDomains(bot.allowedDomains || []);
         setWebsiteUrl(bot.websiteUrl || '');
         setBotName(bot.name || '');
-        setBotModel(bot.model || 'gemini-3.7-flash');
+        setBotModel(bot.model || GEMINI_CONFIG.flash.id);
         setBotTone(bot.tone || 'Friendly');
         setSystemInstruction(bot.systemInstruction || '');
         setGreetingMessage(bot.greetingMessage || '');
@@ -169,9 +171,11 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
 
   const handleRegenerateKey = async () => {
     if (!chatbotId) return;
-    if (!window.confirm('Are you sure you want to regenerate the embed secret key? Any existing embedded widgets without the new key may require updates.')) {
+    if (!confirmRotateKey) {
+      setConfirmRotateKey(true);
       return;
     }
+    setConfirmRotateKey(false);
     try {
       setIsRegeneratingKey(true);
       const res = await fetch(`/api/admin/chatbots/${chatbotId}/regenerate-key`, {
@@ -546,14 +550,35 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
                           {copiedKey ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                           Copy Key
                         </button>
-                        <button
-                          onClick={handleRegenerateKey}
-                          disabled={isRegeneratingKey}
-                          className="px-2.5 py-1 bg-zinc-800 hover:bg-amber-950/80 text-amber-300 border border-amber-800/40 rounded text-xs transition cursor-pointer flex items-center gap-1"
-                        >
-                          <RefreshCw className={`w-3 h-3 ${isRegeneratingKey ? 'animate-spin' : ''}`} />
-                          Rotate Key
-                        </button>
+                        {confirmRotateKey ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={handleRegenerateKey}
+                              disabled={isRegeneratingKey}
+                              className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold transition cursor-pointer"
+                            >
+                              Confirm Rotate
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmRotateKey(false)}
+                              className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleRegenerateKey}
+                            disabled={isRegeneratingKey}
+                            className="px-2.5 py-1 bg-zinc-800 hover:bg-amber-950/80 text-amber-300 border border-amber-800/40 rounded text-xs transition cursor-pointer flex items-center gap-1"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${isRegeneratingKey ? 'animate-spin' : ''}`} />
+                            Rotate Key
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -745,8 +770,8 @@ export const ChatbotDetailModal: React.FC<ChatbotDetailModalProps> = ({
                           onChange={(e) => setBotModel(e.target.value)}
                           className="w-full px-3.5 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-indigo-500 transition font-mono cursor-pointer"
                         >
-                          <option value="gemini-3.7-flash">gemini-3.7-flash (Gemini 3.7 Flash - Recommended & Fast)</option>
-                          <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Gemini 3.1 Pro - Deep Reasoning)</option>
+                          <option value={GEMINI_CONFIG.flash.id}>{GEMINI_CONFIG.flash.id} ({GEMINI_CONFIG.flash.name} - {GEMINI_CONFIG.flash.description})</option>
+                          <option value={GEMINI_CONFIG.pro.id}>{GEMINI_CONFIG.pro.id} ({GEMINI_CONFIG.pro.name} - {GEMINI_CONFIG.pro.description})</option>
                         </select>
                       </div>
 

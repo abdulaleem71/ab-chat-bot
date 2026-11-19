@@ -2,8 +2,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { UserRepo, UserRow, TenantRow } from '../repositories/userRepo';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'nomadschat_enterprise_jwt_secret_2026';
+import { getJwtSecret } from '../config/secrets';
 
 export interface OAuthStatePayload {
   provider: 'google' | 'github';
@@ -25,7 +24,7 @@ export class OAuthService {
     };
     const json = JSON.stringify(payload);
     const dataB64 = Buffer.from(json, 'utf-8').toString('base64url');
-    const signature = crypto.createHmac('sha256', JWT_SECRET).update(dataB64).digest('base64url');
+    const signature = crypto.createHmac('sha256', getJwtSecret()).update(dataB64).digest('base64url');
     return `${dataB64}.${signature}`;
   }
 
@@ -38,8 +37,10 @@ export class OAuthService {
     const [dataB64, signature] = state.split('.');
     if (!dataB64 || !signature) return null;
 
-    const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(dataB64).digest('base64url');
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
+    const expectedSig = crypto.createHmac('sha256', getJwtSecret()).update(dataB64).digest('base64url');
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
       return null;
     }
 
@@ -326,15 +327,16 @@ export class OAuthService {
         const now = new Date().toISOString();
         const trialEndsAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
 
-        // Create tenant with 3-day Growth Pro trial
+        // Create tenant with 3-day Pro trial
         await UserRepo.createTenant({
           id: tenantId,
           name: `${cleanName}'s Workspace`,
           owner_email: cleanEmail,
-          plan: 'growth_pro',
+          plan: 'Pro',
           created_at: now,
           trial_started_at: now,
           trial_ends_at: trialEndsAt,
+          subscription_status: 'trialing',
           payment_method_on_file: 0,
         });
 
@@ -381,7 +383,7 @@ export class OAuthService {
         role: user.role,
         avatarUrl,
       },
-      JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: '7d' }
     );
 

@@ -1,41 +1,37 @@
-import React, { useState, useRef } from 'react';
+import React, { useRef } from 'react';
 import { motion } from 'motion/react';
-import { useAuth } from '../../context/AuthContext';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
   AlertTriangle,
   CheckCircle2,
   Lock,
-  Sparkles,
   ArrowRight,
   ShieldCheck,
   CreditCard,
-  X,
-  Layers,
-  Bot
+  Building2,
 } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
 
 interface ExpiredTrialModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose?: () => void;
   onSelectUpgradeToPro: () => void;
-  onStayOnFree: () => void;
+  onContactSales?: () => void;
 }
 
 export const ExpiredTrialModal: React.FC<ExpiredTrialModalProps> = ({
   isOpen,
   onClose,
   onSelectUpgradeToPro,
-  onStayOnFree,
+  onContactSales,
 }) => {
   const modalRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(modalRef, isOpen, onClose);
+  useFocusTrap(modalRef, isOpen, onClose || (() => {}));
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 overflow-y-auto animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 overflow-y-auto animate-in fade-in duration-200">
       <motion.div
         ref={modalRef}
         role="dialog"
@@ -47,120 +43,85 @@ export const ExpiredTrialModal: React.FC<ExpiredTrialModalProps> = ({
         className="bg-white border border-zinc-200 rounded-3xl shadow-2xl max-w-xl w-full overflow-hidden relative"
       >
         {/* Header */}
-        <div className="bg-black text-white p-6 text-center relative overflow-hidden">
-          <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-700 flex items-center justify-center mx-auto mb-3 text-amber-400 shadow-inner">
-            <AlertTriangle className="w-6 h-6" />
+        <div className="bg-black text-white p-6 sm:p-8 text-center relative overflow-hidden">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto mb-4 text-amber-400 shadow-inner">
+            <Lock className="w-7 h-7 text-amber-400" />
           </div>
-          <h2 id="expired-trial-modal-title" className="text-xl sm:text-2xl font-extrabold tracking-tight font-heading">
-            Your Growth Pro Trial Has Ended
+          <h2 id="expired-trial-modal-title" className="text-xl sm:text-2xl font-black tracking-tight text-white font-heading">
+            Your 3-Day Free Trial Has Ended
           </h2>
-          <p className="text-xs text-zinc-300 font-medium mt-1 max-w-md mx-auto">
-            Choose how you'd like to continue with your NomadsChat workspace. Add a payment method to unlock full Growth Pro capabilities or stay on the Free tier.
+          <p className="text-xs sm:text-sm text-zinc-300 font-medium mt-2 max-w-md mx-auto">
+            Upgrade your workspace subscription to retain access to your AI chatbots, active automations, live inbox, and knowledge documents.
           </p>
         </div>
 
-        {/* Comparison Options */}
-        <div className="p-6 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Option 1: Stay on Free */}
-            <div className="border border-zinc-200 rounded-2xl p-5 hover:border-zinc-300 transition flex flex-col justify-between bg-zinc-50/50">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-500 font-mono">
-                    Starter Free
-                  </span>
-                  <span className="text-xs font-extrabold text-black font-heading">$0 / mo</span>
-                </div>
-                <h3 className="text-base font-bold text-zinc-900 font-heading">Stay on Free</h3>
-                <p className="text-xs text-zinc-500 font-medium mt-1">
-                  Limited access for small basic testing.
-                </p>
+        {/* Upgrade Card */}
+        <div className="p-6 sm:p-8 space-y-6">
+          <div className="border-2 border-black rounded-2xl p-6 bg-zinc-950 text-white relative shadow-xl">
+            <div className="absolute -top-3 right-6 bg-amber-400 text-black text-[10px] font-black px-3 py-0.5 rounded-full uppercase tracking-wider">
+              Unlimited Access
+            </div>
 
-                <ul className="space-y-2 mt-4 text-xs text-zinc-600">
-                  <li className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                    <span>1 Chatbot</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                    <span>500 Messages / month</span>
-                  </li>
-                  <li className="flex items-center gap-2 text-zinc-400">
-                    <Lock className="w-3.5 h-3.5 text-zinc-300 shrink-0" />
-                    <span>No Live Takeover Inbox</span>
-                  </li>
-                  <li className="flex items-center gap-2 text-zinc-400">
-                    <Lock className="w-3.5 h-3.5 text-zinc-300 shrink-0" />
-                    <span>NomadsChat Badge on widget</span>
-                  </li>
-                </ul>
-              </div>
-
-              <div className="pt-5">
-                <button
-                  type="button"
-                  onClick={onStayOnFree}
-                  className="w-full py-2.5 px-4 rounded-xl border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-800 text-xs font-bold transition cursor-pointer"
-                >
-                  Stay on Free
-                </button>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-black uppercase tracking-wider text-amber-400 font-mono">
+                NomadsChat Pro
+              </span>
+              <div className="text-right">
+                <span className="text-2xl font-black text-white font-heading">$39</span>
+                <span className="text-xs text-zinc-400 font-normal"> / month</span>
               </div>
             </div>
 
-            {/* Option 2: Upgrade to Pro (Requires Card) */}
-            <div className="border-2 border-black rounded-2xl p-5 flex flex-col justify-between bg-zinc-950 text-white relative shadow-lg">
-              <div className="absolute -top-3 right-4 bg-emerald-400 text-black text-[9px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                Recommended
-              </div>
+            <p className="text-xs text-zinc-300 font-medium mb-4">
+              Everything you need to automate client communication, engage visitors, and scale customer support.
+            </p>
 
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 font-mono">
-                    Growth Pro
-                  </span>
-                  <span className="text-xs font-extrabold text-white font-heading">$39 / mo</span>
-                </div>
-                <h3 className="text-base font-bold text-white font-heading">Upgrade to Pro</h3>
-                <p className="text-xs text-zinc-400 font-medium mt-1">
-                  Keep all bots, unlimited knowledge, and live chat.
-                </p>
+            <ul className="space-y-2.5 text-xs text-zinc-200 border-t border-zinc-800 pt-4 mb-6">
+              <li className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Up to 10 AI Chatbots with Custom Knowledge Base</span>
+              </li>
+              <li className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Unlimited AI Message Generation & Smart Grounding</span>
+              </li>
+              <li className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Full Live Human Agent Takeover Inbox & Analytics</span>
+              </li>
+              <li className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Remove NomadsChat Branding & Custom Embed Styles</span>
+              </li>
+            </ul>
 
-                <ul className="space-y-2 mt-4 text-xs text-zinc-200">
-                  <li className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span>Up to 5 Chatbots</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span>10,000 Messages / month</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span>Full Live Agent Inbox</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span>White-label / Remove Branding</span>
-                  </li>
-                </ul>
-              </div>
+            <MotionButton
+              type="button"
+              variant="primary"
+              size="lg"
+              fullWidth
+              onClick={onSelectUpgradeToPro}
+              rightIcon={<ArrowRight className="w-4 h-4 text-black" />}
+            >
+              Activate Pro Subscription
+            </MotionButton>
+          </div>
 
-              <div className="pt-5">
-                <MotionButton
-                  type="button"
-                  variant="primary"
-                  size="md"
-                  fullWidth
-                  onClick={onSelectUpgradeToPro}
-                  rightIcon={<ArrowRight className="w-4 h-4 text-black" />}
-                >
-                  Upgrade to Pro
-                </MotionButton>
-                <p className="text-[10px] text-zinc-400 text-center mt-2">
-                  Requires valid payment card
-                </p>
-              </div>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs text-zinc-500">
+            <div className="flex items-center gap-1.5 text-[11px] text-zinc-600">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>Cancel anytime with 1-click in your billing portal</span>
             </div>
+            {onContactSales && (
+              <button
+                type="button"
+                onClick={onContactSales}
+                className="text-xs font-bold text-zinc-900 hover:text-black hover:underline cursor-pointer flex items-center gap-1"
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                Need Custom Enterprise?
+              </button>
+            )}
           </div>
         </div>
       </motion.div>

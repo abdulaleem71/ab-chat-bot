@@ -120,7 +120,7 @@ export const ConversionFunnelView: React.FC = () => {
         a.remove();
       })
       .catch((err) => {
-        alert('Export error: ' + err.message);
+        setError('Export error: ' + err.message);
       });
   };
 
@@ -197,6 +197,14 @@ export const ConversionFunnelView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Error Banner */}
+      {error && (
+        <div className="p-3.5 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300 rounded-xl text-xs font-medium flex items-center justify-between">
+          <span>{error}</span>
+          <button type="button" onClick={() => setError(null)} className="opacity-70 hover:opacity-100">&times;</button>
+        </div>
+      )}
 
       {/* Workspace & Bot Filters Bar */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs flex flex-wrap items-center justify-between gap-4">

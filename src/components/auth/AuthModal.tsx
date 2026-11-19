@@ -13,7 +13,7 @@ interface AuthModalProps {
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'signin' }) => {
-  const { login, loginWithOAuth, register, requestPasswordReset, resetPassword } = useAuth();
+  const { login, loginWithOAuth, register, requestPasswordReset, resetPassword, verifySession, startDemoSession } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -25,6 +25,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
   const [teamSize, setTeamSize] = useState('2-10');
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [isDemoLoading, setIsDemoLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -40,6 +41,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
   });
   useFocusTrap(modalContainerRef, isOpen, onClose);
 
+  useEffect(() => {
+    if (isOpen) {
+      setMode(initialMode);
+      setErrorMsg('');
+      setSuccessMsg('');
+      setRequiresMfa(false);
+    }
+  }, [isOpen, initialMode]);
+
   const handleGoogleAuth = async () => {
     setIsGoogleLoading(true);
     setErrorMsg('');
@@ -49,11 +59,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
       setTimeout(() => {
         setSuccessMsg('');
         onClose();
-      }, 1000);
+      }, 900);
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to sign in with Google.');
     } finally {
       setIsGoogleLoading(false);
+    }
+  };
+
+  const handleLaunchDemo = async () => {
+    setIsDemoLoading(true);
+    setErrorMsg('');
+    try {
+      await startDemoSession();
+      setSuccessMsg('Interactive Demo Workspace Ready!');
+      setTimeout(() => {
+        setSuccessMsg('');
+        onClose();
+      }, 600);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to start demo workspace.');
+    } finally {
+      setIsDemoLoading(false);
     }
   };
 
@@ -91,14 +118,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
         setTimeout(() => {
           setSuccessMsg('');
           onClose();
-        }, 1000);
+        }, 800);
       } else if (mode === 'signup') {
         await register(email, password, name, companyName);
         setSuccessMsg('Account created successfully!');
         setTimeout(() => {
           setSuccessMsg('');
           onClose();
-        }, 1000);
+        }, 800);
       } else if (mode === 'forgot') {
         if (!newPassword || newPassword.length < 6) {
           setErrorMsg('Please enter a new password of at least 6 characters.');
@@ -106,7 +133,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
           return;
         }
 
-        // Request token and reset password
         let tokenToUse = resetToken;
         if (!tokenToUse) {
           const res = await requestPasswordReset(email);
@@ -127,7 +153,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
           setSuccessMsg('');
           setMode('signin');
           setPassword(newPassword);
-        }, 1800);
+        }, 1600);
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Action failed. Please check your inputs.');
@@ -154,12 +180,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        if (data.token && typeof localStorage !== 'undefined') {
+          localStorage.setItem('auth_token', data.token);
+          localStorage.setItem('token', data.token);
+        }
+        await verifySession();
         setSuccessMsg('Two-factor authentication verified successfully!');
         setTimeout(() => {
           setSuccessMsg('');
           onClose();
-          window.location.reload();
-        }, 1000);
+        }, 700);
       } else {
         setErrorMsg(data.error || 'Invalid verification code or backup code.');
       }
@@ -480,13 +510,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
                         <div className="border-t border-zinc-200 w-full" />
                         <span className="bg-white px-2 text-[10px] text-zinc-400 uppercase font-bold">Or continue with</span>
                       </div>
-                      <div>
+                      <div className="space-y-2.5">
                         <MotionButton
                           type="button"
                           variant="secondary"
                           size="md"
                           fullWidth
-                          disabled={isLoading || isGoogleLoading}
+                          disabled={isLoading || isGoogleLoading || isDemoLoading}
                           onClick={handleGoogleAuth}
                           leftIcon={
                             isGoogleLoading ? (
@@ -503,6 +533,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
                         >
                           {isGoogleLoading ? 'Connecting to Google...' : 'Continue with Google'}
                         </MotionButton>
+
+                        <button
+                          type="button"
+                          disabled={isLoading || isGoogleLoading || isDemoLoading}
+                          onClick={handleLaunchDemo}
+                          className="w-full py-2 text-xs font-semibold text-zinc-600 hover:text-zinc-950 transition cursor-pointer disabled:opacity-50"
+                        >
+                          {isDemoLoading ? 'Opening Interactive Demo...' : 'Prefer to explore first? Try Live Sandbox Demo →'}
+                        </button>
                       </div>
                     </div>
                   )}
@@ -510,7 +549,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
                   {/* Security guarantee */}
                   <div className="pt-3 border-t border-zinc-100 flex items-center justify-center gap-1.5 text-[10px] text-zinc-400 font-medium">
                     <ShieldCheck className="w-3.5 h-3.5 text-black" />
-                    <span>256-bit SSL encryption • SOC2 Type II Certified</span>
+                    <span>256-bit SSL encryption • Enterprise Data Isolation</span>
                   </div>
                 </form>
               )}

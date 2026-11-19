@@ -26,7 +26,9 @@ import {
 } from 'lucide-react';
 import { DiscountCodePolicy, TenantAuditLog } from '../../types';
 import { MotionButton } from '../common/MotionButton';
+import { ModalDialog } from '../common/ModalDialog';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import { hasPermission } from '../../config/permissions';
 
 interface WorkspaceProfileData {
@@ -63,10 +65,21 @@ interface WebhookItem {
 }
 
 export const SettingsView: React.FC = () => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const { toast } = useToast();
   const canManage = hasPermission(user?.role || 'Agent', 'manage_settings');
 
   const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'apikeys' | 'discount' | 'audit' | 'privacy'>('profile');
+
+  // Confirmation modal state
+  const [confirmModal, setConfirmModal] = useState<{
+    type: 'delete_workspace' | 'revoke_key' | 'delete_webhook';
+    id?: string;
+    title: string;
+    description: string;
+    confirmLabel: string;
+  } | null>(null);
+  const [isConfirmBusy, setIsConfirmBusy] = useState(false);
 
   // Data & Privacy state
   const [exportingData, setExportingData] = useState(false);
@@ -78,6 +91,7 @@ export const SettingsView: React.FC = () => {
   const handleExportData = async () => {
     setExportingData(true);
     setExportSuccessMessage('');
+    setError('');
     try {
       const res = await fetch('/api/tenant/export-data', {
         method: 'POST',
@@ -85,7 +99,9 @@ export const SettingsView: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        setExportSuccessMessage(data.message || 'Data export generated successfully.');
+        const msg = data.message || 'Data export generated successfully.';
+        setExportSuccessMessage(msg);
+        toast.success('Workspace Export Ready', msg);
         if (data.exportData) {
           const blob = new Blob([JSON.stringify(data.exportData, null, 2)], { type: 'application/json' });
           const url = URL.createObjectURL(blob);
@@ -98,26 +114,20 @@ export const SettingsView: React.FC = () => {
           URL.revokeObjectURL(url);
         }
       } else {
-        alert(data.error || 'Failed to export workspace data.');
+        const errMsg = data.error || 'Failed to export workspace data.';
+        setError(errMsg);
+        toast.error('Export Failed', errMsg);
       }
     } catch (err) {
       console.error('Export error:', err);
-      alert('Failed to export workspace data.');
+      setError('Failed to export workspace data.');
+      toast.error('Export Failed', 'Failed to export workspace data.');
     } finally {
       setExportingData(false);
     }
   };
 
-  const handleDeleteWorkspace = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (deleteWorkspaceNameInput.trim() !== profile.name.trim()) {
-      setDeleteWorkspaceError(`Workspace name does not match "${profile.name}".`);
-      return;
-    }
-    if (!window.confirm('Are you absolutely sure you want to delete this workspace? This will soft-delete your workspace with a 30-day recovery grace period.')) {
-      return;
-    }
-
+  const executeDeleteWorkspace = async () => {
     setDeletingWorkspace(true);
     setDeleteWorkspaceError('');
     try {
@@ -129,8 +139,9 @@ export const SettingsView: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        alert(data.message || 'Workspace deleted successfully.');
-        window.location.href = '/login';
+        setConfirmModal(null);
+        toast.success('Workspace Scheduled for Deletion', data.message || 'Workspace deleted successfully.');
+        await logout();
       } else {
         setDeleteWorkspaceError(data.error || 'Failed to delete workspace.');
       }
@@ -140,6 +151,21 @@ export const SettingsView: React.FC = () => {
     } finally {
       setDeletingWorkspace(false);
     }
+  };
+
+  const handleDeleteWorkspace = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (deleteWorkspaceNameInput.trim() !== profile.name.trim()) {
+      setDeleteWorkspaceError(`Workspace name does not match "${profile.name}".`);
+      return;
+    }
+    setDeleteWorkspaceError('');
+    setConfirmModal({
+      type: 'delete_workspace',
+      title: 'Delete Workspace?',
+      description: `Are you sure you want to delete "${profile.name}"? This soft-deletes your workspace with a 30-day recovery grace period and signs out your session.`,
+      confirmLabel: 'Delete Workspace',
+    });
   };
 
   // Profile state
@@ -309,13 +335,23 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const handleRevokeApiKey = async (keyId: string) => {
-    if (!confirm('Are you sure you want to revoke this API key? Any connected service using it will fail.')) return;
+  const handleRevokeApiKey = (keyId: string) => {
+    setConfirmModal({
+      type: 'revoke_key',
+      id: keyId,
+      title: 'Revoke API Key?',
+      description: 'Any external integration or CI pipeline currently using this key will immediately lose access.',
+      confirmLabel: 'Revoke Key',
+    });
+  };
+
+  const executeRevokeApiKey = async (keyId: string) => {
     try {
       const res = await fetch(`/api/tenant/api-keys/${keyId}`, { method: 'DELETE', credentials: 'include' });
       const data = await res.json();
       if (data.success) {
         setSuccessMessage('API key revoked.');
+        toast.success('API Key Revoked');
         fetchAllSettings();
       } else {
         setError(data.error || 'Failed to revoke key.');
@@ -358,19 +394,47 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const handleDeleteWebhook = async (whId: string) => {
-    if (!confirm('Are you sure you want to delete this webhook?')) return;
+  const handleDeleteWebhook = (whId: string) => {
+    setConfirmModal({
+      type: 'delete_webhook',
+      id: whId,
+      title: 'Delete Webhook?',
+      description: 'Chatbots using this endpoint for tool callbacks will stop sending events here.',
+      confirmLabel: 'Delete Webhook',
+    });
+  };
+
+  const executeDeleteWebhook = async (whId: string) => {
     try {
       const res = await fetch(`/api/tenant/webhooks/${whId}`, { method: 'DELETE', credentials: 'include' });
       const data = await res.json();
       if (data.success) {
         setSuccessMessage('Webhook deleted.');
+        toast.success('Webhook Deleted');
         fetchAllSettings();
       } else {
         setError(data.error || 'Failed to delete webhook.');
       }
     } catch {
       setError('Network error deleting webhook.');
+    }
+  };
+
+  const handleConfirmAction = async () => {
+    if (!confirmModal || isConfirmBusy) return;
+    setIsConfirmBusy(true);
+    try {
+      if (confirmModal.type === 'delete_workspace') {
+        await executeDeleteWorkspace();
+      } else if (confirmModal.type === 'revoke_key' && confirmModal.id) {
+        await executeRevokeApiKey(confirmModal.id);
+        setConfirmModal(null);
+      } else if (confirmModal.type === 'delete_webhook' && confirmModal.id) {
+        await executeDeleteWebhook(confirmModal.id);
+        setConfirmModal(null);
+      }
+    } finally {
+      setIsConfirmBusy(false);
     }
   };
 
@@ -1245,6 +1309,39 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Confirmation Dialog */}
+      <ModalDialog
+        isOpen={Boolean(confirmModal)}
+        onClose={() => !isConfirmBusy && setConfirmModal(null)}
+        title={confirmModal?.title || 'Confirm Action'}
+        size="sm"
+        icon={<AlertTriangle className="w-5 h-5 text-rose-600" />}
+        footer={
+          <>
+            <MotionButton
+              variant="secondary"
+              size="sm"
+              onClick={() => setConfirmModal(null)}
+              disabled={isConfirmBusy}
+            >
+              Cancel
+            </MotionButton>
+            <MotionButton
+              variant="danger"
+              size="sm"
+              onClick={handleConfirmAction}
+              disabled={isConfirmBusy}
+            >
+              {isConfirmBusy ? 'Processing...' : confirmModal?.confirmLabel || 'Confirm'}
+            </MotionButton>
+          </>
+        }
+      >
+        <p className="text-xs text-zinc-600 leading-relaxed font-medium">
+          {confirmModal?.description}
+        </p>
+      </ModalDialog>
     </div>
   );
 };

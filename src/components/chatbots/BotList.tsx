@@ -62,8 +62,8 @@ export const BotList: React.FC<BotListProps> = ({
       {/* Header Bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-zinc-900 tracking-tight font-heading">Deployed AI Chatbots</h1>
-          <p className="text-xs text-zinc-500 font-medium mt-0.5 font-body">Configure bots, test live grounding, or copy embed scripts.</p>
+          <h1 className="text-2xl font-bold text-zinc-900 tracking-tight font-heading">Deployed AI Chatbots</h1>
+          <p className="text-xs text-zinc-500 font-normal mt-0.5 font-body">Configure bots, test live grounding, or copy embed scripts.</p>
         </div>
         <MotionButton
           variant="primary"
@@ -78,7 +78,7 @@ export const BotList: React.FC<BotListProps> = ({
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white border border-zinc-200/90 p-3 rounded-2xl shadow-2xs">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white border border-zinc-200 p-3 rounded-xl shadow-xs">
         <div className="relative flex-1">
           <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
@@ -86,20 +86,21 @@ export const BotList: React.FC<BotListProps> = ({
             placeholder="Search chatbots by name, prompt, or domain..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-1.5 text-xs bg-zinc-50/70 border border-zinc-200 rounded-xl focus:outline-none focus:border-zinc-900 focus:bg-white transition font-body"
+            className="w-full pl-9 pr-4 py-2 text-xs bg-zinc-50 border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-950 focus:bg-white transition font-body"
           />
         </div>
 
-        <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl shrink-0">
+        <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-lg shrink-0">
           {(['all', 'active', 'draft'] as const).map(filter => (
             <motion.button
+              type="button"
               key={filter}
               whileHover={{ scale: 1.04 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => setStatusFilter(filter)}
-              className={`px-3 py-1 text-xs font-semibold rounded-lg capitalize transition cursor-pointer font-heading ${
+              className={`px-3 py-1 text-xs font-semibold rounded-md capitalize transition cursor-pointer font-heading ${
                 statusFilter === filter
-                  ? 'bg-white text-zinc-900 shadow-2xs font-bold'
+                  ? 'bg-white text-zinc-900 shadow-xs font-bold'
                   : 'text-zinc-500 hover:text-zinc-900'
               }`}
             >
@@ -144,7 +145,7 @@ export const BotList: React.FC<BotListProps> = ({
               key={bot.id}
               variants={cardVariants}
               whileHover={{ y: -3, transition: { duration: 0.15 } }}
-              className="bg-white border border-zinc-200/90 hover:border-zinc-900 rounded-2xl md:rounded-3xl p-5 shadow-2xs hover:shadow-md transition duration-200 flex flex-col justify-between group"
+              className="bg-white border border-zinc-200 hover:border-zinc-300 rounded-xl p-5 shadow-xs hover:shadow-md transition duration-200 flex flex-col justify-between group"
             >
               <div className="space-y-4">
                 {/* Header */}
@@ -152,13 +153,13 @@ export const BotList: React.FC<BotListProps> = ({
                   <div className="flex items-center gap-3">
                     <div
                       style={{ backgroundColor: bot.primaryColor || '#09090b' }}
-                      className="w-11 h-11 rounded-xl text-xl flex items-center justify-center text-white shadow-2xs shrink-0 font-bold"
+                      className="w-11 h-11 rounded-lg text-xl flex items-center justify-center text-white shadow-xs shrink-0 font-bold"
                     >
                       {bot.avatar || '🤖'}
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <h3 className="text-xs sm:text-sm font-extrabold text-zinc-900 group-hover:text-black transition truncate max-w-[140px] font-heading">
+                        <h3 className="text-sm font-semibold text-zinc-900 group-hover:text-black transition truncate max-w-[140px] font-heading">
                           {bot.name}
                         </h3>
                         <Badge
@@ -180,10 +181,11 @@ export const BotList: React.FC<BotListProps> = ({
                   </div>
 
                   <motion.button
+                    type="button"
                     whileHover={{ scale: 1.1, rotate: 15 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => onEditBot(bot)}
-                    className="p-1.5 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-xl transition cursor-pointer"
+                    className="p-1.5 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition cursor-pointer"
                     title="Bot Settings"
                     aria-label={`Configure settings for ${bot.name}`}
                   >
@@ -196,7 +198,7 @@ export const BotList: React.FC<BotListProps> = ({
                 </p>
 
                 {/* Specs Box */}
-                <div className="grid grid-cols-2 gap-2 text-[11px] bg-zinc-50/80 p-3 rounded-xl border border-zinc-200/80">
+                <div className="grid grid-cols-2 gap-2 text-[11px] bg-zinc-50 p-3 rounded-lg border border-zinc-200">
                   <div>
                     <span className="text-zinc-400 block text-[10px] uppercase font-bold font-heading">Engine</span>
                     <span className="text-zinc-800 font-semibold font-body">{getModelDisplayName(bot.model)}</span>
@@ -233,10 +235,11 @@ export const BotList: React.FC<BotListProps> = ({
                 </MotionButton>
 
                 <motion.button
+                  type="button"
                   whileHover={{ scale: 1.08, y: -1 }}
                   whileTap={{ scale: 0.92 }}
                   onClick={() => onTrainBot(bot)}
-                  className="p-2 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 border border-zinc-200 rounded-xl transition cursor-pointer"
+                  className="p-2 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 border border-zinc-200 rounded-lg transition cursor-pointer"
                   title="Knowledge Base Documents"
                   aria-label={`Knowledge base documents for ${bot.name}`}
                 >
@@ -245,10 +248,11 @@ export const BotList: React.FC<BotListProps> = ({
 
                 {onDeleteBot && (
                   <motion.button
+                    type="button"
                     whileHover={{ scale: 1.08, y: -1 }}
                     whileTap={{ scale: 0.92 }}
                     onClick={() => setDeletingBot(bot)}
-                    className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 border border-red-100 rounded-xl transition cursor-pointer"
+                    className="p-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 border border-zinc-200 hover:border-rose-200 rounded-lg transition cursor-pointer"
                     title="Delete Chatbot"
                     aria-label={`Delete chatbot ${bot.name}`}
                   >

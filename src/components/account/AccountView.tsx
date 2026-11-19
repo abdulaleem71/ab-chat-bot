@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import { User, Mail, Shield, Key, Save, CheckCircle2, AlertCircle, RefreshCw, Sparkles, Lock, ExternalLink } from 'lucide-react';
 import { MotionButton } from '../common/MotionButton';
 
 export const AccountView: React.FC = () => {
-  const { user, refreshTenant } = useAuth();
+  const { user, refreshTenant, verifySession } = useAuth();
+  const { toast } = useToast();
   const [name, setName] = useState(user.displayName || '');
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl || '');
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
@@ -38,6 +40,9 @@ export const AccountView: React.FC = () => {
   const [showDisableModal, setShowDisableModal] = useState(false);
   const [mfaError, setMfaError] = useState('');
   const [mfaSuccess, setMfaSuccess] = useState('');
+  const [copiedBackupCodes, setCopiedBackupCodes] = useState(false);
+  const [resetEmailId, setResetEmailId] = useState<string | null>(null);
+  const [resetPasswordInput, setResetPasswordInput] = useState('');
 
   const handleStartMfaSetup = async () => {
     setMfaError('');
@@ -595,16 +600,18 @@ export const AccountView: React.FC = () => {
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(generatedBackupCodes.join('\n'));
-                  alert('Backup codes copied to clipboard!');
+                  setCopiedBackupCodes(true);
+                  toast.success('Copied', 'Backup codes copied to clipboard.');
+                  setTimeout(() => setCopiedBackupCodes(false), 2500);
                 }}
                 className="w-full sm:w-1/2 py-2.5 bg-zinc-100 text-zinc-800 rounded-xl text-xs font-bold hover:bg-zinc-200 transition cursor-pointer"
               >
-                Copy to Clipboard
+                {copiedBackupCodes ? 'Copied!' : 'Copy to Clipboard'}
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   setShowBackupCodesModal(false);
-                  window.location.reload();
+                  await verifySession();
                 }}
                 className="w-full sm:w-1/2 py-2.5 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition cursor-pointer"
               >
@@ -656,42 +663,83 @@ export const AccountView: React.FC = () => {
                   <span className="text-[10px] text-zinc-400">{new Date(em.created_at).toLocaleString()}</span>
                 </div>
                 {em.token && (
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={async () => {
-                        const endpoint = em.type === 'verification' ? '/api/auth/verify-email' : '/api/auth/reset-password';
-                        if (em.type === 'verification') {
-                          const res = await fetch(endpoint, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            credentials: 'include',
-                            body: JSON.stringify({ token: em.token }),
-                          });
-                          const data = await res.json();
-                          if (data.success) {
-                            alert('Email verified successfully!');
-                            window.location.reload();
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {em.type !== 'verification' && resetEmailId === em.id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="password"
+                          placeholder="New password (min 6)"
+                          value={resetPasswordInput}
+                          onChange={(e) => setResetPasswordInput(e.target.value)}
+                          className="px-2.5 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-hidden focus:border-zinc-900"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (resetPasswordInput.trim().length < 6) {
+                              toast.error('Invalid Password', 'Password must be at least 6 characters.');
+                              return;
+                            }
+                            const res = await fetch('/api/auth/reset-password', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              credentials: 'include',
+                              body: JSON.stringify({ resetToken: em.token, newPassword: resetPasswordInput }),
+                            });
+                            const data = await res.json();
+                            if (data.success) {
+                              toast.success('Password Reset', data.message || 'Password updated.');
+                              setResetEmailId(null);
+                              setResetPasswordInput('');
+                            } else {
+                              toast.error('Reset Failed', data.error || 'Could not reset password.');
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition cursor-pointer"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetEmailId(null);
+                            setResetPasswordInput('');
+                          }}
+                          className="px-2.5 py-1.5 bg-zinc-200 text-zinc-700 rounded-xl text-xs font-bold hover:bg-zinc-300 transition cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (em.type === 'verification') {
+                            const res = await fetch('/api/auth/verify-email', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              credentials: 'include',
+                              body: JSON.stringify({ token: em.token }),
+                            });
+                            const data = await res.json();
+                            if (data.success) {
+                              toast.success('Verified', 'Email verified successfully!');
+                              await refreshTenant();
+                              await verifySession();
+                            } else {
+                              toast.error('Verification Failed', data.error || 'Verification failed');
+                            }
                           } else {
-                            alert(data.error || 'Verification failed');
+                            setResetEmailId(em.id);
+                            setResetPasswordInput('');
                           }
-                        } else {
-                          const newPwd = prompt('Enter new password for password reset test (min 6 chars):');
-                          if (!newPwd) return;
-                          const res = await fetch(endpoint, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            credentials: 'include',
-                            body: JSON.stringify({ resetToken: em.token, newPassword: newPwd }),
-                          });
-                          const data = await res.json();
-                          alert(data.message || data.error);
-                        }
-                      }}
-                      className="px-3 py-1.5 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition cursor-pointer flex items-center gap-1.5"
-                    >
-                      <span>Simulate Action</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </button>
+                        }}
+                        className="px-3 py-1.5 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <span>Simulate Action</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

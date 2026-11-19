@@ -49,7 +49,7 @@ const getInitialBotFormData = (bot?: Partial<Chatbot> | null): Partial<Chatbot> 
     avatar: bot?.avatar || '🤖',
     greetingMessage: bot?.greetingMessage || '👋 Hi there! How can I help you today?',
     suggestedQuestions: bot?.suggestedQuestions || ['How do I reset my password?', 'What are your support hours?'],
-    model: bot?.model || 'gemini-3.7-flash',
+    model: bot?.model || GEMINI_CONFIG.flash.id,
     fallbackMessage: bot?.fallbackMessage || "I don't have information on that yet. Let me connect you with a live specialist.",
     collectLeadEmail: bot?.collectLeadEmail ?? true,
     leadTitle: bot?.leadTitle || 'Leave your email to stay connected',
@@ -194,9 +194,11 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
     setFormData({ ...formData, allowedDomains: current.filter(d => d !== domainToRemove) });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleSubmit = async (e?: React.FormEvent | React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     setErrorMessage(null);
 
     const botName = formData.name?.trim();
@@ -373,7 +375,17 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
 
             {/* Modal Body: 2-Column Side-by-Side on Desktop */}
             <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
-              <form onSubmit={handleSubmit} className="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1 lg:max-w-[58%] xl:max-w-[60%] border-r-0 lg:border-r border-zinc-200 flex flex-col justify-between">
+              <form
+                noValidate
+                action="#"
+                method="dialog"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleSubmit(e);
+                }}
+                className="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1 lg:max-w-[58%] xl:max-w-[60%] border-r-0 lg:border-r border-zinc-200 flex flex-col justify-between"
+              >
                 <div className="space-y-5 flex-1">
           {errorMessage && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs font-semibold flex items-center gap-2">
@@ -597,7 +609,7 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
               <div>
                 <label className="block text-xs font-bold text-zinc-800 mb-1 font-heading">AI Engine Model</label>
                 <select
-                  value={formData.model || 'gemini-3.7-flash'}
+                  value={formData.model || GEMINI_CONFIG.flash.id}
                   onChange={e => setFormData({ ...formData, model: e.target.value as BotModel })}
                   className="w-full px-3.5 py-2 text-xs border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black focus:border-black focus:outline-hidden font-medium bg-white"
                 >
@@ -1182,7 +1194,7 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                           </span>
                           <span className="inline-flex items-center gap-1 bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded-md font-medium">
                             <span>Model:</span>
-                            <strong className="text-zinc-900 font-mono">{ver.snapshot.model || 'gemini-3.7-flash'}</strong>
+                            <strong className="text-zinc-900 font-mono">{ver.snapshot.model || GEMINI_CONFIG.flash.id}</strong>
                           </span>
                           {ver.snapshot.allowedDomains && ver.snapshot.allowedDomains.length > 0 && (
                             <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-medium">
@@ -1263,13 +1275,18 @@ export const BotEditorModal: React.FC<BotEditorModalProps> = ({
                       Cancel
                     </MotionButton>
                     <MotionButton
-                      type="submit"
+                      type="button"
                       variant="primary"
                       size="md"
                       shimmer
                       disabled={isSubmitting}
                       isLoading={isSubmitting}
                       leftIcon={<Save className="w-4 h-4 text-white" />}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleSubmit(e);
+                      }}
                     >
                       {isSubmitting ? 'Saving Chatbot...' : (bot?.id ? 'Save Changes' : 'Create Chatbot')}
                     </MotionButton>

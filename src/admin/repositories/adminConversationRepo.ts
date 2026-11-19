@@ -1,4 +1,5 @@
 import { getDb } from '../../db/index';
+import { DEFAULT_MODEL_ID } from '../../config/models';
 import { AdminAuditRepo } from './adminAuditRepo';
 
 export interface AdminConversationItem {
@@ -273,7 +274,7 @@ export class AdminConversationRepo {
       chatbotName: String(row.chatbot_name || 'AI Assistant'),
       chatbotAvatar: String(row.chatbot_avatar || '🤖'),
       chatbotColor: String(row.chatbot_color || '#4F46E5'),
-      chatbotModel: String(row.chatbot_model || 'gemini-3.7-flash'),
+      chatbotModel: String(row.chatbot_model || DEFAULT_MODEL_ID),
       tenantId: String(row.tenant_id),
       tenantName: String(row.tenant_name || 'Workspace'),
       ownerEmail: String(row.owner_email || 'system'),
@@ -424,7 +425,7 @@ export class AdminConversationRepo {
       chatbotName: String(row.chatbot_name || 'AI Assistant'),
       chatbotAvatar: String(row.chatbot_avatar || '🤖'),
       chatbotColor: String(row.chatbot_color || '#4F46E5'),
-      chatbotModel: String(row.chatbot_model || 'gemini-3.7-flash'),
+      chatbotModel: String(row.chatbot_model || DEFAULT_MODEL_ID),
       tenantId: String(row.tenant_id),
       tenantName: String(row.tenant_name || 'Workspace'),
       ownerEmail: String(row.owner_email || 'system'),

@@ -64,6 +64,7 @@ export const ContentModerationView: React.FC = () => {
   const [newPattern, setNewPattern] = useState('');
   const [newCategory, setNewCategory] = useState('general');
   const [isAddingPattern, setIsAddingPattern] = useState(false);
+  const [confirmDeletePatternId, setConfirmDeletePatternId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -92,8 +93,9 @@ export const ContentModerationView: React.FC = () => {
   }, [fetchData]);
 
   const handleReviewItem = async (id: string, status: 'reviewed_ok' | 'action_taken' | 'dismissed', action?: 'disable_chatbot' | 'dismiss') => {
+    setError(null);
     if (!isSuperAdmin) {
-      alert('Only SuperAdministrators can perform content moderation interventions.');
+      setError('Only SuperAdministrators can perform content moderation interventions.');
       return;
     }
 
@@ -110,17 +112,18 @@ export const ContentModerationView: React.FC = () => {
         setTimeout(() => setSuccessMessage(null), 4000);
         fetchData();
       } else {
-        alert(data.error || 'Failed to update moderation item.');
+        setError(data.error || 'Failed to update moderation item.');
       }
     } catch (err: any) {
-      alert('Error updating moderation item: ' + err.message);
+      setError('Error updating moderation item: ' + err.message);
     }
   };
 
   const handleAddBlocklistPattern = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     if (!isSuperAdmin) {
-      alert('Only SuperAdministrators can modify the blocklist.');
+      setError('Only SuperAdministrators can modify the blocklist.');
       return;
     }
     if (!newPattern.trim()) return;
@@ -140,19 +143,20 @@ export const ContentModerationView: React.FC = () => {
         setTimeout(() => setSuccessMessage(null), 4000);
         fetchData();
       } else {
-        alert(data.error || 'Failed to add pattern.');
+        setError(data.error || 'Failed to add pattern.');
       }
     } catch (err: any) {
-      alert('Error adding pattern: ' + err.message);
+      setError('Error adding pattern: ' + err.message);
     }
   };
 
   const handleDeleteBlocklistPattern = async (id: string) => {
+    setError(null);
     if (!isSuperAdmin) {
-      alert('Only SuperAdministrators can modify the blocklist.');
+      setError('Only SuperAdministrators can modify the blocklist.');
       return;
     }
-    if (!confirm('Are you sure you want to remove this pattern from the blocklist?')) return;
+    setConfirmDeletePatternId(null);
 
     try {
       const res = await fetch('/api/admin/moderation/blocklist', {
@@ -167,10 +171,10 @@ export const ContentModerationView: React.FC = () => {
         setTimeout(() => setSuccessMessage(null), 4000);
         fetchData();
       } else {
-        alert(data.error || 'Failed to delete pattern.');
+        setError(data.error || 'Failed to delete pattern.');
       }
     } catch (err: any) {
-      alert('Error deleting pattern: ' + err.message);
+      setError('Error deleting pattern: ' + err.message);
     }
   };
 
@@ -502,13 +506,33 @@ export const ContentModerationView: React.FC = () => {
                     </div>
                     <div className="col-span-1 text-right">
                       {isSuperAdmin && (
-                        <button
-                          onClick={() => handleDeleteBlocklistPattern(b.id)}
-                          className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition cursor-pointer"
-                          title="Delete pattern"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        confirmDeletePatternId === b.id ? (
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteBlocklistPattern(b.id)}
+                              className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeletePatternId(null)}
+                              className="px-1.5 py-1 bg-zinc-200 hover:bg-zinc-300 text-zinc-700 rounded text-[10px] font-bold cursor-pointer"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeletePatternId(b.id)}
+                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition cursor-pointer"
+                            title="Delete pattern"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )
                       )}
                     </div>
                   </div>

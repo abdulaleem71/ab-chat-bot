@@ -1,9 +1,17 @@
 import crypto from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';
+let warnedMissingEncryptionKey = false;
 
 function getMasterKey(): Buffer {
-  const rawKey = process.env.ENCRYPTION_KEY || 'default-fallback-insecure-encryption-key-for-dev-32bytes';
+  const rawKey = process.env.ENCRYPTION_KEY?.trim();
+  if (!rawKey) {
+    if (!warnedMissingEncryptionKey && process.env.NODE_ENV === 'production') {
+      warnedMissingEncryptionKey = true;
+      console.warn('⚠️ [SECURITY WARNING] ENCRYPTION_KEY env var is not set in production. Set a strong 32+ char ENCRYPTION_KEY for secret encryption.');
+    }
+    return crypto.createHash('sha256').update('default-fallback-insecure-encryption-key-for-dev-32bytes').digest();
+  }
   return crypto.createHash('sha256').update(rawKey).digest();
 }
 

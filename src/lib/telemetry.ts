@@ -4,6 +4,8 @@
  * to prevent silent failures in the dashboard.
  */
 
+import { DEFAULT_MODEL_ID } from '../config/models';
+
 export interface TelemetryAlert {
   id: string;
   timestamp: string;
@@ -74,7 +76,7 @@ class TelemetryLogger {
       title: 'Gemini API Call Failed',
       message: errorMessage,
       details: {
-        model: context?.model || 'gemini-3.7-flash',
+        model: context?.model || DEFAULT_MODEL_ID,
         botId: context?.botId,
         promptSnippet: context?.promptSnippet ? `${context.promptSnippet.substring(0, 120)}...` : undefined,
         ...context?.details,

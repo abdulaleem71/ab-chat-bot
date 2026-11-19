@@ -6,6 +6,7 @@ export type ButtonVariant = 'primary' | 'secondary' | 'destructive' | 'ghost' | 
 export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'icon-sm' | 'icon-md' | 'icon-lg';
 
 export interface ButtonProps extends Omit<HTMLMotionProps<'button'>, 'size'> {
+  type?: 'button' | 'submit' | 'reset';
   variant?: ButtonVariant;
   size?: ButtonSize;
   isLoading?: boolean;
@@ -22,6 +23,7 @@ export interface ButtonProps extends Omit<HTMLMotionProps<'button'>, 'size'> {
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   (
     {
+      type = 'button',
       variant = 'primary',
       size = 'md',
       isLoading = false,
@@ -102,6 +104,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <motion.button
         ref={ref}
+        type={type}
         disabled={disabled || isLoading}
         onClick={handleButtonClick}
         whileHover={

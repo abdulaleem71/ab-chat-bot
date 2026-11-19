@@ -1,6 +1,7 @@
 import { createClient, Client } from '@libsql/client';
 import fs from 'fs';
 import path from 'path';
+import bcrypt from 'bcryptjs';
 
 let dbClient: Client | null = null;
 
@@ -169,7 +170,7 @@ export async function initDb(): Promise<void> {
         avatar TEXT NOT NULL DEFAULT '🤖',
         greeting_message TEXT NOT NULL,
         suggested_questions_json TEXT NOT NULL DEFAULT '[]',
-        model TEXT NOT NULL DEFAULT 'gemini-3.7-flash',
+        model TEXT NOT NULL DEFAULT 'gemini-4-hydrogen',
         fallback_message TEXT NOT NULL,
         collect_lead_email INTEGER NOT NULL DEFAULT 1,
         lead_title TEXT,
@@ -684,6 +685,96 @@ export async function initDb(): Promise<void> {
       );
     `);
 
+    // Create Persistent Invoices Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS invoices (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        invoice_number TEXT NOT NULL,
+        billing_period TEXT NOT NULL,
+        description TEXT NOT NULL,
+        amount_cents INTEGER NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        status TEXT NOT NULL DEFAULT 'paid',
+        payment_method_summary TEXT,
+        stripe_invoice_id TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Newsletter Subscribers Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        source TEXT DEFAULT 'footer',
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    // Create Enterprise Sales Inquiries Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS sales_inquiries (
+        id TEXT PRIMARY KEY,
+        reference_id TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        company TEXT,
+        team_size TEXT,
+        message_volume TEXT,
+        requirements_json TEXT,
+        notes TEXT,
+        status TEXT NOT NULL DEFAULT 'new',
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    // Create Persistent Invoices Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS invoices (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        invoice_number TEXT NOT NULL,
+        billing_period TEXT NOT NULL,
+        description TEXT NOT NULL,
+        amount_cents INTEGER NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        status TEXT NOT NULL DEFAULT 'paid',
+        payment_method_summary TEXT,
+        stripe_invoice_id TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create Newsletter Subscribers Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        source TEXT DEFAULT 'footer',
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    // Create Enterprise Sales Inquiries Table
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS sales_inquiries (
+        id TEXT PRIMARY KEY,
+        reference_id TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        company TEXT,
+        team_size TEXT,
+        message_volume TEXT,
+        requirements_json TEXT,
+        notes TEXT,
+        status TEXT NOT NULL DEFAULT 'new',
+        created_at TEXT NOT NULL
+      );
+    `);
+
     // Create Performance Indexes
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_chatbots_tenant ON chatbots(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_ks_bot ON knowledge_sources(chatbot_id);`);
@@ -832,6 +923,11 @@ export async function initDb(): Promise<void> {
       // Column already exists
     }
     try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN subscription_status TEXT DEFAULT 'trialing';`);
+    } catch {
+      // Column already exists
+    }
+    try {
       await client.execute(`ALTER TABLE tenants ADD COLUMN payment_method_on_file INTEGER DEFAULT 0;`);
     } catch {
       // Column already exists
@@ -851,6 +947,17 @@ export async function initDb(): Promise<void> {
     } catch {
       // Column already exists
     }
+
+    // Ensure all tenants have subscription_status, trial_started_at, and trial_ends_at populated
+    try {
+      await client.execute(`UPDATE tenants SET subscription_status = 'trialing' WHERE subscription_status IS NULL;`);
+    } catch {}
+    try {
+      await client.execute(`UPDATE tenants SET trial_started_at = created_at WHERE trial_started_at IS NULL;`);
+    } catch {}
+    try {
+      await client.execute(`UPDATE tenants SET trial_ends_at = datetime(created_at, '+3 days') WHERE trial_ends_at IS NULL;`);
+    } catch {}
 
     // Column Migration for tenant billing interventions & dunning telemetry
     try {
@@ -913,15 +1020,27 @@ export async function initDb(): Promise<void> {
       // Column already exists
     }
 
-    // Model migration for any legacy gemini-3.6-flash entries
+    // Billing cycle & Stripe column migrations on tenants
     try {
-      await client.execute(`UPDATE chatbots SET model = 'gemini-3.7-flash' WHERE model = 'gemini-3.6-flash' OR model IS NULL;`);
+      await client.execute(`ALTER TABLE tenants ADD COLUMN billing_cycle TEXT DEFAULT 'annual';`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN stripe_customer_id TEXT;`);
+    } catch {}
+    try {
+      await client.execute(`ALTER TABLE tenants ADD COLUMN stripe_subscription_id TEXT;`);
+    } catch {}
+
+    // Model migration for legacy model identifiers -> gemini-4-hydrogen
+    try {
+      await client.execute(`UPDATE chatbots SET model = 'gemini-4-hydrogen' WHERE model IN ('gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-pro') OR model IS NULL;`);
     } catch {
       // Ignore if table not yet migrated
     }
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_conv_tenant ON conversations(tenant_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);`);
     await client.execute(`CREATE INDEX IF NOT EXISTS idx_leads_tenant ON leads(tenant_id);`);
+    await client.execute(`CREATE INDEX IF NOT EXISTS idx_invoices_tenant ON invoices(tenant_id, created_at DESC);`);
 
     // Seed Default Tenant & Demo User & Bot & Commerce Data if Database is empty
     await seedInitialData(client);
@@ -976,22 +1095,24 @@ async function seedInitialData(db: Client) {
     const botId = 'bot_acme_support';
 
     // Seed Tenant
+    const trialEnds = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
     await db.execute({
-      sql: `INSERT INTO tenants (id, name, owner_email, plan, created_at) VALUES (?, ?, ?, ?, ?);`,
-      args: [tenantId, 'Acme Workspace', 'alex@acmesaas.io', 'Pro', now],
+      sql: `INSERT INTO tenants (id, name, owner_email, plan, created_at, trial_started_at, trial_ends_at, subscription_status, payment_method_on_file) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: [tenantId, 'Acme Workspace', 'alex@acmesaas.io', 'Pro', now, now, trialEnds, 'trialing', 0],
     });
 
-    // Seed User
+    // Seed User with secure bcrypt hash
+    const demoPasswordHash = bcrypt.hashSync('password', 10);
     await db.execute({
       sql: `INSERT INTO users (id, email, password_hash, name, tenant_id, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?);`,
-      args: [userId, 'alex@acmesaas.io', 'password', 'Alex Rivera', tenantId, 'owner', now],
+      args: [userId, 'alex@acmesaas.io', demoPasswordHash, 'Alex Rivera', tenantId, 'owner', now],
     });
 
-    // Seed Agent User
+    // Seed Agent User with secure bcrypt hash
     const agentUserId = 'usr_elena_agent';
     await db.execute({
       sql: `INSERT INTO users (id, email, password_hash, name, tenant_id, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?);`,
-      args: [agentUserId, 'elena@acmesaas.io', 'password', 'Elena Rostova', tenantId, 'agent', now],
+      args: [agentUserId, 'elena@acmesaas.io', demoPasswordHash, 'Elena Rostova', tenantId, 'agent', now],
     });
 
     // Seed Org Members
@@ -1044,10 +1165,17 @@ async function seedInitialData(db: Client) {
         'You are the primary AI customer support assistant for Acme SaaS Corp. Answer questions politely, accurately, and concisely using the provided knowledge base.',
         'Friendly', '#4F46E5', '#FFFFFF', '🤖',
         '👋 Hi there! I am Acme AI Concierge. How can I assist you with your workspace today?',
-        suggestedQuestions, 'gemini-3.7-flash',
+        suggestedQuestions, 'gemini-4-hydrogen',
         "I'm sorry, I don't have information on that specific topic yet. Would you like me to connect you with a live human support specialist?",
         1, 'Get personalized help from our team', 1, 'active', now, now
       ],
+    });
+
+    // Seed Initial Demo Trial Invoice Record
+    await db.execute({
+      sql: `INSERT INTO invoices (id, tenant_id, invoice_number, billing_period, description, amount_cents, currency, status, payment_method_summary, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      args: ['inv_demo_1', tenantId, 'INV-DEMO-001', '3-Day Free Trial', 'NomadsChat Pro Plan (3-Day Trial)', 0, 'USD', 'trial', 'No card required during trial', now],
     });
 
     // Seed Knowledge Sources

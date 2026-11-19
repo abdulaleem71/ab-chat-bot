@@ -85,6 +85,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
         </p>
         {onCreateBot && (
           <button
+            type="button"
             onClick={onCreateBot}
             className="px-4 py-2 bg-zinc-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer"
           >
@@ -195,6 +196,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
               <h2 className="text-xs font-bold text-zinc-900 leading-none">{activeBot.name} Sandbox</h2>
               {onOpenEmbedModal && (
                 <button
+                  type="button"
                   onClick={() => onOpenEmbedModal(activeBot)}
                   className="text-[10px] text-zinc-500 hover:text-zinc-900 flex items-center gap-0.5"
                   title="Open Embed Widget"
@@ -217,6 +219,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
 
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={handleClear}
             className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-zinc-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
             title="Reset Chat Session"
@@ -312,6 +315,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({
           {activeBot.suggestedQuestions.map((q, qIdx) => (
             <button
               key={qIdx}
+              type="button"
               disabled={isStreaming}
               onClick={() => handleSend(q)}
               className="px-2.5 py-1 rounded-full border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-600 text-[11px] whitespace-nowrap transition disabled:opacity-50 shrink-0 cursor-pointer"

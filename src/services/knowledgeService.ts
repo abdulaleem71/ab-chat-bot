@@ -7,7 +7,7 @@ import { GoogleGenAI } from '@google/genai';
 
 export class KnowledgeService {
   /**
-   * Computes 768-dimensional vector embeddings for text chunks using Gemini text-embedding-004
+   * Computes vector embeddings for text chunks using Gemini gemini-embedding-2
    */
   static async computeChunkEmbeddings(chunks: string[]): Promise<(number[] | null)[]> {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -29,7 +29,7 @@ export class KnowledgeService {
         chunks.map(async (chunk) => {
           try {
             const res = await ai.models.embedContent({
-              model: 'text-embedding-004',
+              model: 'gemini-embedding-2',
               contents: chunk.trim().slice(0, 8000),
             });
             const emb = res.embeddings;

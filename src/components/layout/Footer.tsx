@@ -14,54 +14,87 @@ import {
   Github,
   Twitter,
   Linkedin,
+  AlertCircle,
 } from 'lucide-react';
 
 interface FooterProps {
   onNavigateTab?: (tab: string) => void;
   onOpenCreateBot?: () => void;
+  onOpenAuthModal?: () => void;
   onOpenAdminPortal?: () => void;
   onOpenAdminAuth?: () => void;
 }
 
+const PUBLIC_TABS = new Set(['landing', 'features', 'pricing', 'faq', 'help', 'security', 'status']);
+
 export const Footer: React.FC<FooterProps> = ({
   onNavigateTab,
   onOpenCreateBot,
+  onOpenAuthModal,
   onOpenAdminPortal,
   onOpenAdminAuth,
 }) => {
-  const { user, isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [email, setEmail] = useState('');
   const [subscribed, setSubscribed] = useState(false);
+  const [isSubscribing, setIsSubscribing] = useState(false);
+  const [subscribeError, setSubscribeError] = useState('');
   const [legalModalType, setLegalModalType] = useState<'privacy' | 'terms' | 'gdpr' | null>(null);
 
   const handleAdminClick = () => {
-    const role = String(user?.role || '').toLowerCase();
-    if (isAuthenticated && (role === 'owner' || role === 'admin' || role === 'super_admin')) {
-      onOpenAdminPortal?.();
+    if (onOpenAdminPortal) {
+      onOpenAdminPortal();
+    } else if (onOpenAdminAuth) {
+      onOpenAdminAuth();
     } else {
-      onOpenAdminAuth?.();
+      window.location.hash = 'admin';
     }
   };
 
-  const handleSubscribe = (e: React.FormEvent) => {
+  const handleLinkClick = (tab: string) => {
+    if (!isAuthenticated && !PUBLIC_TABS.has(tab)) {
+      onOpenAuthModal?.();
+      return;
+    }
+    onNavigateTab?.(tab);
+  };
+
+  const handleSubscribe = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email.trim()) {
+    const trimmed = email.trim();
+    if (!trimmed) return;
+    setIsSubscribing(true);
+    setSubscribeError('');
+    try {
+      const res = await fetch('/api/newsletter/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed, source: 'footer' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Could not subscribe at this moment.');
+      }
       setSubscribed(true);
       setEmail('');
+    } catch (err: any) {
+      setSubscribeError(err.message || 'Subscription failed.');
+    } finally {
+      setIsSubscribing(false);
     }
   };
 
   return (
-    <footer className="bg-black text-white border-t border-zinc-800 mt-16 pt-12 pb-8 px-6 md:px-12 w-full font-sans">
+    <footer className="bg-black text-white border-t border-zinc-800 mt-12 pt-12 pb-8 px-6 md:px-12 w-full font-sans shrink-0">
       <div className="max-w-7xl mx-auto space-y-12">
         {/* Top Callout Banner */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 md:p-8 flex flex-col lg:flex-row items-center justify-between gap-6 shadow-xl">
           <div className="space-y-1 text-center lg:text-left">
-            <div className="inline-flex items-center gap-2 bg-black border border-zinc-700 text-white px-3 py-1 rounded-full text-xs font-bold shadow-xs">
+            <div className="inline-flex items-center gap-2 bg-black border border-zinc-700 text-white px-3 py-1 rounded-lg text-xs font-bold shadow-xs">
               <Sparkles className="w-3.5 h-3.5 text-white" />
               <span>Instant NomadsArc AI Deployment</span>
             </div>
-            <h3 className="text-xl md:text-2xl font-extrabold text-white tracking-tight">
+            <h3 className="text-xl md:text-2xl font-extrabold text-white tracking-tight font-heading">
               Ready to automate customer support with NomadsChat?
             </h3>
             <p className="text-xs text-zinc-400 font-medium max-w-xl">
@@ -69,27 +102,23 @@ export const Footer: React.FC<FooterProps> = ({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
-            {onOpenCreateBot && (
-              <button
-                type="button"
-                onClick={onOpenCreateBot}
-                className="bg-white hover:bg-zinc-100 text-black text-xs font-extrabold px-6 py-3 rounded-xl shadow-lg transition duration-200 flex items-center gap-2 active:scale-95 cursor-pointer"
-              >
-                <Bot className="w-4 h-4 text-black" />
-                <span>Create New Chatbot</span>
-              </button>
-            )}
-            {onNavigateTab && (
-              <button
-                type="button"
-                onClick={() => onNavigateTab('knowledge')}
-                className="bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold px-5 py-3 rounded-xl border border-zinc-700 transition duration-200 flex items-center gap-2 cursor-pointer"
-              >
-                <FileText className="w-4 h-4 text-white" />
-                <span>AI Training Center</span>
-              </button>
-            )}
+          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => (isAuthenticated ? onOpenCreateBot?.() : onOpenAuthModal?.())}
+              className="bg-white hover:bg-zinc-100 text-black text-xs font-extrabold px-6 py-3 rounded-xl shadow-lg transition duration-200 flex items-center gap-2 active:scale-95 cursor-pointer"
+            >
+              <Bot className="w-4 h-4 text-black" />
+              <span>{isAuthenticated ? 'Create New Chatbot' : 'Start Free 3-Day Trial'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleLinkClick(isAuthenticated ? 'knowledge' : 'pricing')}
+              className="bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold px-5 py-3 rounded-xl border border-zinc-700 transition duration-200 flex items-center gap-2 cursor-pointer"
+            >
+              <FileText className="w-4 h-4 text-white" />
+              <span>{isAuthenticated ? 'AI Training Center' : 'View Pricing'}</span>
+            </button>
           </div>
         </div>
 
@@ -99,16 +128,16 @@ export const Footer: React.FC<FooterProps> = ({
           <div className="lg:col-span-2 space-y-4">
             <NomadsLogo showText textClassName="text-xl font-extrabold text-white tracking-tight" />
             <p className="text-xs text-zinc-400 font-medium leading-relaxed max-w-sm">
-              NomadsChat is the enterprise-grade AI customer support platform built on NomadsArc AI architecture. Deliver grounded, hallucination-free support across all web channels 24/7.
+              NomadsChat is the enterprise AI customer support platform built on NomadsArc architecture. Deliver grounded support across web channels 24/7.
             </p>
             <div className="flex items-center gap-3 pt-2 flex-wrap">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-bold text-white">
-                <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] font-bold text-white">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                 NomadsArc Engine Active
               </span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-bold text-zinc-300">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] font-bold text-zinc-300">
                 <ShieldCheck className="w-3.5 h-3.5 text-white" />
-                SOC2 Certified
+                AES-256 &amp; TLS 1.3
               </span>
             </div>
 
@@ -169,26 +198,26 @@ export const Footer: React.FC<FooterProps> = ({
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigateTab?.('overview')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
+                  onClick={() => handleLinkClick(isAuthenticated ? 'overview' : 'landing')}
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
-                  Dashboard Overview
+                  {isAuthenticated ? 'Dashboard Overview' : 'Product Overview'}
                 </button>
               </li>
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigateTab?.('chatbots')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
+                  onClick={() => handleLinkClick('chatbots')}
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
-                  Bot Manager &amp; Custom Colors
+                  Bot Manager &amp; Themes
                 </button>
               </li>
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigateTab?.('knowledge')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
+                  onClick={() => handleLinkClick('knowledge')}
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
                   AI Training Center (RAG)
                 </button>
@@ -196,8 +225,8 @@ export const Footer: React.FC<FooterProps> = ({
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigateTab?.('inbox')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
+                  onClick={() => handleLinkClick('inbox')}
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
                   Live Inbox &amp; Human Takeover
                 </button>
@@ -205,8 +234,8 @@ export const Footer: React.FC<FooterProps> = ({
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigateTab?.('playground')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
+                  onClick={() => handleLinkClick('playground')}
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
                   Interactive Playground
                 </button>
@@ -214,8 +243,8 @@ export const Footer: React.FC<FooterProps> = ({
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigateTab?.('embed')}
-                  className="hover:text-white transition flex items-center gap-1.5 cursor-pointer text-left"
+                  onClick={() => handleLinkClick('embed')}
+                  className="hover:text-white transition cursor-pointer text-left"
                 >
                   Embed Widget Code Guide
                 </button>
@@ -257,7 +286,7 @@ export const Footer: React.FC<FooterProps> = ({
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigateTab?.('integrations')}
+                  onClick={() => handleLinkClick('integrations')}
                   className="hover:text-white transition cursor-pointer text-left"
                 >
                   Integrations Marketplace
@@ -266,7 +295,7 @@ export const Footer: React.FC<FooterProps> = ({
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigateTab?.('team')}
+                  onClick={() => handleLinkClick('team')}
                   className="hover:text-white transition cursor-pointer text-left"
                 >
                   Team &amp; Role Management
@@ -296,10 +325,12 @@ export const Footer: React.FC<FooterProps> = ({
           {/* Newsletter Subscription */}
           <div className="space-y-3">
             <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">Stay Updated</h4>
-            <p className="text-xs text-zinc-400 font-medium">Get the latest AI support techniques and NomadsArc grounding updates.</p>
+            <p className="text-xs text-zinc-400 font-medium">
+              Get product releases and NomadsArc grounding updates.
+            </p>
             {subscribed ? (
               <div className="bg-zinc-900 border border-zinc-800 p-3 rounded-xl text-xs text-white font-bold flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-white" />
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>Subscribed successfully!</span>
               </div>
             ) : (
@@ -312,11 +343,18 @@ export const Footer: React.FC<FooterProps> = ({
                   required
                   className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-hidden focus:border-white font-medium"
                 />
+                {subscribeError && (
+                  <p className="text-[11px] text-rose-400 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{subscribeError}</span>
+                  </p>
+                )}
                 <button
                   type="submit"
-                  className="w-full bg-white hover:bg-zinc-100 text-black text-xs font-extrabold py-2.5 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                  disabled={isSubscribing}
+                  className="w-full bg-white hover:bg-zinc-100 text-black text-xs font-extrabold py-2.5 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-60"
                 >
-                  <span>Subscribe</span>
+                  <span>{isSubscribing ? 'Subscribing...' : 'Subscribe'}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </form>
@@ -326,9 +364,19 @@ export const Footer: React.FC<FooterProps> = ({
 
         {/* Bottom Copyright Bar */}
         <div className="border-t border-zinc-900 pt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-zinc-500 font-medium">
-          <p>© 2026 NomadsChat. Powered by <a href="https://nomadsarc.io" target="_blank" rel="noopener noreferrer" className="hover:underline font-extrabold text-white inline-flex items-center gap-1">NomadsArc <ExternalLink className="w-3 h-3" /></a>. All rights reserved.</p>
+          <p>
+            © {new Date().getFullYear()} NomadsChat. Powered by{' '}
+            <a
+              href="https://nomadsarc.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:underline font-extrabold text-white inline-flex items-center gap-1"
+            >
+              NomadsArc <ExternalLink className="w-3 h-3" />
+            </a>
+            . All rights reserved.
+          </p>
           <div className="flex items-center gap-4 sm:gap-6 text-zinc-400 flex-wrap justify-center md:justify-end">
-            <a href="https://nomadsarc.io" target="_blank" rel="noopener noreferrer" className="hover:text-white transition">NomadsArc Platform</a>
             <button
               type="button"
               onClick={() => setLegalModalType('privacy')}
@@ -386,7 +434,6 @@ export const Footer: React.FC<FooterProps> = ({
             </button>
           </div>
         </div>
-
       </div>
 
       {legalModalType && (

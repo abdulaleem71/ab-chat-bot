@@ -1,4 +1,5 @@
 import { getDb } from '../db';
+import { DEFAULT_MODEL_ID } from '../config/models';
 import { Chatbot, ChatbotVersion, ChatbotVersionSnapshot } from '../types';
 import { ChatbotRepo } from './chatbotRepo';
 
@@ -19,7 +20,7 @@ export class ChatbotVersionRepo {
       avatar: bot.avatar || '🤖',
       greetingMessage: bot.greetingMessage || '',
       suggestedQuestions: Array.isArray(bot.suggestedQuestions) ? bot.suggestedQuestions : [],
-      model: bot.model || 'gemini-3.7-flash',
+      model: bot.model || DEFAULT_MODEL_ID,
       fallbackMessage: bot.fallbackMessage || '',
       collectLeadEmail: bot.collectLeadEmail !== false,
       leadTitle: bot.leadTitle || '',

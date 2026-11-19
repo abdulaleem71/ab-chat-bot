@@ -54,6 +54,7 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
   const [statusNotes, setStatusNotes] = useState<string>('');
   const [isUpdatingStatus, setIsUpdatingStatus] = useState<boolean>(false);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+  const [confirmBlockToggle, setConfirmBlockToggle] = useState<boolean>(false);
 
   const fetchDomainDetail = async () => {
     if (!domain) return;
@@ -143,16 +144,17 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
         fetchDomainDetail();
         onRefreshList();
       } else {
-        alert(json.error || 'Failed to update domain status.');
+        setError(json.error || 'Failed to update domain status.');
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to update domain status.');
+      setError(err.message || 'Failed to update domain status.');
     } finally {
       setIsUpdatingStatus(false);
     }
   };
 
   const handleToggleWhitelist = async (isWhitelisted: boolean) => {
+    setError(null);
     try {
       const res = await fetch(`/api/admin/domains/${encodeURIComponent(domain)}/whitelist`, {
         method: 'POST',
@@ -168,17 +170,21 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
         setTimeout(() => setActionSuccessMsg(null), 3500);
         fetchDomainDetail();
         onRefreshList();
+      } else {
+        setError(json.error || 'Failed to update whitelist status.');
       }
     } catch (err: any) {
-      alert(err.message);
+      setError(err.message || 'Failed to update whitelist status.');
     }
   };
 
   const handleToggleBlock = async (isBlocked: boolean) => {
-    const confirmMsg = isBlocked
-      ? `Are you sure you want to BLOCK '${domain}'? This will immediately prevent all chatbots from rendering or responding on this domain.`
-      : `Unblock '${domain}'?`;
-    if (!confirm(confirmMsg)) return;
+    if (!confirmBlockToggle) {
+      setConfirmBlockToggle(true);
+      return;
+    }
+    setConfirmBlockToggle(false);
+    setError(null);
 
     try {
       const res = await fetch(`/api/admin/domains/${encodeURIComponent(domain)}/block`, {
@@ -195,9 +201,11 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
         setTimeout(() => setActionSuccessMsg(null), 3500);
         fetchDomainDetail();
         onRefreshList();
+      } else {
+        setError(json.error || 'Failed to update block status.');
       }
     } catch (err: any) {
-      alert(err.message);
+      setError(err.message || 'Failed to update block status.');
     }
   };
 
@@ -266,11 +274,22 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
           </div>
         </div>
 
-        {/* Action Success Alert Banner */}
+        {/* Action Success / Error Alert Banners */}
         {actionSuccessMsg && (
           <div className="bg-emerald-950/90 border-b border-emerald-800 text-emerald-300 text-xs px-6 py-2.5 flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>{actionSuccessMsg}</span>
+          </div>
+        )}
+        {error && (
+          <div className="bg-rose-950/90 border-b border-rose-800 text-rose-300 text-xs px-6 py-2.5 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{error}</span>
+            </div>
+            <button type="button" onClick={() => setError(null)} className="text-rose-400 hover:text-white">
+              &times;
+            </button>
           </div>
         )}
 
@@ -355,8 +374,26 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
                         </button>
                       )}
 
-                      {detail.domainInfo.isBlocked ? (
+                      {confirmBlockToggle ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleBlock(!detail.domainInfo.isBlocked)}
+                            className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold transition cursor-pointer"
+                          >
+                            {detail.domainInfo.isBlocked ? 'Confirm Unblock' : 'Confirm Block'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmBlockToggle(false)}
+                            className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : detail.domainInfo.isBlocked ? (
                         <button
+                          type="button"
                           onClick={() => handleToggleBlock(false)}
                           className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-emerald-400 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
                         >
@@ -365,6 +402,7 @@ export const DomainDetailModal: React.FC<DomainDetailModalProps> = ({
                         </button>
                       ) : (
                         <button
+                          type="button"
                           onClick={() => handleToggleBlock(true)}
                           className="px-3 py-1.5 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
                         >

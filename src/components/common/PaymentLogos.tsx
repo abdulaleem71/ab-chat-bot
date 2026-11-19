@@ -150,3 +150,13 @@ export const DiscoverLogo: React.FC<{ className?: string }> = ({ className = "h-
     </text>
   </svg>
 );
+
+// Official Shop Pay Logo SVG
+export const ShopPayLogo: React.FC<{ className?: string }> = ({ className = "h-5" }) => (
+  <svg viewBox="0 0 100 32" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="32" rx="6" fill="#5A31F4" />
+    <text x="50%" y="55%" dominantBaseline="middle" textAnchor="middle" fontFamily="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" fontWeight="800" fontSize="16" fill="#FFFFFF">
+      Shop Pay
+    </text>
+  </svg>
+);

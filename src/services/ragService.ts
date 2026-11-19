@@ -34,7 +34,7 @@ const GREETINGS = new Set(['hi', 'hello', 'hey', 'greetings', 'good morning', 'g
 
 export class RagService {
   /**
-   * Computes embedding vector for a query using Gemini text-embedding-004 model (768 dimensions)
+   * Computes embedding vector for a query using Gemini gemini-embedding-2 model
    */
   static async computeQueryEmbedding(query: string): Promise<number[] | null> {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -51,7 +51,7 @@ export class RagService {
       });
 
       const res = await ai.models.embedContent({
-        model: 'text-embedding-004',
+        model: 'gemini-embedding-2',
         contents: query.trim().slice(0, 8000),
       });
 
@@ -70,7 +70,7 @@ export class RagService {
   }
 
   /**
-   * Retrieves top relevant knowledge chunks using Gemini text-embedding-004 and Cosine Similarity (> 0.65 threshold).
+   * Retrieves top relevant knowledge chunks using Gemini gemini-embedding-2 and Cosine Similarity (> 0.65 threshold).
    */
   static async retrieveRelevantContext(
     chatbotId: string,
@@ -128,7 +128,7 @@ export class RagService {
       };
     }
 
-    // Compute Query Vector Embedding using text-embedding-004
+    // Compute Query Vector Embedding using gemini-embedding-2
     const queryEmbedding = await this.computeQueryEmbedding(query);
 
     // Score Chunks using Vector Cosine Similarity

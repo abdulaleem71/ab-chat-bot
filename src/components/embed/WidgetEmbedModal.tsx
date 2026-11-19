@@ -32,6 +32,7 @@ import {
 import { SecurityService } from '../../services/securityService';
 import { MotionButton } from '../common/MotionButton';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { GEMINI_CONFIG } from '../../config/models';
 import { EmbedChatWidget } from './EmbedChatWidget';
 
 interface WidgetEmbedModalProps {
@@ -146,7 +147,7 @@ export const WidgetEmbedModal: React.FC<WidgetEmbedModalProps> = ({
     avatar: safeBotAvatar,
     greetingMessage: bot?.greetingMessage || 'Hello! How can I help you today?',
     suggestedQuestions: bot?.suggestedQuestions || ['How do I track my order?', 'What is your refund policy?'],
-    model: bot?.model || 'gemini-3.7-flash',
+    model: bot?.model || GEMINI_CONFIG.flash.id,
     fallbackMessage: bot?.fallbackMessage || "I'm sorry, I don't have an answer for that.",
     collectLeadEmail: bot?.collectLeadEmail ?? true,
     leadTitle: bot?.leadTitle || 'Leave your email to stay connected',
@@ -566,7 +567,7 @@ export default function RootLayout({ children }) {
                               {guide.logo}
                             </div>
                             {isSelected && (
-                              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                              <span className="w-2 h-2 rounded-full bg-amber-500" />
                             )}
                           </div>
 
@@ -690,7 +691,7 @@ export default function RootLayout({ children }) {
                       <p className="text-zinc-500">&lt;!-- 1. Open your website code editor --&gt;</p>
                       <p className="text-zinc-500">&lt;body&gt;</p>
                       <p className="text-zinc-500 pl-4">...</p>
-                      <div className="pl-4 py-1.5 my-1 bg-amber-500/10 border-l-2 border-amber-400 text-amber-300 rounded-r font-bold animate-pulse">
+                      <div className="pl-4 py-1.5 my-1 bg-amber-500/10 border-l-2 border-amber-400 text-amber-300 rounded-r font-bold">
                         &lt;!-- 2. Paste secure AI chatbot embed snippet right here --&gt;
                         <br />
                         <span className="text-[10px] text-amber-200 font-normal">{activeCmsGuide.microPreview.highlightArea}</span>

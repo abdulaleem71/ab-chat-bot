@@ -25,6 +25,7 @@ import {
   Code2,
 } from 'lucide-react';
 import { MotionButton } from '../../components/common/MotionButton';
+import { GEMINI_CONFIG } from '../../config/models';
 
 export const ChatbotDirectoryView: React.FC = () => {
   const { adminToken } = useAdminAuth();
@@ -200,9 +201,8 @@ export const ChatbotDirectoryView: React.FC = () => {
             className="px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs text-zinc-800 focus:outline-hidden focus:border-zinc-900 cursor-pointer font-mono"
           >
             <option value="all">All Models</option>
-            <option value="gemini-3.7-flash">gemini-3.7-flash</option>
-            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+            <option value={GEMINI_CONFIG.flash.id}>{GEMINI_CONFIG.flash.id}</option>
+            <option value={GEMINI_CONFIG.pro.id}>{GEMINI_CONFIG.pro.id}</option>
           </select>
 
           {/* Domain Lock Filter */}

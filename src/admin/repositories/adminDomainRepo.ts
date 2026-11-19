@@ -1,4 +1,5 @@
 import { getDb } from '../../db/index';
+import { DEFAULT_MODEL_ID } from '../../config/models';
 import { AdminAuditRepo } from './adminAuditRepo';
 
 export interface AdminDomainItem {
@@ -546,7 +547,7 @@ export class AdminDomainRepo {
           avatar: String(b.avatar || '🤖'),
           primaryColor: String(b.primary_color || '#4F46E5'),
           status: String(b.status || 'active'),
-          model: String(b.model || 'gemini-3.7-flash'),
+          model: String(b.model || DEFAULT_MODEL_ID),
           domainLockEnabled: Boolean(b.domain_lock_enabled),
           allowedDomains: allowedDomainsList,
           tenantId: String(b.tenant_id),

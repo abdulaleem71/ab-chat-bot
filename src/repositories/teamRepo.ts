@@ -102,6 +102,7 @@ export class TeamRepo {
       tenantId,
       email: cleanEmail,
       role,
+      token,
       invitedBy,
       invitedByName,
       status: 'pending',

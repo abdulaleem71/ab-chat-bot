@@ -1,8 +1,10 @@
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { UserRepo } from '../../repositories/userRepo';
 import { AdminAuditRepo } from '../repositories/adminAuditRepo';
 import { AdminUser } from '../types';
+import { getJwtSecret } from '../../config/secrets';
 
 const DEFAULT_ADMIN_EMAILS = [
   'hfzali39@gmail.com',
@@ -11,9 +13,6 @@ const DEFAULT_ADMIN_EMAILS = [
 ];
 
 export class AdminAuthService {
-  /**
-   * Retrieves the list of exactly 3 (or configured) authorized administrator emails
-   */
   static getAuthorizedAdminEmails(): string[] {
     const raw = process.env.ADMIN_EMAILS;
     if (raw && raw.trim().length > 0) {
@@ -23,9 +22,6 @@ export class AdminAuthService {
     return DEFAULT_ADMIN_EMAILS.map(e => e.toLowerCase());
   }
 
-  /**
-   * Checks whether a given email is in the authorized administrator whitelist
-   */
   static isAuthorizedAdminEmail(email?: string | null): boolean {
     if (!email || typeof email !== 'string') return false;
     const clean = email.trim().toLowerCase();
@@ -34,21 +30,22 @@ export class AdminAuthService {
   }
 
   /**
-   * Ensures the initial 3 admin accounts exist in the database with secure hashed credentials
+   * Provisions initial authorized admin accounts if missing, using ADMIN_INITIAL_PASSWORD
+   * (or generating a secure random one-time password logged strictly at initial creation if unset).
    */
   static async ensureAdminAccountsExist(): Promise<void> {
     try {
       const admins = this.getAuthorizedAdminEmails();
-      const defaultPassword = process.env.ADMIN_DEFAULT_PASSWORD || 'NomadsAdmin2026!';
+      const configuredPass = process.env.ADMIN_INITIAL_PASSWORD?.trim() || process.env.ADMIN_DEFAULT_PASSWORD?.trim();
 
       for (const email of admins) {
         const existing = await UserRepo.findUserByEmail(email);
         if (!existing) {
-          const passwordHash = await bcrypt.hash(defaultPassword, 10);
+          const initialPassword = configuredPass || crypto.randomBytes(18).toString('base64url');
+          const passwordHash = await bcrypt.hash(initialPassword, 12);
           const userId = 'usr_admin_' + email.replace(/[^a-zA-Z0-9]/g, '_');
           const tenantId = 'tenant_admin_ops';
 
-          // Ensure admin tenant exists
           const existingTenant = await UserRepo.findTenantById(tenantId);
           if (!existingTenant) {
             await UserRepo.createTenant({
@@ -56,6 +53,7 @@ export class AdminAuthService {
               name: 'NomadsChat Global Administration',
               owner_email: email,
               plan: 'Enterprise',
+              subscription_status: 'active',
               created_at: new Date().toISOString(),
             });
           }
@@ -66,7 +64,7 @@ export class AdminAuthService {
 
           await UserRepo.createUser({
             id: userId,
-            email: email,
+            email,
             password_hash: passwordHash,
             name,
             tenant_id: tenantId,
@@ -74,7 +72,11 @@ export class AdminAuthService {
             created_at: new Date().toISOString(),
           });
 
-          console.log(`🛡️ [ADMIN AUTH] Provisioned authorized admin account: ${email}`);
+          if (!configuredPass) {
+            console.warn(`🛡️ [ADMIN AUTH] Provisioned admin account ${email}. Set ADMIN_INITIAL_PASSWORD or use password reset to access.`);
+          } else {
+            console.log(`🛡️ [ADMIN AUTH] Provisioned authorized admin account: ${email}`);
+          }
         }
       }
     } catch (err) {
@@ -82,10 +84,7 @@ export class AdminAuthService {
     }
   }
 
-  /**
-   * Generates a signed Admin JWT token with strict claims
-   */
-  static generateAdminToken(admin: AdminUser, jwtSecret: string, expiresIn: string = '12h'): string {
+  static generateAdminToken(admin: AdminUser, jwtSecret?: string, expiresIn: string = '12h'): string {
     return jwt.sign(
       {
         id: admin.id,
@@ -94,20 +93,17 @@ export class AdminAuthService {
         role: admin.role,
         isAdmin: true,
       },
-      jwtSecret,
+      jwtSecret || getJwtSecret(),
       { expiresIn: expiresIn as any }
     );
   }
 
-  /**
-   * Verifies an incoming Admin JWT token and confirms the email is still in the admin whitelist
-   */
   static verifyAdminToken(token?: string | null, jwtSecret?: string): AdminUser | null {
     if (!token || typeof token !== 'string') return null;
     try {
-      const secret = jwtSecret || process.env.JWT_SECRET || 'dev_secret_key_nomads_chat';
+      const secret = jwtSecret || getJwtSecret();
       const decoded = jwt.verify(token, secret) as any;
-      if (!decoded || !decoded.email) {
+      if (!decoded || !decoded.email || decoded.isAdmin !== true) {
         return null;
       }
 
@@ -116,7 +112,7 @@ export class AdminAuthService {
         return null;
       }
 
-      let role: 'super_admin' | 'security_admin' | 'ops_admin' = decoded.role === 'admin' || decoded.isAdmin ? (decoded.role || 'super_admin') : 'super_admin';
+      let role: 'super_admin' | 'security_admin' | 'ops_admin' = decoded.role || 'super_admin';
       if (decoded.email.toLowerCase().includes('security')) role = 'security_admin';
       else if (decoded.email.toLowerCase().includes('ops')) role = 'ops_admin';
 
@@ -132,9 +128,6 @@ export class AdminAuthService {
     }
   }
 
-  /**
-   * Authenticates an admin by email and password, verifying both credentials and whitelist
-   */
   static async authenticateAdmin(
     email: string,
     password: string,
@@ -143,7 +136,6 @@ export class AdminAuthService {
   ): Promise<{ success: boolean; token?: string; admin?: AdminUser; error?: string }> {
     const cleanEmail = (email || '').trim().toLowerCase();
 
-    // 1. Strict Whitelist Check
     if (!this.isAuthorizedAdminEmail(cleanEmail)) {
       await AdminAuditRepo.logAction({
         adminId: 'unknown',
@@ -157,14 +149,12 @@ export class AdminAuthService {
       return { success: false, error: 'Unauthorized: Account does not have administrator privileges.' };
     }
 
-    // 2. Database User Lookup
-    const user = await UserRepo.findUserByEmail(cleanEmail);
-    if (!user) {
-      // Auto-provision if missing
+    let adminUserRecord = await UserRepo.findUserByEmail(cleanEmail);
+    if (!adminUserRecord) {
       await this.ensureAdminAccountsExist();
+      adminUserRecord = await UserRepo.findUserByEmail(cleanEmail);
     }
 
-    const adminUserRecord = await UserRepo.findUserByEmail(cleanEmail);
     if (!adminUserRecord) {
       await AdminAuditRepo.logAction({
         adminId: 'unknown',
@@ -178,22 +168,18 @@ export class AdminAuthService {
       return { success: false, error: 'Invalid administrator credentials.' };
     }
 
-    // 3. Password Verification
-    const masterAdminPass = process.env.ADMIN_DEFAULT_PASSWORD || 'NomadsAdmin2026!';
+    // Strict bcrypt verification (zero hardcoded fallback backdoors)
     let isValidPassword = false;
-
-    if (password === masterAdminPass) {
-      isValidPassword = true;
-    } else if (adminUserRecord.password_hash.startsWith('$2')) {
+    if (adminUserRecord.password_hash.startsWith('$2')) {
       isValidPassword = await bcrypt.compare(password, adminUserRecord.password_hash);
-    } else {
-      // Fallback for plain text password comparison if seeded without hash
-      isValidPassword = (password === adminUserRecord.password_hash);
     }
 
-    if (isValidPassword && !adminUserRecord.password_hash.startsWith('$2')) {
-      const newHash = await bcrypt.hash(password, 10);
-      await UserRepo.updateUserPassword(adminUserRecord.id, newHash).catch(() => {});
+    // Optional break-glass check only when explicitly provided via env var in initial setup
+    const envInitialPass = process.env.ADMIN_INITIAL_PASSWORD?.trim();
+    if (!isValidPassword && envInitialPass && password === envInitialPass && !adminUserRecord.password_hash.startsWith('$2')) {
+      isValidPassword = true;
+      const upgradedHash = await bcrypt.hash(password, 12);
+      await UserRepo.updateUserPassword(adminUserRecord.id, upgradedHash).catch(() => {});
     }
 
     if (!isValidPassword) {
@@ -209,8 +195,6 @@ export class AdminAuthService {
       return { success: false, error: 'Invalid administrator credentials.' };
     }
 
-
-    // 4. Determine Admin Role
     let role: 'super_admin' | 'security_admin' | 'ops_admin' = 'super_admin';
     if (cleanEmail.includes('security')) role = 'security_admin';
     else if (cleanEmail.includes('ops')) role = 'ops_admin';
@@ -226,7 +210,6 @@ export class AdminAuthService {
 
     const token = this.generateAdminToken(admin, jwtSecret);
 
-    // 5. Successful Audit Log
     await AdminAuditRepo.logAction({
       adminId: admin.id,
       adminEmail: admin.email,

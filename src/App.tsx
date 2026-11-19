@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { Navbar } from './components/layout/Navbar';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
+import { PublicLandingView } from './components/public/PublicLandingView';
 import { OverviewDashboard } from './components/dashboard/OverviewDashboard';
 import { BotList } from './components/chatbots/BotList';
 import { BotEditorModal } from './components/chatbots/BotEditorModal';
@@ -30,7 +30,8 @@ import { TrialBanner } from './components/layout/TrialBanner';
 import { ExpiredTrialModal } from './components/pricing/ExpiredTrialModal';
 import { AdminAuthModal } from './components/admin/AdminAuthModal';
 import { AdminPortalView } from './components/admin/AdminPortalView';
-import { CheckoutModal } from './components/pricing/CheckoutModal';
+import { ShopifyCheckoutModal } from './components/pricing/ShopifyCheckoutModal';
+import { ContactSalesModal } from './components/pricing/ContactSalesModal';
 import { AdminApp } from './admin/AdminApp';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { ToastProvider, useToast } from './context/ToastContext';
@@ -40,18 +41,22 @@ import { WorkspaceGuard } from './components/common/WorkspaceGuard';
 import { ThreadChatSkeleton } from './components/common/SkeletonLoader';
 import { getAccessibleTextColor } from './lib/colorUtils';
 import { Chatbot, KnowledgeSource, Conversation, Message, SupportTicket, VisitorLead, GroundingSource, AnalyticsSummary, TenantPlan } from './types';
-import { MessageSquare, X, AlertCircle, Loader2, Code } from 'lucide-react';
+import { MessageSquare, X, AlertCircle, Code } from 'lucide-react';
+
+const PUBLIC_VIEWS = new Set(['landing', 'features', 'pricing', 'faq', 'help', 'status', 'security']);
 
 function DashboardContent() {
-  const { isAuthenticated, tenant, switchPlan } = useAuth();
+  const { isAuthenticated, isLoading: isAuthLoading, tenant, startDemoSession } = useAuth();
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab');
       if (tabParam) return tabParam;
+      const hash = window.location.hash.replace(/^#/, '');
+      if (hash && PUBLIC_VIEWS.has(hash)) return hash;
     }
-    return 'overview';
+    return 'landing';
   });
   const [chatbots, setChatbots] = useState<Chatbot[]>([]);
   const [selectedBot, setSelectedBot] = useState<Chatbot | null>(null);
@@ -125,11 +130,43 @@ function DashboardContent() {
   const [embedModalBot, setEmbedModalBot] = useState<Chatbot | null>(null);
   const [isFloatingWidgetOpen, setIsFloatingWidgetOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signin');
+  const [isStartingDemo, setIsStartingDemo] = useState(false);
+  const [analyticsRange, setAnalyticsRange] = useState<'today' | '7d' | '30d' | 'all'>('7d');
   const [isAdminAuthModalOpen, setIsAdminAuthModalOpen] = useState(false);
   const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isExpiredTrialModalOpen, setIsExpiredTrialModalOpen] = useState(false);
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+  const [isContactSalesOpen, setIsContactSalesOpen] = useState(false);
+
+  const openAuthModal = (mode: 'signin' | 'signup' = 'signin') => {
+    setAuthModalMode(mode);
+    setIsAuthModalOpen(true);
+  };
+
+  const handleLaunchDemo = async () => {
+    setIsStartingDemo(true);
+    try {
+      await startDemoSession();
+      handleTabChange('overview');
+      showToast('Interactive Demo Workspace ready!', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Unable to launch demo workspace.', 'error');
+    } finally {
+      setIsStartingDemo(false);
+    }
+  };
+
+  // Redirect between public landing & workspace overview on auth change
+  useEffect(() => {
+    if (isAuthLoading) return;
+    if (isAuthenticated && activeTab === 'landing') {
+      handleTabChange('overview');
+    } else if (!isAuthenticated && !PUBLIC_VIEWS.has(activeTab)) {
+      setActiveTab('landing');
+    }
+  }, [isAuthenticated, isAuthLoading]);
   const [checkoutTargetPlan, setCheckoutTargetPlan] = useState<{
     id: TenantPlan;
     name: string;
@@ -366,7 +403,7 @@ function DashboardContent() {
       return;
     }
     setIsLoadingAnalytics(true);
-    fetchApi('/api/analytics')
+    fetchApi(`/api/analytics?range=${analyticsRange}`)
       .then(res => res.json())
       .then(data => {
         if (data.success && data.analytics) {
@@ -375,7 +412,7 @@ function DashboardContent() {
       })
       .catch(err => console.log('Error fetching analytics:', err))
       .finally(() => setIsLoadingAnalytics(false));
-  }, [isAuthenticated, activeTab]);
+  }, [isAuthenticated, activeTab, analyticsRange]);
 
   // Close open protected drawers/modals on logout
   useEffect(() => {
@@ -406,6 +443,10 @@ function DashboardContent() {
   };
 
   const handleSaveBot = async (formData: Partial<Chatbot>) => {
+    if (!isAuthenticated) {
+      setIsAuthModalOpen(true);
+      throw new Error('Please sign in to create or edit chatbots.');
+    }
     if (editingBot && editingBot.id) {
       try {
         const res = await fetchApi(`/api/chatbots/${editingBot.id}`, {
@@ -709,48 +750,45 @@ function DashboardContent() {
   const unreadCount = conversations.filter(c => c.unreadByAgent).length;
 
   const defaultAnalytics: AnalyticsSummary = analytics || {
-    totalConversations: conversations.length > 0 ? conversations.length : 8,
-    leadsCaptured: leads.length > 0 ? leads.length : 4,
-    aiResolutionRate: 100,
-    avgResponseTimeSec: 3.3,
-    csatScore: 0.0,
+    totalConversations: conversations.length,
+    leadsCaptured: leads.length,
+    aiResolutionRate: conversations.length > 0 ? 100 : 0,
+    avgResponseTimeSec: 0,
+    csatScore: 0,
     totalMessages: Object.values(messages).flat().length,
     humanTakeovers: conversations.filter(c => c.status === 'human_takeover').length,
     topTopics: [],
-    dailyTrends: [
-      { date: 'Aug 15', conversations: 4, leads: 2 },
-      { date: 'Aug 16', conversations: 6, leads: 3 },
-      { date: 'Aug 17', conversations: 8, leads: 4 },
-      { date: 'Aug 18', conversations: 5, leads: 2 },
-      { date: 'Aug 19', conversations: 9, leads: 5 },
-      { date: 'Aug 20', conversations: 7, leads: 3 },
-      { date: 'Aug 21', conversations: 8, leads: 4 },
-    ],
+    dailyTrends: [],
   };
 
   return (
     <div className="min-h-screen bg-dot-grid text-zinc-900 font-sans flex flex-col antialiased selection:bg-zinc-900 selection:text-white">
-      {/* Persistent 3-Day Growth Pro Trial Banner */}
-      <TrialBanner
-        onOpenUpgrade={() => {
-          setCheckoutTargetPlan({
-            id: 'Pro',
-            name: 'Growth Pro',
-            monthlyPrice: 49,
-            annualPrice: 39,
-          });
-          setIsCheckoutModalOpen(true);
-        }}
-      />
+      {/* Persistent 3-Day Pro Trial Banner (Authenticated workspace only) */}
+      {isAuthenticated && (
+        <TrialBanner
+          onOpenUpgrade={() => {
+            setCheckoutTargetPlan({
+              id: 'Pro',
+              name: 'NomadsChat Pro',
+              monthlyPrice: 49,
+              annualPrice: 39,
+            });
+            setIsCheckoutModalOpen(true);
+          }}
+        />
+      )}
 
-      {/* Persistent 56px Sticky Top Bar */}
+      {/* Persistent Sticky Top Bar */}
       <Header
         chatbots={chatbots}
         selectedBot={activeBot}
         onSelectBot={handleSelectBot}
         onCreateBot={handleCreateBot}
         onOpenEmbedModal={() => handleOpenEmbedModal()}
-        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onOpenAuthModal={() => openAuthModal('signin')}
+        onOpenSignupModal={() => openAuthModal('signup')}
+        onStartDemo={handleLaunchDemo}
+        isStartingDemo={isStartingDemo}
         activeTab={activeTab}
         setActiveTab={handleTabChange}
         onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -807,7 +845,8 @@ function DashboardContent() {
         )}
 
         {/* Dynamic Main Workspace Container */}
-        <main className={`flex-1 p-4 sm:p-6 lg:p-7 overflow-y-auto max-w-7xl mx-auto w-full ${!isAuthenticated ? 'min-h-[calc(100vh-14rem)]' : ''}`}>
+        <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+          <main className={`flex-1 p-4 sm:p-6 lg:p-7 max-w-7xl mx-auto w-full ${!isAuthenticated ? 'min-h-[calc(100vh-14rem)]' : ''}`}>
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
@@ -817,13 +856,25 @@ function DashboardContent() {
               transition={{ duration: 0.18, ease: 'easeOut' }}
             >
               <ErrorBoundary fallbackTitle="View Unavailable" fallbackMessage="This section encountered an issue rendering. You can switch to other views or reload.">
-                {activeTab === 'overview' && (
+                {activeTab === 'landing' && !isAuthenticated && (
+                  <PublicLandingView
+                    onOpenSignup={() => openAuthModal('signup')}
+                    onOpenSignIn={() => openAuthModal('signin')}
+                    onTryDemo={handleLaunchDemo}
+                    onNavigate={handleTabChange}
+                    isDemoLoading={isStartingDemo}
+                  />
+                )}
+
+                {(activeTab === 'overview' || (activeTab === 'landing' && isAuthenticated)) && (
                   <OverviewDashboard
                     analytics={defaultAnalytics}
                     chatbots={chatbots}
                     leads={leads}
                     knowledgeCount={knowledgeSources.length}
                     isLoading={isLoadingAnalytics}
+                    dateRange={analyticsRange}
+                    onDateRangeChange={setAnalyticsRange}
                     onNavigate={handleTabChange}
                     onOpenCreateBotModal={handleCreateBot}
                     onOpenEmbedModal={handleOpenEmbedModal}
@@ -983,6 +1034,8 @@ function DashboardContent() {
                     chatbots={chatbots}
                     leads={leads}
                     knowledgeCount={knowledgeSources.length}
+                    dateRange={analyticsRange}
+                    onDateRangeChange={setAnalyticsRange}
                     onNavigate={handleTabChange}
                     onOpenCreateBotModal={handleCreateBot}
                     onOpenEmbedModal={handleOpenEmbedModal}
@@ -990,28 +1043,34 @@ function DashboardContent() {
                 )}
 
                 {activeTab === 'features' && (
-                  <FeaturesView onNavigateToTab={handleTabChange} />
+                  <FeaturesView onNavigateToTab={(tab) => {
+                    if (!isAuthenticated && !PUBLIC_VIEWS.has(tab)) {
+                      openAuthModal('signup');
+                      return;
+                    }
+                    handleTabChange(tab);
+                  }} />
                 )}
 
                 {activeTab === 'billing' && (
                   <BillingDashboardView
-                    onNavigateToPublicPricing={() => setActiveTab('pricing')}
-                    onNavigateToFaq={() => setActiveTab('faq')}
+                    onNavigateToPublicPricing={() => handleTabChange('pricing')}
+                    onNavigateToFaq={() => handleTabChange('faq')}
                     chatbotsCount={chatbots.length}
                   />
                 )}
 
                 {activeTab === 'pricing' && (
                   <PricingView
-                    onOpenAuthModal={() => setIsAuthModalOpen(true)}
-                    onNavigateToFaq={() => setActiveTab('faq')}
+                    onOpenAuthModal={() => openAuthModal('signup')}
+                    onNavigateToFaq={() => handleTabChange('faq')}
                   />
                 )}
 
                 {(activeTab === 'faq' || activeTab === 'help') && (
                   <FaqView onOpenTestChat={() => {
                     if (!isAuthenticated) {
-                      setIsAuthModalOpen(true);
+                      openAuthModal('signin');
                       return;
                     }
                     setIsFloatingWidgetOpen(true);
@@ -1021,15 +1080,17 @@ function DashboardContent() {
             </motion.div>
           </AnimatePresence>
         </main>
-      </div>
 
-      {/* Footer */}
-      <Footer
-        onNavigateTab={setActiveTab}
-        onOpenCreateBot={handleCreateBot}
-        onOpenAdminPortal={() => setIsAdminPortalOpen(true)}
-        onOpenAdminAuth={() => setIsAdminAuthModalOpen(true)}
-      />
+        {/* Footer */}
+        <Footer
+          onNavigateTab={handleTabChange}
+          onOpenCreateBot={handleCreateBot}
+          onOpenAuthModal={() => openAuthModal('signup')}
+          onOpenAdminPortal={() => { window.location.hash = 'admin'; }}
+          onOpenAdminAuth={() => { window.location.hash = 'admin'; }}
+        />
+      </div>
+    </div>
 
       {/* Floating Live Widget Test Launcher & Responsive Breakpoint Widget */}
       <AnimatePresence mode="wait">
@@ -1120,6 +1181,7 @@ function DashboardContent() {
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
+        initialMode={authModalMode}
       />
 
       <AdminAuthModal
@@ -1140,13 +1202,6 @@ function DashboardContent() {
           }
           setIsExpiredTrialModalOpen(false);
         }}
-        onStayOnFree={async () => {
-          if (tenant?.id) {
-            sessionStorage.setItem('dismissed_expired_trial_' + tenant.id, 'true');
-          }
-          await switchPlan('Free');
-          setIsExpiredTrialModalOpen(false);
-        }}
         onSelectUpgradeToPro={() => {
           if (tenant?.id) {
             sessionStorage.setItem('dismissed_expired_trial_' + tenant.id, 'true');
@@ -1154,21 +1209,30 @@ function DashboardContent() {
           setIsExpiredTrialModalOpen(false);
           setCheckoutTargetPlan({
             id: 'Pro',
-            name: 'Growth Pro',
+            name: 'NomadsChat Pro',
             monthlyPrice: 49,
             annualPrice: 39,
           });
           setIsCheckoutModalOpen(true);
         }}
+        onContactSales={() => {
+          setIsExpiredTrialModalOpen(false);
+          setIsContactSalesOpen(true);
+        }}
       />
 
-      <CheckoutModal
+      <ShopifyCheckoutModal
         isOpen={isCheckoutModalOpen}
         onClose={() => setIsCheckoutModalOpen(false)}
         planId={checkoutTargetPlan.id}
         planName={checkoutTargetPlan.name}
         monthlyPrice={checkoutTargetPlan.monthlyPrice}
         annualPrice={checkoutTargetPlan.annualPrice}
+      />
+
+      <ContactSalesModal
+        isOpen={isContactSalesOpen}
+        onClose={() => setIsContactSalesOpen(false)}
       />
 
       {/* Global Command Palette (Cmd+K) */}

@@ -1,4 +1,5 @@
 import { getDb } from '../../db/index';
+import { DEFAULT_MODEL_ID } from '../../config/models';
 
 export interface AnalyticsTimeRange {
   range: '24h' | '7d' | '30d' | '90d' | 'all';
@@ -396,7 +397,7 @@ export class AdminAnalyticsRepo {
     // 7. Model distribution
     const modelCountMap = new Map<string, { count: number; tokens: number }>();
     messages.forEach((m: any) => {
-      const model = m.chatbot_model || 'gemini-3.7-flash';
+      const model = m.chatbot_model || DEFAULT_MODEL_ID;
       const existing = modelCountMap.get(model) || { count: 0, tokens: 0 };
       existing.count += 1;
       existing.tokens += Math.max(100, Math.round((m.content?.length || 0) / 3.8));
@@ -404,7 +405,7 @@ export class AdminAnalyticsRepo {
     });
 
     if (modelCountMap.size === 0) {
-      modelCountMap.set('gemini-3.7-flash', { count: Math.max(totalMessages, 1), tokens: totalEstimatedTokens });
+      modelCountMap.set(DEFAULT_MODEL_ID, { count: Math.max(totalMessages, 1), tokens: totalEstimatedTokens });
     }
 
     const modelDistribution: ModelDistribution[] = Array.from(modelCountMap.entries()).map(([model, data]) => {
@@ -429,7 +430,7 @@ export class AdminAnalyticsRepo {
           name: c.chatbot_name || 'AI Assistant',
           avatar: c.chatbot_avatar || '🤖',
           color: c.chatbot_color || '#4F46E5',
-          model: c.chatbot_model || 'gemini-3.7-flash',
+          model: c.chatbot_model || DEFAULT_MODEL_ID,
           tenantName: c.tenant_name || 'Workspace',
           totalConversations: 0,
           totalMessages: 0,

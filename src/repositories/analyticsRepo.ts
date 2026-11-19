@@ -1,38 +1,57 @@
 import { getDb } from '../db/index';
 import { AnalyticsSummary } from '../types';
 
-const TOPIC_KEYWORDS: { topic: string; keywords: string[] }[] = [
-  { topic: 'SSO & SAML Setup', keywords: ['sso', 'saml', 'okta', 'azure ad', 'oidc', 'single sign'] },
-  { topic: 'API & Rate Limits', keywords: ['api', 'rate limit', 'rate-limit', 'endpoint'] },
-  { topic: 'Team & Invites', keywords: ['invite', 'team', 'member', 'permission', 'roles', 'add user'] },
-  { topic: 'Billing & Pricing', keywords: ['price', 'pricing', 'plan', 'billing', 'invoice', 'cost', 'upgrade', 'cancel', 'trial'] },
-  { topic: 'Security & Accounts', keywords: ['security', 'privacy', 'password', 'reset', 'login', '2fa', 'encrypt', 'data'] },
-  { topic: 'Integrations', keywords: ['integration', 'slack', 'zapier', 'webhook', 'embed', 'widget', 'chatbot'] },
+const TOPIC_KEYWORDS: { topic: string; category: string; keywords: string[] }[] = [
+  { topic: 'SSO & SAML Setup', category: 'Security & SSO', keywords: ['sso', 'saml', 'okta', 'azure ad', 'oidc', 'single sign'] },
+  { topic: 'API & Rate Limits', category: 'Developer API', keywords: ['api', 'rate limit', 'rate-limit', 'endpoint', 'token'] },
+  { topic: 'Team & Invites', category: 'Team & Access', keywords: ['invite', 'team', 'member', 'permission', 'roles', 'add user'] },
+  { topic: 'Billing & Pricing', category: 'Billing & Subscriptions', keywords: ['price', 'pricing', 'plan', 'billing', 'invoice', 'cost', 'upgrade', 'cancel', 'trial'] },
+  { topic: 'Security & Accounts', category: 'Account Security', keywords: ['security', 'privacy', 'password', 'reset', 'login', '2fa', 'encrypt', 'data'] },
+  { topic: 'Integrations & Embed', category: 'Integrations', keywords: ['integration', 'slack', 'zapier', 'webhook', 'embed', 'widget', 'chatbot'] },
 ];
+
+export type AnalyticsRange = 'today' | '7d' | '30d' | 'all';
 
 export class AnalyticsRepo {
   static async getSummaryForTenant(
     tenantId: string,
-    chatbotId?: string
+    chatbotId?: string,
+    range: AnalyticsRange = '7d'
   ): Promise<AnalyticsSummary> {
     const db = getDb();
+
+    let rangeSinceIso: string | null = null;
+    if (range === 'today') {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      rangeSinceIso = start.toISOString();
+    } else if (range === '7d') {
+      rangeSinceIso = new Date(Date.now() - 7 * 86400000).toISOString();
+    } else if (range === '30d') {
+      rangeSinceIso = new Date(Date.now() - 30 * 86400000).toISOString();
+    }
 
     let convWhere = `WHERE tenant_id = ? AND (is_test = 0 OR is_test IS NULL)`;
     let leadWhere = `WHERE tenant_id = ?`;
     const params: any[] = [tenantId];
+    const leadParams: any[] = [tenantId];
 
     if (chatbotId) {
       convWhere += ` AND chatbot_id = ?`;
       leadWhere += ` AND chatbot_id = ?`;
       params.push(chatbotId);
+      leadParams.push(chatbotId);
     }
 
-    let msgWhere = `WHERE tenant_id = ? AND conversation_id IN (SELECT id FROM conversations WHERE tenant_id = ? AND (is_test = 0 OR is_test IS NULL))`;
-    const msgParams: any[] = [tenantId, tenantId];
-    if (chatbotId) {
-      msgWhere += ` AND chatbot_id = ?`;
-      msgParams.push(chatbotId);
+    if (rangeSinceIso) {
+      convWhere += ` AND created_at >= ?`;
+      leadWhere += ` AND captured_at >= ?`;
+      params.push(rangeSinceIso);
+      leadParams.push(rangeSinceIso);
     }
+
+    const msgWhere = `WHERE tenant_id = ? AND conversation_id IN (SELECT id FROM conversations ${convWhere})`;
+    const msgParams: any[] = [tenantId, ...params];
 
     // Total Conversations
     const convRes = await db.execute({
@@ -51,16 +70,37 @@ export class AnalyticsRepo {
     // Leads Captured
     const leadRes = await db.execute({
       sql: `SELECT COUNT(*) as total FROM leads ${leadWhere};`,
-      args: params,
+      args: leadParams,
     });
     const leadsCaptured = Number(leadRes.rows[0]?.total || 0);
 
-    // CSAT Score Avg
+    // Real CSAT Score Avg (0 when no ratings exist)
     const csatRes = await db.execute({
       sql: `SELECT AVG(csat_rating) as avg_csat FROM conversations ${convWhere} AND csat_rating IS NOT NULL;`,
       args: params,
     });
-    const avgCsat = csatRes.rows[0]?.avg_csat != null ? Number(csatRes.rows[0].avg_csat) : 4.8;
+    const avgCsat = csatRes.rows[0]?.avg_csat != null ? Number(csatRes.rows[0].avg_csat) : 0;
+
+    // Real CSAT Distribution
+    const csatDistRes = await db.execute({
+      sql: `SELECT csat_rating, COUNT(*) as cnt FROM conversations ${convWhere} AND csat_rating IS NOT NULL GROUP BY csat_rating;`,
+      args: params,
+    });
+    const starCounts = new Map<number, number>([[5, 0], [4, 0], [3, 0], [2, 0], [1, 0]]);
+    let totalRatings = 0;
+    for (const r of csatDistRes.rows) {
+      const stars = Math.round(Number(r.csat_rating));
+      const cnt = Number(r.cnt || 0);
+      if (starCounts.has(stars)) {
+        starCounts.set(stars, (starCounts.get(stars) || 0) + cnt);
+        totalRatings += cnt;
+      }
+    }
+    const csatDistribution = [5, 4, 3, 2, 1].map((stars) => {
+      const count = starCounts.get(stars) || 0;
+      const percentage = totalRatings > 0 ? Math.round((count / totalRatings) * 100) : 0;
+      return { stars, count, percentage };
+    });
 
     // Human Takeovers / Escalations
     const takeoverRes = await db.execute({
@@ -71,40 +111,13 @@ export class AnalyticsRepo {
 
     const aiResolutionRate = totalConversations > 0
       ? Math.round(((totalConversations - humanTakeovers) / totalConversations) * 1000) / 10
-      : 94.2;
+      : 0;
 
-    // Tools Usage aggregation
-    const toolsMap = new Map<string, number>();
-    const convRowsWithTools = await db.execute({
-      sql: `SELECT tools_invoked_json FROM conversations ${convWhere} AND tools_invoked_json IS NOT NULL;`,
-      args: params,
-    });
+    const humanTakeoverRate = totalConversations > 0
+      ? Math.round((humanTakeovers / totalConversations) * 1000) / 10
+      : 0;
 
-    for (const r of convRowsWithTools.rows) {
-      try {
-        if (r.tools_invoked_json) {
-          const list: string[] = JSON.parse(String(r.tools_invoked_json));
-          if (Array.isArray(list)) {
-            list.forEach(t => toolsMap.set(t, (toolsMap.get(t) || 0) + 1));
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    const toolsUsage = Array.from(toolsMap.entries())
-      .map(([tool, count]) => ({ tool, count }))
-      .sort((a, b) => b.count - a.count);
-
-    if (toolsUsage.length === 0) {
-      toolsUsage.push(
-        { tool: 'create_ticket', count: 12 },
-        { tool: 'escalate_to_human', count: 4 }
-      );
-    }
-
-    // Average AI response time: time between a visitor message and the next bot/agent reply
+    // Average AI response time
     let avgResponseTimeSec = 0;
     const msgRows = await db.execute({
       sql: `SELECT conversation_id, sender, created_at FROM messages ${msgWhere} ORDER BY conversation_id ASC, created_at ASC;`,
@@ -134,49 +147,109 @@ export class AnalyticsRepo {
       }
     }
     if (responseCount > 0) {
-      avgResponseTimeSec = Math.round(totalResponseMs / responseCount / 100) / 10;
+      avgResponseTimeSec = Math.round((totalResponseMs / responseCount) / 100) / 10;
     }
 
-    // Top topics derived from actual visitor message content
+    // Top topics & real frequent questions derived from visitor messages
     const topTopics: { topic: string; count: number }[] = [];
     const visitorRows = await db.execute({
-      sql: `SELECT content FROM messages ${msgWhere} AND sender = 'visitor';`,
-      args: msgParams,
+      sql: `
+        SELECT m.content, c.status, c.resolved_by
+        FROM messages m
+        INNER JOIN conversations c ON m.conversation_id = c.id
+        WHERE m.tenant_id = ?
+          AND (c.is_test = 0 OR c.is_test IS NULL)
+          ${chatbotId ? 'AND m.chatbot_id = ?' : ''}
+          ${rangeSinceIso ? 'AND c.created_at >= ?' : ''}
+          AND m.sender = 'visitor'
+        ORDER BY m.created_at DESC
+        LIMIT 500;
+      `,
+      args: params,
     });
+
+    const questionClusterMap = new Map<string, {
+      question: string;
+      category: string;
+      count: number;
+      aiResolvedCount: number;
+    }>();
+
     if (visitorRows.rows.length > 0) {
       const topicCounts = new Map<string, number>();
       for (const row of visitorRows.rows) {
-        const content = String(row.content || '').toLowerCase();
-        for (const { topic, keywords } of TOPIC_KEYWORDS) {
+        const rawContent = String(row.content || '').trim();
+        if (!rawContent) continue;
+        const content = rawContent.toLowerCase();
+        let matchedCat = 'General Inquiry';
+
+        for (const { topic, category, keywords } of TOPIC_KEYWORDS) {
           if (keywords.some(kw => content.includes(kw))) {
             topicCounts.set(topic, (topicCounts.get(topic) || 0) + 1);
+            matchedCat = category;
+          }
+        }
+
+        // Cluster normalized questions
+        const normalizedKey = content.replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').slice(0, 65);
+        if (normalizedKey.length >= 6) {
+          const existing = questionClusterMap.get(normalizedKey);
+          const isAiHandled = String(row.status) !== 'human_takeover' && String(row.resolved_by) !== 'human';
+          if (existing) {
+            existing.count += 1;
+            if (isAiHandled) existing.aiResolvedCount += 1;
+          } else {
+            questionClusterMap.set(normalizedKey, {
+              question: rawContent.length > 90 ? rawContent.slice(0, 87) + '...' : rawContent,
+              category: matchedCat,
+              count: 1,
+              aiResolvedCount: isAiHandled ? 1 : 0,
+            });
           }
         }
       }
-      topTopics.push(...Array.from(topicCounts.entries())
-        .map(([topic, count]) => ({ topic, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5));
+
+      topTopics.push(
+        ...Array.from(topicCounts.entries())
+          .map(([topic, count]) => ({ topic, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5)
+      );
     }
 
-    // Generate Daily Trends for past 7 days based on real timestamps
+    const topQuestions = Array.from(questionClusterMap.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+      .map((item, index) => {
+        const resolutionRate = Math.round((item.aiResolvedCount / item.count) * 100);
+        return {
+          rank: index + 1,
+          question: item.question,
+          category: item.category,
+          count: item.count,
+          aiHandled: resolutionRate >= 50,
+          status: (resolutionRate >= 50 ? 'grounded' : 'fallback_escalated') as 'grounded' | 'fallback_escalated',
+          resolutionRate,
+        };
+      });
+
+    // Generate Daily Trends based on actual timestamps (7d for today/7d/all, 14d for 30d)
+    const numDays = range === '30d' ? 14 : 7;
     const dailyTrends: { date: string; conversations: number; leads: number }[] = [];
-    for (let i = 6; i >= 0; i--) {
+    for (let i = numDays - 1; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
       const displayLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-      // Daily conv count
       const dConvRes = await db.execute({
-        sql: `SELECT COUNT(*) as cnt FROM conversations ${convWhere} AND created_at LIKE ?;`,
-        args: [...params, `${dateStr}%`],
+        sql: `SELECT COUNT(*) as cnt FROM conversations WHERE tenant_id = ? AND (is_test = 0 OR is_test IS NULL) ${chatbotId ? 'AND chatbot_id = ?' : ''} AND created_at LIKE ?;`,
+        args: chatbotId ? [tenantId, chatbotId, `${dateStr}%`] : [tenantId, `${dateStr}%`],
       });
 
-      // Daily lead count
       const dLeadRes = await db.execute({
-        sql: `SELECT COUNT(*) as cnt FROM leads ${leadWhere} AND captured_at LIKE ?;`,
-        args: [...params, `${dateStr}%`],
+        sql: `SELECT COUNT(*) as cnt FROM leads WHERE tenant_id = ? ${chatbotId ? 'AND chatbot_id = ?' : ''} AND captured_at LIKE ?;`,
+        args: chatbotId ? [tenantId, chatbotId, `${dateStr}%`] : [tenantId, `${dateStr}%`],
       });
 
       dailyTrends.push({
@@ -185,68 +258,6 @@ export class AnalyticsRepo {
         leads: Number(dLeadRes.rows[0]?.cnt || 0),
       });
     }
-
-    const humanTakeoverRate = totalConversations > 0
-      ? Math.round((humanTakeovers / totalConversations) * 1000) / 10
-      : 15.5;
-
-    // CSAT Distribution calculation or defaults
-    const csatDistribution = [
-      { stars: 5, count: 124, percentage: 78 },
-      { stars: 4, count: 22, percentage: 14 },
-      { stars: 3, count: 8, percentage: 5 },
-      { stars: 2, count: 3, percentage: 2 },
-      { stars: 1, count: 2, percentage: 1 },
-    ];
-
-    // Default Top 5 Questions Table
-    const topQuestions = [
-      {
-        rank: 1,
-        question: 'How do I track or return an order?',
-        category: 'Orders & Shipping',
-        count: 142,
-        aiHandled: true,
-        status: 'grounded' as const,
-        resolutionRate: 98,
-      },
-      {
-        rank: 2,
-        question: 'What are your pricing plans & refund terms?',
-        category: 'Billing & Subscriptions',
-        count: 98,
-        aiHandled: true,
-        status: 'grounded' as const,
-        resolutionRate: 95,
-      },
-      {
-        rank: 3,
-        question: 'How do I set up SSO & SAML authentication?',
-        category: 'Security & SSO',
-        count: 64,
-        aiHandled: true,
-        status: 'grounded' as const,
-        resolutionRate: 92,
-      },
-      {
-        rank: 4,
-        question: 'Do you support custom API rate limits?',
-        category: 'Developer API',
-        count: 41,
-        aiHandled: false,
-        status: 'fallback_escalated' as const,
-        resolutionRate: 58,
-      },
-      {
-        rank: 5,
-        question: 'How can I connect to a live support agent?',
-        category: 'Human Escalation',
-        count: 35,
-        aiHandled: false,
-        status: 'fallback_escalated' as const,
-        resolutionRate: 100,
-      },
-    ];
 
     return {
       totalConversations,

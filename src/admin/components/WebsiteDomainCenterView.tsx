@@ -57,6 +57,7 @@ export const WebsiteDomainCenterView: React.FC = () => {
 
   // Fast diagnostic state per domain
   const [runningDiagDomain, setRunningDiagDomain] = useState<string | null>(null);
+  const [confirmBlockDomain, setConfirmBlockDomain] = useState<string | null>(null);
 
   const fetchDomains = useCallback(async () => {
     if (!adminToken) return;
@@ -168,11 +169,12 @@ export const WebsiteDomainCenterView: React.FC = () => {
   const handleToggleBlock = async (domain: string, currentBlocked: boolean, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!adminToken) return;
+    if (confirmBlockDomain !== domain) {
+      setConfirmBlockDomain(domain);
+      return;
+    }
+    setConfirmBlockDomain(null);
     const isBlocked = !currentBlocked;
-    const confirmMsg = isBlocked
-      ? `Are you sure you want to BLOCK '${domain}'? Chatbots will cease rendering on this origin.`
-      : `Unblock '${domain}'?`;
-    if (!confirm(confirmMsg)) return;
 
     try {
       const res = await fetch(`/api/admin/domains/${encodeURIComponent(domain)}/block`, {
@@ -186,9 +188,11 @@ export const WebsiteDomainCenterView: React.FC = () => {
       const json = await res.json();
       if (json.success) {
         fetchDomains();
+      } else {
+        setError(json.error || 'Failed to update domain block status');
       }
     } catch (err: any) {
-      alert(err.message);
+      setError(err.message || 'Failed to update domain block status');
     }
   };
 
@@ -473,16 +477,38 @@ export const WebsiteDomainCenterView: React.FC = () => {
                           <Activity className={`w-4 h-4 ${runningDiagDomain === dom.domain ? 'animate-spin text-zinc-950' : ''}`} />
                         </motion.button>
 
-                        <motion.button
-                          whileTap={{ scale: 0.94 }}
-                          onClick={(e) => handleToggleBlock(dom.domain, dom.isBlocked, e)}
-                          title={dom.isBlocked ? 'Unblock domain' : 'Block domain from embedding'}
-                          className={`p-1.5 hover:bg-zinc-100 border border-zinc-200 rounded-lg transition cursor-pointer ${
-                            dom.isBlocked ? 'text-rose-600 hover:text-emerald-600' : 'text-zinc-500 hover:text-rose-600'
-                          }`}
-                        >
-                          {dom.isBlocked ? <ShieldX className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
-                        </motion.button>
+                        {confirmBlockDomain === dom.domain ? (
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={(e) => handleToggleBlock(dom.domain, dom.isBlocked, e)}
+                              className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded-md cursor-pointer"
+                            >
+                              {dom.isBlocked ? 'Confirm Unblock' : 'Confirm Block'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmBlockDomain(null);
+                              }}
+                              className="px-1.5 py-1 bg-zinc-200 hover:bg-zinc-300 text-zinc-700 text-[10px] font-bold rounded-md cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <motion.button
+                            whileTap={{ scale: 0.94 }}
+                            onClick={(e) => handleToggleBlock(dom.domain, dom.isBlocked, e)}
+                            title={dom.isBlocked ? 'Unblock domain' : 'Block domain from embedding'}
+                            className={`p-1.5 hover:bg-zinc-100 border border-zinc-200 rounded-lg transition cursor-pointer ${
+                              dom.isBlocked ? 'text-rose-600 hover:text-emerald-600' : 'text-zinc-500 hover:text-rose-600'
+                            }`}
+                          >
+                            {dom.isBlocked ? <ShieldX className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
+                          </motion.button>
+                        )}
 
                         <MotionButton
                           variant="secondary"

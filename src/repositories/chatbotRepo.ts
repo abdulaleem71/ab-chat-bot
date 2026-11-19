@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { getDb } from '../db/index';
+import { DEFAULT_MODEL_ID } from '../config/models';
 import { Chatbot } from '../types';
 
 export class ChatbotRepo {
@@ -60,7 +61,7 @@ export class ChatbotRepo {
         bot.avatar || '🤖',
         bot.greetingMessage || 'Hello! How can I help you today?',
         suggestedQuestionsJson,
-        bot.model || 'gemini-3.7-flash',
+        bot.model || DEFAULT_MODEL_ID,
         bot.fallbackMessage || 'Connecting to human representative...',
         bot.collectLeadEmail ? 1 : 0,
         bot.leadTitle || 'Leave your email',
@@ -184,7 +185,7 @@ export class ChatbotRepo {
       avatar: String(r.avatar || '🤖'),
       greetingMessage: String(r.greeting_message || 'Hello!'),
       suggestedQuestions: questions,
-      model: (r.model === 'gemini-3.1-pro-preview' ? 'gemini-3.1-pro-preview' : 'gemini-3.7-flash') as any,
+      model: (r.model === 'gemini-3.1-flash-lite' ? 'gemini-3.1-flash-lite' : DEFAULT_MODEL_ID) as any,
       fallbackMessage: String(r.fallback_message || ''),
       collectLeadEmail: Number(r.collect_lead_email) === 1,
       leadTitle: String(r.lead_title || ''),

@@ -26,6 +26,7 @@ export interface TenantRow {
   owner_email: string;
   plan: string;
   created_at: string;
+  subscription_status?: 'trialing' | 'active' | 'expired' | 'canceled' | null;
   byok_api_key?: string | null;
   byok_provider?: string | null;
   byok_updated_at?: string | null;
@@ -37,6 +38,9 @@ export interface TenantRow {
   payment_method_exp?: string | null;
   is_disabled?: number | null;
   disabled_reason?: string | null;
+  billing_cycle?: 'monthly' | 'annual' | null;
+  stripe_customer_id?: string | null;
+  stripe_subscription_id?: string | null;
 }
 
 export interface OAuthAccountRow {
@@ -134,64 +138,123 @@ export class UserRepo {
     });
     if (res.rows.length === 0) return null;
     const r = res.rows[0];
+    const trialEndsAt = r.trial_ends_at ? String(r.trial_ends_at) : null;
+    const hasPayment = Number(r.payment_method_on_file) === 1;
+    let subStatus = (r.subscription_status as any) || 'trialing';
+
+    if (hasPayment || subStatus === 'active') {
+      subStatus = 'active';
+    } else if (subStatus === 'trialing' && trialEndsAt) {
+      if (Date.now() > new Date(trialEndsAt).getTime()) {
+        subStatus = 'expired';
+      }
+    }
+
     return {
       id: String(r.id),
       name: String(r.name),
       owner_email: String(r.owner_email),
-      plan: String(r.plan),
+      plan: String(r.plan || 'Pro'),
       created_at: String(r.created_at),
+      subscription_status: subStatus,
       byok_api_key: r.byok_api_key ? String(r.byok_api_key) : null,
       byok_provider: r.byok_provider ? String(r.byok_provider) : null,
       byok_updated_at: r.byok_updated_at ? String(r.byok_updated_at) : null,
       trial_started_at: r.trial_started_at ? String(r.trial_started_at) : null,
-      trial_ends_at: r.trial_ends_at ? String(r.trial_ends_at) : null,
+      trial_ends_at: trialEndsAt,
       payment_method_on_file: r.payment_method_on_file ? Number(r.payment_method_on_file) : 0,
       payment_method_brand: r.payment_method_brand ? String(r.payment_method_brand) : null,
       payment_method_last4: r.payment_method_last4 ? String(r.payment_method_last4) : null,
       payment_method_exp: r.payment_method_exp ? String(r.payment_method_exp) : null,
       is_disabled: r.is_disabled ? Number(r.is_disabled) : 0,
       disabled_reason: r.disabled_reason ? String(r.disabled_reason) : null,
+      billing_cycle: r.billing_cycle === 'monthly' ? 'monthly' : 'annual',
+      stripe_customer_id: r.stripe_customer_id ? String(r.stripe_customer_id) : null,
+      stripe_subscription_id: r.stripe_subscription_id ? String(r.stripe_subscription_id) : null,
     };
   }
 
   static async createTenant(tenant: TenantRow): Promise<TenantRow> {
     const db = getDb();
+    const createdAt = tenant.created_at || new Date().toISOString();
+    const trialEndsAt = tenant.trial_ends_at || new Date(new Date(createdAt).getTime() + 3 * 24 * 60 * 60 * 1000).toISOString();
+    const subStatus = tenant.subscription_status || 'trialing';
+
     await db.execute({
       sql: `INSERT INTO tenants (
         id, name, owner_email, plan, created_at, byok_api_key, byok_provider, byok_updated_at,
-        trial_started_at, trial_ends_at, payment_method_on_file, payment_method_brand, payment_method_last4, payment_method_exp
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        trial_started_at, trial_ends_at, subscription_status, payment_method_on_file, payment_method_brand, payment_method_last4, payment_method_exp
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       args: [
         tenant.id,
         tenant.name,
         tenant.owner_email.toLowerCase(),
-        tenant.plan,
-        tenant.created_at,
+        tenant.plan || 'Pro',
+        createdAt,
         tenant.byok_api_key || null,
         tenant.byok_provider || 'gemini',
         tenant.byok_updated_at || null,
-        tenant.trial_started_at || null,
-        tenant.trial_ends_at || null,
+        tenant.trial_started_at || createdAt,
+        trialEndsAt,
+        subStatus,
         tenant.payment_method_on_file || 0,
         tenant.payment_method_brand || null,
         tenant.payment_method_last4 || null,
         tenant.payment_method_exp || null,
       ],
     });
-    return tenant;
+    return {
+      ...tenant,
+      plan: tenant.plan || 'Pro',
+      trial_started_at: tenant.trial_started_at || createdAt,
+      trial_ends_at: trialEndsAt,
+      subscription_status: subStatus,
+    };
   }
 
-  static async updateTenantPlan(tenantId: string, plan: string): Promise<void> {
+  static async updateTenantPlan(tenantId: string, plan: string, subscriptionStatus?: string, billingCycle?: 'monthly' | 'annual'): Promise<void> {
+    const db = getDb();
+    if (subscriptionStatus && billingCycle) {
+      await db.execute({
+        sql: `UPDATE tenants SET plan = ?, subscription_status = ?, billing_cycle = ? WHERE id = ?;`,
+        args: [plan, subscriptionStatus, billingCycle, tenantId],
+      });
+    } else if (subscriptionStatus) {
+      await db.execute({
+        sql: `UPDATE tenants SET plan = ?, subscription_status = ? WHERE id = ?;`,
+        args: [plan, subscriptionStatus, tenantId],
+      });
+    } else {
+      await db.execute({
+        sql: `UPDATE tenants SET plan = ? WHERE id = ?;`,
+        args: [plan, tenantId],
+      });
+    }
+  }
+
+  static async updateTenantStripeInfo(
+    tenantId: string,
+    stripeCustomerId: string | null,
+    stripeSubscriptionId: string | null
+  ): Promise<void> {
     const db = getDb();
     await db.execute({
-      sql: `UPDATE tenants SET plan = ? WHERE id = ?;`,
-      args: [plan, tenantId],
+      sql: `UPDATE tenants SET stripe_customer_id = COALESCE(?, stripe_customer_id), stripe_subscription_id = COALESCE(?, stripe_subscription_id) WHERE id = ?;`,
+      args: [stripeCustomerId, stripeSubscriptionId, tenantId],
+    });
+  }
+
+  static async updateSubscriptionStatus(tenantId: string, status: 'trialing' | 'active' | 'expired' | 'canceled'): Promise<void> {
+    const db = getDb();
+    await db.execute({
+      sql: `UPDATE tenants SET subscription_status = ? WHERE id = ?;`,
+      args: [status, tenantId],
     });
   }
 
   static async setPaymentMethod(
     tenantId: string,
-    details: { brand: string; last4: string; exp: string }
+    details: { brand: string; last4: string; exp: string; autoActivate?: boolean }
   ): Promise<void> {
     const db = getDb();
     await db.execute({
@@ -199,7 +262,8 @@ export class UserRepo {
         payment_method_on_file = 1,
         payment_method_brand = ?,
         payment_method_last4 = ?,
-        payment_method_exp = ?
+        payment_method_exp = ?,
+        subscription_status = 'active'
       WHERE id = ?;`,
       args: [details.brand, details.last4, details.exp, tenantId],
     });

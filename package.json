@@ -33,6 +33,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "speakeasy": "^2.0.0",
+    "stripe": "^23.2.0",
     "vite": "^6.2.3"
   },
   "devDependencies": {

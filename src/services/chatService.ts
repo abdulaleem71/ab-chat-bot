@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { UserRepo } from '../repositories/userRepo';
 import { ChatbotRepo } from '../repositories/chatbotRepo';
 import { ConversationRepo } from '../repositories/conversationRepo';
 import { ContactRepo } from '../repositories/contactRepo';
@@ -7,7 +8,7 @@ import { TicketRepo } from '../repositories/ticketRepo';
 import { PolicyRepo, TenantAuditRepo } from '../repositories/policyRepo';
 import { RagService } from './ragService';
 import { getDb } from '../db/index';
-import { decryptConfig } from './encryptionService';
+import { decrypt, decryptConfig } from './encryptionService';
 import { newId } from '../lib/ids';
 import { telemetry } from '../lib/telemetry';
 import {
@@ -30,7 +31,21 @@ export interface ChatStreamCallbacks {
 }
 
 let aiClient: GoogleGenAI | null = null;
-export function getGeminiAI(): GoogleGenAI | null {
+export function getGeminiAI(customApiKey?: string | null): GoogleGenAI | null {
+  if (customApiKey && customApiKey.trim().length > 8) {
+    try {
+      return new GoogleGenAI({
+        apiKey: customApiKey.trim(),
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+    } catch (err: any) {
+      console.warn('[WARN] Could not initialize BYOK GoogleGenAI client:', err.message);
+    }
+  }
   if (!aiClient) {
     const key = process.env.GEMINI_API_KEY || process.env.API_KEY;
     try {
@@ -57,6 +72,14 @@ export function getGeminiAI(): GoogleGenAI | null {
     }
   }
   return aiClient;
+}
+
+function resolveCandidateModels(preferredModel?: string | null): string[] {
+  const mapped =
+    preferredModel === 'gemini-3.1-flash-lite'
+      ? 'gemini-3.1-flash-lite'
+      : 'gemini-4-hydrogen';
+  return Array.from(new Set([mapped, 'gemini-4-hydrogen', 'gemini-3.1-flash-lite']));
 }
 
 /**
@@ -148,6 +171,18 @@ export class ChatService {
     const bot = await ChatbotRepo.findById(botId);
     if (!bot) {
       throw new Error('Chatbot not found or inactive');
+    }
+
+    // Verify tenant trial / subscription access
+    const tenant = await UserRepo.findTenantById(bot.tenantId);
+    if (tenant) {
+      const hasPayment = Boolean(tenant.payment_method_on_file);
+      const nowMs = Date.now();
+      const trialEnds = tenant.trial_ends_at ? new Date(tenant.trial_ends_at).getTime() : 0;
+      const isTrialActive = trialEnds > nowMs;
+      if (!hasPayment && tenant.subscription_status !== 'active' && !isTrialActive) {
+        throw new Error('Your 3-day free trial has expired. Please upgrade your plan to continue.');
+      }
     }
 
     const now = new Date().toISOString();
@@ -359,15 +394,15 @@ You have full tool-calling capabilities to execute real actions:
     ];
 
     let replyText = '';
-    const ai = getGeminiAI();
+    const decryptedByokKey =
+      tenant?.byok_api_key && (!tenant.byok_provider || tenant.byok_provider === 'gemini')
+        ? decrypt(tenant.byok_api_key)
+        : null;
+    const ai = getGeminiAI(decryptedByokKey);
 
     // Call Gemini with tools
     if (ai) {
-      const candidateModels = [
-        bot.model || 'gemini-3.8-flash',
-        'gemini-3.8-flash',
-        'gemini-3.1-pro-preview',
-      ].filter((v, i, a) => a.indexOf(v) === i);
+      const candidateModels = resolveCandidateModels(bot.model);
 
       for (const modelToUse of candidateModels) {
         try {
@@ -380,8 +415,6 @@ You have full tool-calling capabilities to execute real actions:
             contents: chatContents,
             config: {
               systemInstruction,
-              temperature: 0.3,
-              maxOutputTokens: 1200,
               tools: [{ functionDeclarations: toolDeclarations }],
             },
           });
@@ -658,6 +691,19 @@ You have full tool-calling capabilities to execute real actions:
       return;
     }
 
+    // Verify tenant trial / subscription access
+    const tenant = await UserRepo.findTenantById(bot.tenantId);
+    if (tenant) {
+      const hasPayment = Boolean(tenant.payment_method_on_file);
+      const nowMs = Date.now();
+      const trialEnds = tenant.trial_ends_at ? new Date(tenant.trial_ends_at).getTime() : 0;
+      const isTrialActive = trialEnds > nowMs;
+      if (!hasPayment && tenant.subscription_status !== 'active' && !isTrialActive) {
+        callbacks.onError(new Error('Your 3-day free trial has expired. Please upgrade your plan to continue.'));
+        return;
+      }
+    }
+
     // 2. Identify or Create Customer Contact
     let visitorEmail = visitorInfo?.email;
     let contactId: string | undefined;
@@ -839,14 +885,14 @@ CRITICAL RULES:
 
     let accumulatedReply = '';
     const toolsInvokedList: string[] = [];
-    const ai = getGeminiAI();
+    const decryptedByokKey =
+      tenant?.byok_api_key && (!tenant.byok_provider || tenant.byok_provider === 'gemini')
+        ? decrypt(tenant.byok_api_key)
+        : null;
+    const ai = getGeminiAI(decryptedByokKey);
 
     if (ai) {
-      const candidateModels = [
-        bot.model || 'gemini-3.8-flash',
-        'gemini-3.8-flash',
-        'gemini-3.1-pro-preview',
-      ].filter((v, i, a) => a.indexOf(v) === i);
+      const candidateModels = resolveCandidateModels(bot.model);
 
       for (const modelToUse of candidateModels) {
         if (abortSignal?.aborted) break;
@@ -856,8 +902,6 @@ CRITICAL RULES:
             contents: chatContents,
             config: {
               systemInstruction,
-              temperature: 0.3,
-              maxOutputTokens: 1200,
               tools: [{ functionDeclarations: toolDeclarations }],
             },
           });

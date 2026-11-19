@@ -39,6 +39,7 @@ export const SystemAlertsView: React.FC = () => {
   const [newSeverity, setNewSeverity] = useState<'critical' | 'warning' | 'info'>('warning');
   const [newCategory, setNewCategory] = useState<'security' | 'performance' | 'integration' | 'quality' | 'system'>('performance');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [confirmResolveAll, setConfirmResolveAll] = useState(false);
 
   const fetchAlerts = async () => {
     setIsLoading(true);
@@ -111,7 +112,7 @@ export const SystemAlertsView: React.FC = () => {
   };
 
   const handleResolveAll = async () => {
-    if (!window.confirm('Are you sure you want to mark all active alerts as resolved?')) return;
+    setConfirmResolveAll(false);
     try {
       const res = await fetch(`/api/admin/alerts/resolve-all`, {
         method: 'POST',
@@ -187,7 +188,7 @@ export const SystemAlertsView: React.FC = () => {
             <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
               System Alerts & Health Monitor
               {stats && stats.criticalCount > 0 && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-rose-950 text-rose-400 border border-rose-800 animate-pulse font-mono font-bold">
+                <span className="text-xs px-2 py-0.5 rounded-full bg-rose-950 text-rose-400 border border-rose-800 font-mono font-bold">
                   {stats.criticalCount} Critical
                 </span>
               )}
@@ -207,13 +208,33 @@ export const SystemAlertsView: React.FC = () => {
             Trigger Test Alert
           </button>
 
-          <button
-            onClick={handleResolveAll}
-            className="px-3.5 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 text-xs font-semibold rounded-xl border border-emerald-800/80 flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            Resolve All Active
-          </button>
+          {confirmResolveAll ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleResolveAll}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition cursor-pointer"
+              >
+                Confirm Resolve All
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmResolveAll(false)}
+                className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmResolveAll(true)}
+              className="px-3.5 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 text-xs font-semibold rounded-xl border border-emerald-800/80 flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Resolve All Active
+            </button>
+          )}
 
           <button
             onClick={fetchAlerts}

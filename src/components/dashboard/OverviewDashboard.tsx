@@ -39,6 +39,8 @@ interface OverviewDashboardProps {
   leads: VisitorLead[];
   knowledgeCount?: number;
   isLoading?: boolean;
+  dateRange?: 'today' | '7d' | '30d' | 'all';
+  onDateRangeChange?: (range: 'today' | '7d' | '30d' | 'all') => void;
   onNavigate: (tab: string) => void;
   onOpenCreateBotModal: () => void;
   onOpenEmbedModal?: (bot?: Chatbot) => void;
@@ -50,126 +52,57 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   leads,
   knowledgeCount = 0,
   isLoading = false,
+  dateRange,
+  onDateRangeChange,
   onNavigate,
   onOpenCreateBotModal,
   onOpenEmbedModal,
 }) => {
   const [copiedEmbedStep, setCopiedEmbedStep] = useState(false);
+  const [internalDateRange, setInternalDateRange] = useState<'today' | '7d' | '30d' | 'all'>('7d');
+  const selectedDateRange = dateRange || internalDateRange;
 
-  // Date Range Controls State
-  const [selectedDateRange, setSelectedDateRange] = useState<'today' | '7d' | '30d' | 'custom'>('7d');
-  const [customStartDate, setCustomStartDate] = useState<string>('2026-09-01');
-  const [customEndDate, setCustomEndDate] = useState<string>('2026-09-10');
-
-  // Multiplier for date range scaling
-  const getMultiplier = () => {
-    if (selectedDateRange === 'today') return 0.22;
-    if (selectedDateRange === '7d') return 1.0;
-    if (selectedDateRange === '30d') return 3.8;
-    if (selectedDateRange === 'custom') {
-      if (!customStartDate || !customEndDate) return 1.0;
-      const start = new Date(customStartDate).getTime();
-      const end = new Date(customEndDate).getTime();
-      const diffDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
-      return Math.max(0.1, Math.round((diffDays / 7) * 10) / 10);
-    }
-    return 1.0;
+  const handleRangeChange = (nextRange: 'today' | '7d' | '30d' | 'all') => {
+    setInternalDateRange(nextRange);
+    onDateRangeChange?.(nextRange);
   };
-
-  const mult = getMultiplier();
 
   const getDateRangeLabel = () => {
-    if (selectedDateRange === 'today') return 'Today (Sep 10, 2026)';
-    if (selectedDateRange === '7d') return 'Last 7 Days (Sep 4 – Sep 10, 2026)';
-    if (selectedDateRange === '30d') return 'Last 30 Days (Aug 11 – Sep 10, 2026)';
-    if (selectedDateRange === 'custom') {
-      return `${customStartDate || 'Start'} to ${customEndDate || 'End'}`;
+    const now = new Date();
+    const fmt = (d: Date) =>
+      d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    if (selectedDateRange === 'today') return `Today (${fmt(now)})`;
+    if (selectedDateRange === '7d') {
+      const start = new Date(now.getTime() - 6 * 86400000);
+      return `Last 7 Days (${fmt(start)} – ${fmt(now)})`;
     }
-    return 'Last 7 Days';
+    if (selectedDateRange === '30d') {
+      const start = new Date(now.getTime() - 29 * 86400000);
+      return `Last 30 Days (${fmt(start)} – ${fmt(now)})`;
+    }
+    return 'All Recorded Activity';
   };
 
-  // Scaled analytics metrics
-  const totalConvs = Math.max(0, Math.round((analytics?.totalConversations || 282) * mult));
-  const totalLeads = Math.max(0, Math.round((analytics?.leadsCaptured || 48) * mult));
-  const totalMsgs = Math.max(0, Math.round((analytics?.totalMessages || 1240) * mult));
-  const humanEscalations = Math.max(0, Math.round((analytics?.humanTakeovers || 44) * mult));
+  // Real analytics metrics (zero synthetic multipliers or fake baselines)
+  const totalConvs = Math.max(0, analytics?.totalConversations ?? 0);
+  const totalLeads = Math.max(0, analytics?.leadsCaptured ?? 0);
+  const humanEscalations = Math.max(0, analytics?.humanTakeovers ?? 0);
 
-  // AI Resolution Rate & Human Takeover Rate
-  const aiResolutionPct = totalConvs > 0
-    ? Math.min(99.9, Math.max(50, Math.round(((totalConvs - humanEscalations) / totalConvs) * 1000) / 10))
-    : 84.5;
-  const humanTakeoverPct = Math.round((100 - aiResolutionPct) * 10) / 10;
   const aiResolvedCount = Math.max(0, totalConvs - humanEscalations);
+  const aiResolutionPct =
+    totalConvs > 0
+      ? Math.round(((totalConvs - humanEscalations) / totalConvs) * 1000) / 10
+      : 0;
+  const humanTakeoverPct =
+    totalConvs > 0 ? Math.round((100 - aiResolutionPct) * 10) / 10 : 0;
 
-  // CSAT Rating Distribution
-  const baseCsatDistribution = analytics?.csatDistribution || [
-    { stars: 5, count: 124, percentage: 78 },
-    { stars: 4, count: 22, percentage: 14 },
-    { stars: 3, count: 8, percentage: 5 },
-    { stars: 2, count: 3, percentage: 2 },
-    { stars: 1, count: 2, percentage: 1 },
-  ];
-
-  const csatDistribution = baseCsatDistribution.map(item => ({
-    ...item,
-    count: Math.max(1, Math.round(item.count * mult)),
-  }));
-
-  const totalCsatRatings = csatDistribution.reduce((acc, curr) => acc + curr.count, 0);
-
-  // Top 5 Frequently Asked Questions
-  const defaultTopQuestions: TopQuestionItem[] = analytics?.topQuestions || [
-    {
-      rank: 1,
-      question: 'How do I track or return an order?',
-      category: 'Orders & Shipping',
-      count: 142,
-      aiHandled: true,
-      status: 'grounded',
-      resolutionRate: 98,
-    },
-    {
-      rank: 2,
-      question: 'What are your pricing plans & refund terms?',
-      category: 'Billing & Subscriptions',
-      count: 98,
-      aiHandled: true,
-      status: 'grounded',
-      resolutionRate: 95,
-    },
-    {
-      rank: 3,
-      question: 'How do I set up SSO & SAML authentication?',
-      category: 'Security & SSO',
-      count: 64,
-      aiHandled: true,
-      status: 'grounded',
-      resolutionRate: 92,
-    },
-    {
-      rank: 4,
-      question: 'Do you support custom API rate limits?',
-      category: 'Developer API',
-      count: 41,
-      aiHandled: false,
-      status: 'fallback_escalated',
-      resolutionRate: 58,
-    },
-    {
-      rank: 5,
-      question: 'How can I connect to a live support agent?',
-      category: 'Human Escalation',
-      count: 35,
-      aiHandled: false,
-      status: 'fallback_escalated',
-      resolutionRate: 100,
-    },
-  ];
-
-  const topQuestions = defaultTopQuestions.map(q => ({
-    ...q,
-    count: Math.max(1, Math.round(q.count * mult)),
-  }));
+  const csatDistribution = Array.isArray(analytics?.csatDistribution)
+    ? analytics.csatDistribution
+    : [];
+  const totalCsatRatings = csatDistribution.reduce((acc, curr) => acc + (curr.count || 0), 0);
+  const topQuestions: TopQuestionItem[] = Array.isArray(analytics?.topQuestions)
+    ? analytics.topQuestions
+    : [];
 
   // Count active bots: bots with status === 'active' or bots that have linked conversations
   const activeBots = chatbots.filter(b => b.status === 'active' || (analytics?.totalConversations && analytics.totalConversations > 0));
@@ -291,15 +224,15 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
       {/* Top Hero Banner */}
       <motion.div
         variants={itemVariants}
-        className="bg-zinc-950 border border-zinc-800/90 rounded-2xl md:rounded-3xl p-6 sm:p-8 text-white shadow-xs relative overflow-hidden group"
+        className="bg-zinc-950 border border-zinc-800 rounded-2xl p-6 sm:p-8 text-white shadow-xs relative overflow-hidden group"
       >
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-700/80 text-zinc-300 text-xs font-semibold font-heading">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 text-xs font-semibold font-heading">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
               <span>Grounded RAG Customer Concierge Engine</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-white font-heading">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-heading">
               AI Workspace Control Center
             </h1>
             <p className="text-xs sm:text-sm text-zinc-300 max-w-2xl font-normal leading-relaxed font-body">
@@ -314,7 +247,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               shimmer
               leftIcon={<Plus className="w-4 h-4 text-zinc-950" />}
               onClick={onOpenCreateBotModal}
-              className="bg-white hover:bg-zinc-100 text-zinc-950 border-white shadow-md"
+              className="bg-white hover:bg-zinc-100 text-zinc-950 border-white shadow-xs"
             >
               Create AI Bot
             </MotionButton>
@@ -338,7 +271,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         </motion.div>
       ) : chatbots.length === 0 ? (
         <motion.div variants={itemVariants} className="space-y-6">
-          <div className="bg-white border border-zinc-200/90 rounded-3xl p-6 sm:p-8 shadow-xs">
+          <div className="bg-white border border-zinc-200 rounded-xl p-6 sm:p-8 shadow-xs">
             {/* Header & Progress */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-100">
               <div className="space-y-1">
@@ -440,31 +373,31 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
           {/* Quick Info Grid for Empty State */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white border border-zinc-200/90 rounded-2xl p-5 shadow-2xs space-y-2">
+            <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-xs space-y-2">
               <div className="w-8 h-8 rounded-xl bg-zinc-100 flex items-center justify-center text-zinc-900">
                 <ShieldCheck className="w-4 h-4" />
               </div>
-              <h4 className="text-xs font-extrabold text-zinc-950 font-heading">Zero Hallucinations</h4>
+              <h4 className="text-xs font-bold text-zinc-900 font-heading">Zero Hallucinations</h4>
               <p className="text-[11px] text-zinc-500 leading-relaxed font-body">
                 Responses are strictly grounded in your provided documentation and website pages via high-precision RAG indexing.
               </p>
             </div>
 
-            <div className="bg-white border border-zinc-200/90 rounded-2xl p-5 shadow-2xs space-y-2">
+            <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-xs space-y-2">
               <div className="w-8 h-8 rounded-xl bg-zinc-100 flex items-center justify-center text-zinc-900">
                 <Code className="w-4 h-4" />
               </div>
-              <h4 className="text-xs font-extrabold text-zinc-950 font-heading">1-Line Web Embed</h4>
+              <h4 className="text-xs font-bold text-zinc-900 font-heading">1-Line Web Embed</h4>
               <p className="text-[11px] text-zinc-500 leading-relaxed font-body">
                 Compatible with Shopify, WordPress, Next.js, Webflow, Squarespace, and vanilla HTML with custom bubble themes.
               </p>
             </div>
 
-            <div className="bg-white border border-zinc-200/90 rounded-2xl p-5 shadow-2xs space-y-2">
+            <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-xs space-y-2">
               <div className="w-8 h-8 rounded-xl bg-zinc-100 flex items-center justify-center text-zinc-900">
                 <Users className="w-4 h-4" />
               </div>
-              <h4 className="text-xs font-extrabold text-zinc-950 font-heading">Live Agent Takeover</h4>
+              <h4 className="text-xs font-bold text-zinc-900 font-heading">Live Agent Takeover</h4>
               <p className="text-[11px] text-zinc-500 leading-relaxed font-body">
                 Seamlessly transfer complex visitor conversations from AI to your human support team in the real-time inbox.
               </p>
@@ -475,23 +408,23 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         /* Regular Dashboard Stat Cards & Charts (when chatbots exist) */
         <>
           {/* Date Range Picker Bar */}
-          <motion.div variants={itemVariants} className="bg-white border border-zinc-200/90 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <motion.div variants={itemVariants} className="bg-white border border-zinc-200 rounded-xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-xl bg-zinc-100 flex items-center justify-center text-zinc-900 shrink-0">
                 <Calendar className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-xs font-extrabold text-zinc-950 font-heading">Analytics Date Filter</h3>
+                <h3 className="text-xs font-bold text-zinc-900 font-heading">Analytics Date Filter</h3>
                 <p className="text-[11px] text-zinc-500 font-mono font-medium">{getDateRangeLabel()}</p>
               </div>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
               {/* Range Buttons */}
-              <div className="inline-flex p-1 bg-zinc-100 rounded-xl border border-zinc-200/80 text-xs font-bold font-heading">
+              <div className="inline-flex p-1 bg-zinc-100 rounded-xl border border-zinc-200 text-xs font-semibold font-heading">
                 <button
                   type="button"
-                  onClick={() => setSelectedDateRange('today')}
+                  onClick={() => handleRangeChange('today')}
                   className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                     selectedDateRange === 'today'
                       ? 'bg-zinc-950 text-white shadow-xs'
@@ -502,7 +435,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedDateRange('7d')}
+                  onClick={() => handleRangeChange('7d')}
                   className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                     selectedDateRange === '7d'
                       ? 'bg-zinc-950 text-white shadow-xs'
@@ -513,7 +446,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedDateRange('30d')}
+                  onClick={() => handleRangeChange('30d')}
                   className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                     selectedDateRange === '30d'
                       ? 'bg-zinc-950 text-white shadow-xs'
@@ -524,35 +457,16 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedDateRange('custom')}
+                  onClick={() => handleRangeChange('all')}
                   className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    selectedDateRange === 'custom'
+                    selectedDateRange === 'all'
                       ? 'bg-zinc-950 text-white shadow-xs'
                       : 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/50'
                   }`}
                 >
-                  Custom Range
+                  All Time
                 </button>
               </div>
-
-              {/* Custom Date Pickers */}
-              {selectedDateRange === 'custom' && (
-                <div className="flex items-center gap-2 bg-zinc-50 p-1.5 rounded-xl border border-zinc-200 text-xs">
-                  <input
-                    type="date"
-                    value={customStartDate || ''}
-                    onChange={(e) => setCustomStartDate(e.target.value)}
-                    className="bg-white border border-zinc-300 rounded-lg px-2 py-1 text-zinc-900 font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-zinc-950"
-                  />
-                  <span className="text-zinc-400 font-bold font-mono">to</span>
-                  <input
-                    type="date"
-                    value={customEndDate || ''}
-                    onChange={(e) => setCustomEndDate(e.target.value)}
-                    className="bg-white border border-zinc-300 rounded-lg px-2 py-1 text-zinc-900 font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-zinc-950"
-                  />
-                </div>
-              )}
             </div>
           </motion.div>
 
@@ -561,16 +475,16 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             {/* Metric 1: Total Chats */}
             <motion.div
               whileHover={{ y: -2, transition: { duration: 0.15 } }}
-              className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between"
+              className="bg-white border border-zinc-200 rounded-xl p-5 shadow-xs transition-shadow flex flex-col justify-between min-h-[140px]"
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">Total Chats</span>
+                <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider font-heading">Total Chats</span>
                 <div className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-700 flex items-center justify-center">
                   <MessageSquare className="w-3.5 h-3.5" />
                 </div>
               </div>
               <div>
-                <p className="text-2xl font-extrabold text-zinc-900 tracking-tight font-heading">{totalConvs.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-zinc-900 tracking-tight font-heading">{totalConvs.toLocaleString()}</p>
                 <p className="text-[11px] text-zinc-500 mt-1 font-medium font-body">
                   {activeBotsCount > 0 ? `Across ${activeBotsCount} active bot${activeBotsCount === 1 ? '' : 's'}` : 'Across active bots'}
                 </p>
@@ -580,16 +494,16 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             {/* Metric 2: Leads Captured */}
             <motion.div
               whileHover={{ y: -2, transition: { duration: 0.15 } }}
-              className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between"
+              className="bg-white border border-zinc-200 rounded-xl p-5 shadow-xs transition-shadow flex flex-col justify-between min-h-[140px]"
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">Leads Captured</span>
+                <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider font-heading">Leads Captured</span>
                 <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
                   <Users className="w-3.5 h-3.5" />
                 </div>
               </div>
               <div>
-                <p className="text-2xl font-extrabold text-zinc-900 tracking-tight font-heading">{totalLeads.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-zinc-900 tracking-tight font-heading">{totalLeads.toLocaleString()}</p>
                 <p className="text-[11px] text-emerald-600 mt-1 font-semibold flex items-center gap-1 font-body">
                   <TrendingUp className="w-3 h-3" /> Live Visitor Sync
                 </p>
@@ -599,16 +513,16 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             {/* Metric 3: AI Resolution Rate */}
             <motion.div
               whileHover={{ y: -2, transition: { duration: 0.15 } }}
-              className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between"
+              className="bg-white border border-zinc-200 rounded-xl p-5 shadow-xs transition-shadow flex flex-col justify-between min-h-[140px]"
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">AI Resolution</span>
+                <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider font-heading">AI Resolution</span>
                 <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center">
                   <ShieldCheck className="w-3.5 h-3.5" />
                 </div>
               </div>
               <div>
-                <p className="text-2xl font-extrabold text-zinc-900 tracking-tight font-heading">{aiResolutionPct}%</p>
+                <p className="text-2xl font-bold text-zinc-900 tracking-tight font-heading">{aiResolutionPct}%</p>
                 <p className="text-[11px] text-zinc-500 mt-1 font-medium font-body">{aiResolvedCount.toLocaleString()} AI-resolved chats</p>
               </div>
             </motion.div>
@@ -616,16 +530,16 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             {/* Metric 4: Human Takeover Rate */}
             <motion.div
               whileHover={{ y: -2, transition: { duration: 0.15 } }}
-              className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between"
+              className="bg-white border border-zinc-200 rounded-xl p-5 shadow-xs transition-shadow flex flex-col justify-between min-h-[140px]"
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">Human Takeover</span>
+                <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider font-heading">Human Takeover</span>
                 <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center">
                   <UserCheck className="w-3.5 h-3.5" />
                 </div>
               </div>
               <div>
-                <p className="text-2xl font-extrabold text-zinc-900 tracking-tight font-heading">{humanTakeoverPct}%</p>
+                <p className="text-2xl font-bold text-zinc-900 tracking-tight font-heading">{humanTakeoverPct}%</p>
                 <p className="text-[11px] text-zinc-500 mt-1 font-medium font-body">{humanEscalations.toLocaleString()} agent handoff{humanEscalations === 1 ? '' : 's'}</p>
               </div>
             </motion.div>
@@ -633,35 +547,38 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             {/* Metric 5: Avg CSAT Rating */}
             <motion.div
               whileHover={{ y: -2, transition: { duration: 0.15 } }}
-              className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between"
+              className="bg-white border border-zinc-200 rounded-xl p-5 shadow-xs transition-shadow flex flex-col justify-between min-h-[140px]"
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider font-heading">Avg CSAT Rating</span>
+                <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider font-heading">Avg CSAT Rating</span>
                 <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-500 flex items-center justify-center">
                   <Star className="w-3.5 h-3.5 fill-amber-400" />
                 </div>
               </div>
               <div>
-                <p className="text-2xl font-extrabold text-zinc-900 tracking-tight font-heading">
-                  {analytics.csatScore || 4.8} <span className="text-xs text-zinc-400 font-normal font-body">/5.0</span>
+                <p className="text-2xl font-bold text-zinc-900 tracking-tight font-heading tabular-nums">
+                  {analytics.csatScore ? analytics.csatScore.toFixed(1) : '—'}{' '}
+                  <span className="text-xs text-zinc-400 font-normal font-body">/5.0</span>
                 </p>
-                <p className="text-[11px] text-zinc-500 mt-1 font-medium font-body">{totalCsatRatings.toLocaleString()} verified reviews</p>
+                <p className="text-[11px] text-zinc-500 mt-1 font-medium font-body tabular-nums">
+                  {totalCsatRatings > 0 ? `${totalCsatRatings.toLocaleString()} verified reviews` : 'No ratings yet'}
+                </p>
               </div>
             </motion.div>
           </motion.div>
 
           {/* Section 1: Resolution Quality Breakdown */}
-          <motion.div variants={itemVariants} className="bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs space-y-5">
+          <motion.div variants={itemVariants} className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-extrabold font-mono uppercase tracking-wider mb-1">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold font-mono uppercase tracking-wider mb-1">
                   <ShieldCheck className="w-3 h-3 text-emerald-600" /> Actionable Resolution Insights
                 </div>
-                <h3 className="text-base font-extrabold text-zinc-950 font-heading">Resolution Quality Breakdown</h3>
-                <p className="text-xs text-zinc-500 font-medium font-body">Compare autonomous AI resolution efficiency against live human operator escalation handoffs.</p>
+                <h3 className="text-base font-semibold text-zinc-900 font-heading">Resolution Quality Breakdown</h3>
+                <p className="text-xs text-zinc-500 font-normal font-body">Compare autonomous AI resolution efficiency against live human operator escalation handoffs.</p>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-zinc-700 font-mono bg-zinc-100 px-3 py-1 rounded-xl">
+                <span className="text-xs font-semibold text-zinc-700 font-mono bg-zinc-100 px-3 py-1 rounded-xl">
                   {totalConvs.toLocaleString()} Total Conversations
                 </span>
               </div>
@@ -669,18 +586,18 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* AI-Resolved Rate Card */}
-              <div className="bg-emerald-50/40 border border-emerald-200/80 rounded-2xl p-5 relative overflow-hidden flex flex-col justify-between">
+              <div className="bg-emerald-50/40 border border-emerald-200 rounded-xl p-5 relative overflow-hidden flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-[11px] font-extrabold uppercase text-emerald-800 tracking-wider font-heading flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold uppercase text-emerald-800 tracking-wider font-heading flex items-center gap-1.5">
                       <Bot className="w-4 h-4 text-emerald-600" /> AI-Resolved Rate
                     </span>
-                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full font-mono">
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full font-mono">
                       Zero Human Intervention
                     </span>
                   </div>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-black text-emerald-950 tracking-tight font-heading">{aiResolutionPct}%</span>
+                    <span className="text-3xl font-bold text-emerald-950 tracking-tight font-heading">{aiResolutionPct}%</span>
                     <span className="text-xs font-bold text-emerald-700 font-mono">({aiResolvedCount.toLocaleString()} chats)</span>
                   </div>
                   <p className="text-xs text-emerald-800/80 mt-2 leading-relaxed font-body">
@@ -690,23 +607,23 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
                 <div className="mt-4 pt-3 border-t border-emerald-200/60 flex items-center justify-between text-[11px]">
                   <span className="text-emerald-700 font-medium">Auto-Deflection Savings</span>
-                  <span className="font-extrabold text-emerald-950 font-mono">~{Math.round(aiResolvedCount * 4.2)} support hours saved</span>
+                  <span className="font-bold text-emerald-950 font-mono">~{Math.round(aiResolvedCount * 4.2)} support hours saved</span>
                 </div>
               </div>
 
               {/* Human Takeover Rate Card */}
-              <div className="bg-amber-50/40 border border-amber-200/80 rounded-2xl p-5 relative overflow-hidden flex flex-col justify-between">
+              <div className="bg-amber-50/40 border border-amber-200 rounded-xl p-5 relative overflow-hidden flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-[11px] font-extrabold uppercase text-amber-900 tracking-wider font-heading flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold uppercase text-amber-900 tracking-wider font-heading flex items-center gap-1.5">
                       <UserCheck className="w-4 h-4 text-amber-600" /> Human Takeover Rate
                     </span>
-                    <span className="bg-amber-100 text-amber-900 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full font-mono">
+                    <span className="bg-amber-100 text-amber-900 text-[10px] font-bold px-2.5 py-0.5 rounded-full font-mono">
                       Agent Handoffs
                     </span>
                   </div>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-black text-amber-950 tracking-tight font-heading">{humanTakeoverPct}%</span>
+                    <span className="text-3xl font-bold text-amber-950 tracking-tight font-heading">{humanTakeoverPct}%</span>
                     <span className="text-xs font-bold text-amber-800 font-mono">({humanEscalations.toLocaleString()} chats)</span>
                   </div>
                   <p className="text-xs text-amber-800/80 mt-2 leading-relaxed font-body">
@@ -716,7 +633,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
                 <div className="mt-4 pt-3 border-t border-amber-200/60 flex items-center justify-between text-[11px]">
                   <span className="text-amber-800 font-medium">Primary Escalation Trigger</span>
-                  <span className="font-extrabold text-amber-950 font-mono">Custom API & Order Refunds</span>
+                  <span className="font-bold text-amber-950 font-mono">Custom API & Order Refunds</span>
                 </div>
               </div>
             </div>
@@ -739,20 +656,22 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           </motion.div>
 
           {/* Section 2: CSAT Rating & Star Distribution Bar Chart */}
-          <motion.div variants={itemVariants} className="bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs space-y-5">
+          <motion.div variants={itemVariants} className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-100">
               <div>
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-extrabold font-mono uppercase tracking-wider mb-1">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold font-mono uppercase tracking-wider mb-1">
                   <Star className="w-3 h-3 fill-amber-400 text-amber-400" /> Customer Satisfaction
                 </div>
-                <h3 className="text-base font-extrabold text-zinc-950 font-heading">Average CSAT Rating Distribution</h3>
-                <p className="text-xs text-zinc-500 font-medium font-body">Star distribution bar chart (1★ to 5★) from verified visitor ratings provided after conversation completion.</p>
+                <h3 className="text-base font-semibold text-zinc-900 font-heading">Average CSAT Rating Distribution</h3>
+                <p className="text-xs text-zinc-500 font-normal font-body">Star distribution bar chart (1★ to 5★) from verified visitor ratings provided after conversation completion.</p>
               </div>
 
               {/* CSAT Score Badge */}
-              <div className="bg-zinc-950 text-white p-4 rounded-2xl flex items-center gap-4 shrink-0 shadow-sm">
+              <div className="bg-zinc-950 text-white p-4 rounded-xl flex items-center gap-4 shrink-0 shadow-xs">
                 <div className="text-center">
-                  <p className="text-3xl font-black font-heading tracking-tight text-white">{analytics.csatScore || 4.8}</p>
+                  <p className="text-3xl font-black font-heading tracking-tight text-white tabular-nums">
+                    {analytics.csatScore ? analytics.csatScore.toFixed(1) : '—'}
+                  </p>
                   <div className="flex items-center gap-0.5 justify-center mt-0.5">
                     {[1, 2, 3, 4, 5].map((s) => (
                       <Star key={s} className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
@@ -760,59 +679,61 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                   </div>
                 </div>
                 <div className="border-l border-zinc-800 pl-4 text-xs">
-                  <p className="font-extrabold text-emerald-400">92% CSAT Score</p>
-                  <p className="text-[11px] text-zinc-400">{totalCsatRatings.toLocaleString()} Verified Ratings</p>
+                  <p className="font-extrabold text-emerald-400">
+                    {totalCsatRatings > 0 && analytics.csatScore
+                      ? `${Math.round((analytics.csatScore / 5) * 100)}% Satisfaction`
+                      : 'Awaiting Ratings'}
+                  </p>
+                  <p className="text-[11px] text-zinc-400 tabular-nums">
+                    {totalCsatRatings.toLocaleString()} Verified Ratings
+                  </p>
                 </div>
               </div>
             </div>
 
-            {/* Star Distribution Rows (5 Stars down to 1 Star) */}
-            <div className="space-y-3">
-              {csatDistribution.map((item) => (
-                <div key={item.stars} className="flex items-center gap-3 text-xs group">
-                  {/* Star Label */}
-                  <div className="w-24 shrink-0 flex items-center gap-1 font-bold text-zinc-800 font-mono">
-                    <span>{item.stars} Stars</span>
-                    <div className="flex items-center">
+            {/* Star Distribution Rows */}
+            {csatDistribution.length === 0 ? (
+              <div className="py-6 text-center text-xs text-zinc-500 border border-dashed border-zinc-200 rounded-xl bg-zinc-50/50">
+                Post-chat CSAT distribution will populate automatically once visitors submit conversation ratings.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {csatDistribution.map((item) => (
+                  <div key={item.stars} className="flex items-center gap-3 text-xs group">
+                    <div className="w-24 shrink-0 flex items-center gap-1 font-bold text-zinc-800 font-mono">
+                      <span>{item.stars} Stars</span>
                       <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                     </div>
+                    <div className="flex-1 bg-zinc-100 h-3 rounded-full overflow-hidden relative">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${item.percentage}%` }}
+                        transition={{ duration: 0.5, ease: 'easeOut' }}
+                        className={`h-full rounded-full ${
+                          item.stars >= 4
+                            ? 'bg-amber-400'
+                            : item.stars === 3
+                            ? 'bg-amber-300'
+                            : 'bg-zinc-400'
+                        }`}
+                      />
+                    </div>
+                    <div className="w-28 text-right shrink-0 font-mono font-bold text-zinc-900 tabular-nums">
+                      <span>{item.count}</span> <span className="text-zinc-400 font-normal">({item.percentage}%)</span>
+                    </div>
                   </div>
-
-                  {/* Progress Bar Container */}
-                  <div className="flex-1 bg-zinc-100 h-3 rounded-full overflow-hidden relative">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${item.percentage}%` }}
-                      transition={{ duration: 0.5, ease: 'easeOut' }}
-                      className={`h-full rounded-full ${
-                        item.stars >= 4
-                          ? 'bg-amber-400'
-                          : item.stars === 3
-                          ? 'bg-amber-300'
-                          : 'bg-zinc-400'
-                      }`}
-                    />
-                  </div>
-
-                  {/* Counts and Percentages */}
-                  <div className="w-28 text-right shrink-0 font-mono font-bold text-zinc-900">
-                    <span>{item.count}</span> <span className="text-zinc-400 font-normal">({item.percentage}%)</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </motion.div>
 
-          {/* Section 3: Topic Intelligence Ranked Top 5 Questions Table */}
+          {/* Section 3: Topic Intelligence Ranked Top Questions Table */}
           <motion.div variants={itemVariants} className="bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-zinc-100 text-zinc-800 border border-zinc-200 text-[10px] font-extrabold font-mono uppercase tracking-wider mb-1">
-                  <Sparkles className="w-3 h-3 text-zinc-900" /> Topic Intelligence & FAQ Analytics
-                </div>
-                <h3 className="text-base font-extrabold text-zinc-950 font-heading">Top 5 Frequently Asked Questions</h3>
+                <h3 className="text-base font-extrabold text-zinc-950 font-heading">Top Frequently Asked Questions</h3>
                 <p className="text-xs text-zinc-500 font-medium font-body">
-                  Ranked list of top visitor questions, detailing AI resolution accuracy, RAG groundings, and fallback triggers.
+                  Ranked visitor questions with AI resolution accuracy, RAG groundings, and fallback triggers.
                 </p>
               </div>
 
@@ -826,103 +747,99 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               </MotionButton>
             </div>
 
-            {/* Ranked Table */}
-            <div className="overflow-x-auto rounded-xl border border-zinc-200/80">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="bg-zinc-50/80 border-b border-zinc-200 text-zinc-500 font-extrabold uppercase tracking-wider text-[10px] font-heading">
-                    <th className="py-3 px-3 text-center w-12">Rank</th>
-                    <th className="py-3 px-4">Visitor Question & Intent Category</th>
-                    <th className="py-3 px-3 text-center">Frequency</th>
-                    <th className="py-3 px-3">AI Resolution Outcome</th>
-                    <th className="py-3 px-3">Actionable Insight</th>
-                    <th className="py-3 px-3 text-right">Quick Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100 font-body">
-                  {topQuestions.map((item) => {
-                    const isGrounded = item.status === 'grounded';
-                    return (
-                      <tr key={item.rank} className="hover:bg-zinc-50/60 transition group">
-                        {/* Rank Badge */}
-                        <td className="py-3.5 px-3 text-center font-extrabold font-mono">
-                          <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs ${
-                            item.rank === 1 ? 'bg-amber-100 text-amber-900 border border-amber-300 font-bold' : 'bg-zinc-100 text-zinc-700'
-                          }`}>
-                            #{item.rank}
-                          </span>
-                        </td>
-
-                        {/* Question & Category */}
-                        <td className="py-3.5 px-4 max-w-sm">
-                          <p className="font-extrabold text-zinc-900 group-hover:text-black leading-snug">{item.question}</p>
-                          <span className="inline-block mt-1 text-[10px] font-semibold text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded font-mono">
-                            {item.category}
-                          </span>
-                        </td>
-
-                        {/* Frequency */}
-                        <td className="py-3.5 px-3 text-center">
-                          <span className="font-black text-zinc-900 font-mono text-sm">{item.count}</span>
-                          <span className="block text-[10px] text-zinc-400 font-mono">queries</span>
-                        </td>
-
-                        {/* Resolution Outcome */}
-                        <td className="py-3.5 px-3">
-                          {isGrounded ? (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                              <span>AI Answered ({item.resolutionRate}% Grounded)</span>
-                            </div>
-                          ) : (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold">
-                              <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                              <span>Fallback Used / Escalated</span>
-                            </div>
-                          )}
-                        </td>
-
-                        {/* Actionable Insight */}
-                        <td className="py-3.5 px-3">
-                          {isGrounded ? (
-                            <span className="text-[11px] text-emerald-800 font-medium flex items-center gap-1">
-                              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> High grounding coverage
+            {topQuestions.length === 0 ? (
+              <div className="py-8 text-center text-xs text-zinc-500 border border-dashed border-zinc-200 rounded-xl bg-zinc-50/50">
+                No visitor questions logged for this time window yet. Test your assistant in Playground to record live insights.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-zinc-200/80">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-zinc-50/80 border-b border-zinc-200 text-zinc-500 font-extrabold uppercase tracking-wider text-[10px] font-heading">
+                      <th className="py-3 px-3 text-center w-12">Rank</th>
+                      <th className="py-3 px-4">Visitor Question &amp; Intent Category</th>
+                      <th className="py-3 px-3 text-center">Frequency</th>
+                      <th className="py-3 px-3">AI Resolution Outcome</th>
+                      <th className="py-3 px-3">Actionable Insight</th>
+                      <th className="py-3 px-3 text-right">Quick Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 font-body">
+                    {topQuestions.map((item) => {
+                      const isGrounded = item.status === 'grounded';
+                      return (
+                        <tr key={item.rank} className="hover:bg-zinc-50/60 transition group">
+                          <td className="py-3.5 px-3 text-center font-extrabold font-mono">
+                            <span
+                              className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs ${
+                                item.rank === 1 ? 'bg-amber-100 text-amber-900 border border-amber-300 font-bold' : 'bg-zinc-100 text-zinc-700'
+                              }`}
+                            >
+                              #{item.rank}
                             </span>
-                          ) : (
-                            <span className="text-[11px] text-amber-800 font-medium flex items-center gap-1">
-                              <Plus className="w-3.5 h-3.5 text-amber-600 shrink-0" /> KB update recommended
+                          </td>
+                          <td className="py-3.5 px-4 max-w-sm">
+                            <p className="font-extrabold text-zinc-900 group-hover:text-black leading-snug">{item.question}</p>
+                            <span className="inline-block mt-1 text-[10px] font-semibold text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded font-mono">
+                              {item.category}
                             </span>
-                          )}
-                        </td>
-
-                        {/* Quick Action */}
-                        <td className="py-3.5 px-3 text-right">
-                          <MotionButton
-                            variant="outline"
-                            size="xs"
-                            leftIcon={isGrounded ? <BookOpen className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
-                            onClick={() => onNavigate('knowledge')}
-                          >
-                            {isGrounded ? 'View Source' : '+ Add FAQ'}
-                          </MotionButton>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          </td>
+                          <td className="py-3.5 px-3 text-center tabular-nums">
+                            <span className="font-black text-zinc-900 font-mono text-sm">{item.count}</span>
+                            <span className="block text-[10px] text-zinc-400 font-mono">queries</span>
+                          </td>
+                          <td className="py-3.5 px-3">
+                            {isGrounded ? (
+                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span>AI Answered ({item.resolutionRate}% Grounded)</span>
+                              </div>
+                            ) : (
+                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold">
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                <span>Fallback Used / Escalated</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-3">
+                            {isGrounded ? (
+                              <span className="text-[11px] text-emerald-800 font-medium flex items-center gap-1">
+                                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> High grounding coverage
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-amber-800 font-medium flex items-center gap-1">
+                                <Plus className="w-3.5 h-3.5 text-amber-600 shrink-0" /> KB update recommended
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-3 text-right">
+                            <MotionButton
+                              variant="outline"
+                              size="xs"
+                              leftIcon={isGrounded ? <BookOpen className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                              onClick={() => onNavigate('knowledge')}
+                            >
+                              {isGrounded ? 'View Source' : '+ Add FAQ'}
+                            </MotionButton>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </motion.div>
 
           {/* Main Charts & Topics 2-Column Grid */}
           <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             {/* Weekly Activity Bar Chart */}
-            <div className="lg:col-span-2 bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs flex flex-col justify-between">
+            <div className="lg:col-span-2 bg-white border border-zinc-200 rounded-xl p-6 shadow-xs flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <div>
-                    <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Weekly Conversation Activity</h3>
-                    <p className="text-xs text-zinc-500 font-medium mt-0.5 font-body">Visitor inquiries and lead conversions over the last 7 days</p>
+                    <h3 className="text-sm font-semibold text-zinc-900 font-heading">Weekly Conversation Activity</h3>
+                    <p className="text-xs text-zinc-500 font-normal mt-0.5 font-body">Visitor inquiries and lead conversions over the last 7 days</p>
                   </div>
                   <div className="flex items-center gap-4 text-xs font-semibold font-heading">
                     <span className="flex items-center gap-1.5 text-zinc-700 text-xs">
@@ -977,20 +894,21 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
             {/* Right Stack: Frequent Inquiry Topics & Grounded KB Box */}
             <div className="space-y-4 flex flex-col justify-between">
-              <div className="bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs flex flex-col justify-between flex-1">
+              <div className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs flex flex-col justify-between flex-1">
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Frequent Inquiry Topics</h3>
+                    <h3 className="text-sm font-semibold text-zinc-900 font-heading">Frequent Inquiry Topics</h3>
                     <motion.button
+                      type="button"
                       whileHover={{ x: 2 }}
                       whileTap={{ scale: 0.96 }}
                       onClick={() => onNavigate('knowledge')}
-                      className="text-xs font-bold text-zinc-900 hover:text-black cursor-pointer font-heading underline-offset-4 hover:underline"
+                      className="text-xs font-semibold text-zinc-900 hover:text-black cursor-pointer font-heading underline-offset-4 hover:underline"
                     >
                       Manage RAG
                     </motion.button>
                   </div>
-                  <p className="text-xs text-zinc-500 font-medium mb-4 font-body">Common queries analyzed and grounded in your knowledge base.</p>
+                  <p className="text-xs text-zinc-500 font-normal mb-4 font-body">Common queries analyzed and grounded in your knowledge base.</p>
 
                   {analytics.topTopics && analytics.topTopics.length > 0 ? (
                     <div className="space-y-3">
@@ -1025,41 +943,41 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               </div>
 
               {/* Tools Telemetry Widget */}
-              <div className="bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs">
+              <div className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-1.5">
-                    <h3 className="text-sm font-extrabold text-zinc-900 font-heading">AI Tool-Calling Telemetry</h3>
+                    <h3 className="text-sm font-semibold text-zinc-900 font-heading">AI Tool-Calling Telemetry</h3>
                     <Tooltip content="Tracks execution of automated functions like catalog search, order lookups, and ticket creation." showIcon />
                   </div>
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-zinc-100 text-zinc-700">
+                  <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-zinc-100 text-zinc-700">
                     {GEMINI_CONFIG.flash.displayName}
                   </span>
                 </div>
-                <p className="text-xs text-zinc-500 font-medium mb-4 font-body">Real-time function execution volume across all active bot sessions.</p>
+                <p className="text-xs text-zinc-500 font-normal mb-4 font-body">Real-time function execution volume across all active bot sessions.</p>
 
                 <div className="space-y-2.5">
-                  {(analytics.toolsUsage || [
-                    { tool: 'search_catalog', count: 18 },
-                    { tool: 'lookup_order', count: 14 },
-                    { tool: 'issue_discount_code', count: 9 },
-                    { tool: 'create_ticket', count: 6 },
-                    { tool: 'escalate_to_human', count: 4 }
-                  ]).map((t, idx) => (
-                    <div key={idx} className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-zinc-50 border border-zinc-100">
-                      <div className="flex items-center gap-2">
-                        <Wrench className="w-3.5 h-3.5 text-zinc-500" />
-                        <span className="font-mono text-zinc-800 font-semibold">{t.tool}</span>
-                      </div>
-                      <span className="font-bold text-zinc-900 font-mono text-[11px]">{t.count} runs</span>
+                  {(!analytics.toolsUsage || analytics.toolsUsage.length === 0) ? (
+                    <div className="py-4 text-center text-xs text-zinc-500 border border-dashed border-zinc-200 rounded-xl bg-zinc-50/50">
+                      No automated tool executions logged yet.
                     </div>
-                  ))}
+                  ) : (
+                    analytics.toolsUsage.map((t, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-zinc-50 border border-zinc-200">
+                        <div className="flex items-center gap-2">
+                          <Wrench className="w-3.5 h-3.5 text-zinc-500" />
+                          <span className="font-mono text-zinc-800 font-semibold">{t.tool}</span>
+                        </div>
+                        <span className="font-semibold text-zinc-900 font-mono text-[11px] tabular-nums">{t.count} runs</span>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
-              <div className="bg-white border border-zinc-200/90 rounded-2xl p-4.5 shadow-2xs flex items-start gap-3">
+              <div className="bg-white border border-zinc-200 rounded-xl p-4.5 shadow-xs flex items-start gap-3">
                 <ShieldCheck className="w-5 h-5 text-zinc-800 shrink-0 mt-0.5" />
                 <div>
-                  <h4 className="text-xs font-extrabold text-zinc-900 mb-0.5 font-heading">Grounded Knowledge Base Active</h4>
+                  <h4 className="text-xs font-bold text-zinc-900 mb-0.5 font-heading">Grounded Knowledge Base Active</h4>
                   <p className="text-[11px] text-zinc-500 leading-relaxed font-normal font-body">
                     Queries are automatically cross-checked with scraped pages and uploaded documents to prevent hallucinations.
                   </p>
@@ -1071,17 +989,18 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
       )}
 
       {/* Deployed AI Chatbots Preview */}
-      <motion.div variants={itemVariants} className="bg-white border border-zinc-200/90 rounded-2xl md:rounded-3xl p-6 shadow-2xs">
+      <motion.div variants={itemVariants} className="bg-white border border-zinc-200 rounded-xl p-6 shadow-xs">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-sm font-extrabold text-zinc-900 font-heading">Deployed AI Chatbots</h3>
-            <p className="text-xs text-zinc-500 font-medium mt-0.5 font-body">Configure bots, test live grounding, or copy embed scripts</p>
+            <h3 className="text-sm font-semibold text-zinc-900 font-heading">Deployed AI Chatbots</h3>
+            <p className="text-xs text-zinc-500 font-normal mt-0.5 font-body">Configure bots, test live grounding, or copy embed scripts</p>
           </div>
           <motion.button
+            type="button"
             whileHover={{ x: 2 }}
             whileTap={{ scale: 0.96 }}
             onClick={() => onNavigate('chatbots')}
-            className="text-xs font-bold text-zinc-900 hover:text-black flex items-center gap-1 cursor-pointer font-heading"
+            className="text-xs font-semibold text-zinc-900 hover:text-black flex items-center gap-1 cursor-pointer font-heading"
           >
             <span>View All ({totalBotsCount})</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
@@ -1089,7 +1008,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         </div>
 
         {chatbots.length === 0 ? (
-          <div className="p-8 border border-dashed border-zinc-200 rounded-2xl text-center bg-zinc-50/50">
+          <div className="p-8 border border-dashed border-zinc-200 rounded-xl text-center bg-zinc-50/50">
             <Bot className="w-8 h-8 text-zinc-400 mx-auto mb-2" />
             <p className="text-xs font-bold text-zinc-900 font-heading">No AI Chatbots Created Yet</p>
             <p className="text-[11px] text-zinc-500 font-body max-w-sm mx-auto mt-1 mb-4">
@@ -1113,7 +1032,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             <motion.div
               key={bot.id}
               whileHover={{ y: -3, transition: { duration: 0.15 } }}
-              className="border border-zinc-200/90 rounded-2xl p-4.5 bg-zinc-50/40 hover:bg-white hover:border-zinc-900 transition-all flex flex-col justify-between group shadow-2xs"
+              className="border border-zinc-200 rounded-xl p-4.5 bg-zinc-50/40 hover:bg-white hover:border-zinc-300 transition-all flex flex-col justify-between group shadow-xs"
             >
               <div>
                 <div className="flex items-start justify-between gap-3 mb-3">
